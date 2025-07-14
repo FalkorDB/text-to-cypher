@@ -18,10 +18,11 @@ pub struct Attribute {
     pub name: String,
     #[serde(rename = "type")]
     pub r#type: AttributeType,
+    #[serde(skip_serializing)]
     pub count: i64,
-	#[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub unique: bool,
-	#[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
 }
 

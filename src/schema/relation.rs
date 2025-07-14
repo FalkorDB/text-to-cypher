@@ -8,7 +8,7 @@ pub struct Relation {
     pub label: String,
     pub source: String,
     pub target: String,
-	#[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<Attribute>,
 }
 

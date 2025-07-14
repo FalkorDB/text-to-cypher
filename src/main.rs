@@ -211,14 +211,14 @@ async fn main() -> std::io::Result<()> {
     fmt().with_max_level(tracing::Level::INFO).init();
 
     let schema = create_schema().await;
-	// Print the discovered schema
-	tracing::info!("Discovered schema: {}", schema);
-	
-	// Print the schema as JSON
-	match serde_json::to_string_pretty(&schema) {
-		Ok(json) => tracing::info!("Schema as JSON: \n{}", json),
-		Err(e) => tracing::error!("Failed to serialize schema to JSON: {}", e),
-	}
+    // Print the discovered schema
+    tracing::info!("Discovered schema: {}", schema);
+
+    // Print the schema as JSON
+    match serde_json::to_string_pretty(&schema) {
+        Ok(json) => tracing::info!("Schema as JSON: \n{}", json),
+        Err(e) => tracing::error!("Failed to serialize schema to JSON: {}", e),
+    }
 
     tracing::info!("Starting server at http://localhost:8080/swagger-ui/");
 
@@ -250,7 +250,7 @@ async fn create_schema() -> Schema {
 
     // Select the social graph
     let mut graph = client.select_graph("social");
-    let schema = Schema::discover_from_graph(&mut graph)
+    let schema = Schema::discover_from_graph(&mut graph, 100)
         .await
         .expect("Failed to discover schema from graph");
 

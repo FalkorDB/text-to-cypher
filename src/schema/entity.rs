@@ -6,9 +6,9 @@ pub use super::attribute::Attribute;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Entity {
     pub label: String,
-	#[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attributes: Vec<Attribute>,
-	#[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 

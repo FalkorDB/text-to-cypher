@@ -1,6 +1,6 @@
 use std::vec;
 
-use falkordb::*;
+use falkordb::{AsyncGraph, FalkorDBError, FalkorValue};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -35,16 +35,6 @@ impl Schema {
         Self {
             entities: Vec::new(),
             relations: Vec::new(),
-        }
-    }
-
-    pub const fn new(
-        entities: Vec<Entity>,
-        relations: Vec<Relation>,
-    ) -> Self {
-        Self {
-            entities,
-            relations,
         }
     }
 
@@ -115,7 +105,7 @@ impl Schema {
     ) -> Result<Vec<Attribute>, FalkorDBError> {
         tracing::info!("Collecting attributes for label '{}': {}", label, query);
 
-        let entity_attributes = graph.ro_query(&query).execute().await?;
+        let entity_attributes = graph.ro_query(query).execute().await?;
         let mut attributes = Vec::new();
 
         for record in entity_attributes.data {
@@ -159,10 +149,7 @@ impl Schema {
         Ok(attributes)
     }
 
-    pub async fn discover_from_graph(graph: &mut AsyncGraph) -> Result<Self, FalkorDBError> {
-        // Using graph.query() instead of call_procedure() to avoid ambiguity
-        // This is actually cleaner and more straightforward
-        let mut schema: Self = Self::empty();
+    async fn get_entity_labels(graph: &mut AsyncGraph) -> Result<Vec<String>, FalkorDBError> {
         // Get node labels (entity types)
         let labels_result = graph.ro_query("CALL db.labels()").execute().await?;
 
@@ -174,10 +161,49 @@ impl Schema {
             }
         }
 
-        tracing::info!("Found labels: {:?}", entity_labels);
+        Ok(entity_labels)
+    }
 
-        let sample_size = 100;
-        // Process each label and collect entity labels for later use
+    async fn get_relationship_labels(graph: &mut AsyncGraph) -> Result<Vec<String>, FalkorDBError> {
+        let relations_result = graph
+            .ro_query("CALL db.relationshipTypes()")
+            .execute()
+            .await?;
+
+        let mut relationship_labels = Vec::new();
+        for record in relations_result.data {
+            if let Some(FalkorValue::String(relation_label)) = record.first() {
+                relationship_labels.push(relation_label.clone());
+            }
+        }
+
+        Ok(relationship_labels)
+    }
+
+    async fn get_relationship_attributes(
+        graph: &mut AsyncGraph,
+        relationship_labels: &[String],
+        sample_size: usize,
+    ) -> Result<Vec<(String, Vec<Attribute>)>, FalkorDBError> {
+        let mut relationship_attributes = vec![];
+
+        for relationship_label in relationship_labels {
+            let attributes =
+                Self::collect_relationship_attributes(graph, relationship_label, sample_size)
+                    .await?;
+            relationship_attributes.push((relationship_label.to_owned(), attributes));
+        }
+
+        Ok(relationship_attributes)
+    }
+
+    pub async fn discover_from_graph(
+        graph: &mut AsyncGraph,
+        sample_size: usize,
+    ) -> Result<Self, FalkorDBError> {
+        let mut schema: Self = Self::empty();
+
+        let entity_labels = Self::get_entity_labels(graph).await?;
 
         for entity_label in &entity_labels {
             let attributes =
@@ -185,32 +211,12 @@ impl Schema {
             schema.add_entity(Entity::new(entity_label.to_owned(), attributes, None));
         }
 
-        tracing::info!(
-            "Discovered schema: {}",
-            serde_json::to_string(&schema).unwrap_or_else(|_| schema.to_string())
-        );
-
         // Get relationship types
-        let mut relationship_labels = Vec::new();
-        let query = "CALL db.relationshipTypes()".to_string();
-        let relations_result = graph.ro_query(&query).execute().await?;
+        let relationship_labels = Self::get_relationship_labels(graph).await?;
 
-        for record in relations_result.data {
-            if let Some(FalkorValue::String(relation_label)) = record.first() {
-                relationship_labels.push(relation_label.clone());
-            }
-        }
+        let relationship_attributes =
+            Self::get_relationship_attributes(graph, &relationship_labels, sample_size).await?;
 
-        tracing::info!("Found relationship lables: {:?}", relationship_labels);
-        let mut relationship_attributes = vec![];
-
-        for relationship_label in &relationship_labels {
-            let attributes =
-                Self::collect_relationship_attributes(graph, relationship_label, sample_size)
-                    .await?;
-            relationship_attributes.push((relationship_label.to_owned(), attributes));
-        }
-        tracing::info!("Relationship attributes: {:?}", relationship_attributes);
         let entities = schema.entities.clone();
         for (label, attributes) in &relationship_attributes {
             for source_entity in &entities {
@@ -221,7 +227,7 @@ impl Schema {
                         target_entity.label
                     );
                     let query = format!(
-                        r"MATCH (s:{})-[a:{label}]->(t:{}) return a limit 1",
+                        "MATCH (s:{})-[a:{label}]->(t:{}) return a limit 1",
                         source_entity.label, target_entity.label
                     );
                     let query_result = graph.ro_query(&query).execute().await?;
