@@ -34,16 +34,13 @@ impl From<ChatRequest> for genai::chat::ChatRequest {
         for message in req.messages {
             match message.role {
                 ChatRole::User => {
-                    chat_req =
-                        chat_req.append_message(genai::chat::ChatMessage::user(message.content));
+                    chat_req = chat_req.append_message(genai::chat::ChatMessage::user(message.content));
                 }
                 ChatRole::Assistant => {
-                    chat_req = chat_req
-                        .append_message(genai::chat::ChatMessage::assistant(message.content));
+                    chat_req = chat_req.append_message(genai::chat::ChatMessage::assistant(message.content));
                 }
                 ChatRole::System => {
-                    chat_req =
-                        chat_req.append_message(genai::chat::ChatMessage::system(message.content));
+                    chat_req = chat_req.append_message(genai::chat::ChatMessage::system(message.content));
                 }
             }
         }

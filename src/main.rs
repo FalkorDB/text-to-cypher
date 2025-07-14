@@ -47,19 +47,14 @@ struct ProgressUpdate {
     )
 )]
 #[post("/text_to_cypher")]
-async fn text_to_cypher(
-    req: actix_web::web::Json<TextToCypherRequest>
-) -> Result<impl Responder, actix_web::Error> {
+async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Result<impl Responder, actix_web::Error> {
     let mut request = req.into_inner();
 
     request.model = "llama3.2".to_string(); // Default model, can be overridden by the request
 
     // Initialize the client outside the spawn
     let client = genai::Client::default();
-    let service_target = client
-        .resolve_service_target(&request.model)
-        .await
-        .map_err(ApiError::from)?;
+    let service_target = client.resolve_service_target(&request.model).await.map_err(ApiError::from)?;
 
     tracing::info!("Resolved service target: {:?}", service_target.model);
 
@@ -88,9 +83,7 @@ async fn process_text_to_cypher_request(
         result: None,
     };
 
-    let event = sse::Event::Data(sse::Data::new(
-        serde_json::to_string(&initial_update).unwrap(),
-    ));
+    let event = sse::Event::Data(sse::Data::new(serde_json::to_string(&initial_update).unwrap()));
 
     if tx.send(event).await.is_err() {
         return;
@@ -106,9 +99,7 @@ async fn process_text_to_cypher_request(
         result: None,
     };
 
-    let event = sse::Event::Data(sse::Data::new(
-        serde_json::to_string(&processing_update).unwrap(),
-    ));
+    let event = sse::Event::Data(sse::Data::new(serde_json::to_string(&processing_update).unwrap()));
 
     if tx.send(event).await.is_err() {
         return;
@@ -118,10 +109,7 @@ async fn process_text_to_cypher_request(
     let genai_chat_request: genai::chat::ChatRequest = request.chat_request.into();
 
     // Make the actual request to the model
-    let chat_response = match client
-        .exec_chat_stream(&request.model, genai_chat_request, None)
-        .await
-    {
+    let chat_response = match client.exec_chat_stream(&request.model, genai_chat_request, None).await {
         Ok(response) => response,
         Err(e) => {
             let error_update = ProgressUpdate {
@@ -130,9 +118,7 @@ async fn process_text_to_cypher_request(
                 result: None,
             };
 
-            let event = sse::Event::Data(sse::Data::new(
-                serde_json::to_string(&error_update).unwrap(),
-            ));
+            let event = sse::Event::Data(sse::Data::new(serde_json::to_string(&error_update).unwrap()));
 
             let _ = tx.send(event).await;
             return;
@@ -145,24 +131,18 @@ async fn process_text_to_cypher_request(
     let mut stream = chat_response.stream;
     while let Some(Ok(stream_event)) = stream.next().await {
         let (event_info, content) = match stream_event {
-            genai::chat::ChatStreamEvent::Start => {
-                (Some("\n-- ChatStreamEvent::Start\n".to_string()), None)
-            }
+            genai::chat::ChatStreamEvent::Start => (Some("\n-- ChatStreamEvent::Start\n".to_string()), None),
             genai::chat::ChatStreamEvent::Chunk(chunk) => {
                 answer.push_str(&chunk.content);
-                (
-                    Some("\n-- ChatStreamEvent::Chunk:\n".to_string()),
-                    Some(chunk.content),
-                )
+                (Some("\n-- ChatStreamEvent::Chunk:\n".to_string()), Some(chunk.content))
             }
             genai::chat::ChatStreamEvent::ReasoningChunk(chunk) => (
                 Some("\n-- ChatStreamEvent::ReasoningChunk:\n".to_string()),
                 Some(chunk.content),
             ),
-            genai::chat::ChatStreamEvent::End(end_event) => (
-                Some(format!("\n-- ChatStreamEvent::End {end_event:?}\n")),
-                None,
-            ),
+            genai::chat::ChatStreamEvent::End(end_event) => {
+                (Some(format!("\n-- ChatStreamEvent::End {end_event:?}\n")), None)
+            }
         };
 
         if let Some(event_info) = event_info {
@@ -228,9 +208,9 @@ async fn main() -> std::io::Result<()> {
     // http://localhost:8080/swagger-ui/
 
     HttpServer::new(|| {
-        App::new().service(text_to_cypher).service(
-            SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()),
-        )
+        App::new()
+            .service(text_to_cypher)
+            .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
@@ -238,9 +218,7 @@ async fn main() -> std::io::Result<()> {
 }
 
 async fn create_schema() -> Schema {
-    let connection_info: FalkorConnectionInfo = "falkor://127.0.0.1:6379"
-        .try_into()
-        .expect("Invalid connection info");
+    let connection_info: FalkorConnectionInfo = "falkor://127.0.0.1:6379".try_into().expect("Invalid connection info");
 
     let client = FalkorClientBuilder::new_async()
         .with_connection_info(connection_info)

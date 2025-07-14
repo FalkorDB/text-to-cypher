@@ -114,34 +114,18 @@ impl Schema {
                 // kt should be an array containing [key_name, type_name]
                 if let FalkorValue::Array(kt_array) = kt
                     && kt_array.len() >= 2
-                    && let (
-                        Some(FalkorValue::String(key_name)),
-                        Some(FalkorValue::String(type_name)),
-                    ) = (kt_array.first(), kt_array.get(1))
+                    && let (Some(FalkorValue::String(key_name)), Some(FalkorValue::String(type_name))) =
+                        (kt_array.first(), kt_array.get(1))
                 {
-                    tracing::info!(
-                        "Found attribute: key={}, type={}, count={}",
-                        key_name,
-                        type_name,
-                        count
-                    );
+                    tracing::info!("Found attribute: key={}, type={}, count={}", key_name, type_name, count);
 
                     // Parse the type_name to AttributeType
                     let attr_type = type_name.parse::<AttributeType>().unwrap_or_else(|_| {
-                        tracing::warn!(
-                            "Unknown attribute type '{}', defaulting to String",
-                            type_name
-                        );
+                        tracing::warn!("Unknown attribute type '{}', defaulting to String", type_name);
                         AttributeType::String
                     });
 
-                    attributes.push(Attribute::new(
-                        key_name.clone(),
-                        attr_type,
-                        *count,
-                        false,
-                        false,
-                    ));
+                    attributes.push(Attribute::new(key_name.clone(), attr_type, *count, false, false));
                 }
             }
         }
@@ -165,10 +149,7 @@ impl Schema {
     }
 
     async fn get_relationship_labels(graph: &mut AsyncGraph) -> Result<Vec<String>, FalkorDBError> {
-        let relations_result = graph
-            .ro_query("CALL db.relationshipTypes()")
-            .execute()
-            .await?;
+        let relations_result = graph.ro_query("CALL db.relationshipTypes()").execute().await?;
 
         let mut relationship_labels = Vec::new();
         for record in relations_result.data {
@@ -188,9 +169,7 @@ impl Schema {
         let mut relationship_attributes = vec![];
 
         for relationship_label in relationship_labels {
-            let attributes =
-                Self::collect_relationship_attributes(graph, relationship_label, sample_size)
-                    .await?;
+            let attributes = Self::collect_relationship_attributes(graph, relationship_label, sample_size).await?;
             relationship_attributes.push((relationship_label.to_owned(), attributes));
         }
 
@@ -206,8 +185,7 @@ impl Schema {
         let entity_labels = Self::get_entity_labels(graph).await?;
 
         for entity_label in &entity_labels {
-            let attributes =
-                Self::collect_entity_attributes(graph, entity_label, sample_size).await?;
+            let attributes = Self::collect_entity_attributes(graph, entity_label, sample_size).await?;
             schema.add_entity(Entity::new(entity_label.to_owned(), attributes, None));
         }
 

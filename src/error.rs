@@ -45,11 +45,7 @@ impl ResponseError for ApiError {
                 } else if msg.contains("rate limit") || msg.contains("quota") {
                     (429, "RATE_LIMITED", format!("Rate limited: {}", err))
                 } else if msg.contains("authentication") || msg.contains("api key") {
-                    (
-                        401,
-                        "AUTHENTICATION_ERROR",
-                        format!("Authentication failed: {}", err),
-                    )
+                    (401, "AUTHENTICATION_ERROR", format!("Authentication failed: {}", err))
                 } else {
                     (502, "GENAI_ERROR", format!("AI service error: {}", err))
                 }
@@ -66,8 +62,7 @@ impl ResponseError for ApiError {
             status_code,
         };
 
-        HttpResponse::build(actix_web::http::StatusCode::from_u16(status_code).unwrap())
-            .json(error_response)
+        HttpResponse::build(actix_web::http::StatusCode::from_u16(status_code).unwrap()).json(error_response)
     }
 }
 
