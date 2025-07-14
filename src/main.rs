@@ -17,7 +17,7 @@ mod schema;
 use chat::{ChatMessage, ChatRequest, ChatRole};
 use error::ApiError;
 
-use crate::schema::schema::Schema;
+use crate::schema::discovery::Schema;
 
 #[derive(Serialize, Deserialize, ToSchema)]
 struct HelloResponse {
