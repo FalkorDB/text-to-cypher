@@ -21,4 +21,3 @@ pub struct ChatMessage {
 pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
 }
-

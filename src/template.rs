@@ -7,14 +7,17 @@ impl TemplateEngine {
         std::fs::read_to_string(template_path)
     }
 
-    pub fn render(template: &str, variables: &HashMap<&str, &str>) -> String {
+    pub fn render(
+        template: &str,
+        variables: &HashMap<&str, &str>,
+    ) -> String {
         let mut result = template.to_string();
-        
+
         for (key, value) in variables {
             let placeholder = format!("{{{{{key}}}}}");
             result = result.replace(&placeholder, value);
         }
-        
+
         result
     }
 
@@ -22,7 +25,7 @@ impl TemplateEngine {
         let template = Self::load_template("templates/system_prompt.txt")?;
         let mut variables = HashMap::new();
         variables.insert("ONTOLOGY", ontology);
-        
+
         Ok(Self::render(&template, &variables))
     }
 
@@ -30,7 +33,7 @@ impl TemplateEngine {
         let template = Self::load_template("templates/user_prompt.txt")?;
         let mut variables = HashMap::new();
         variables.insert("QUESTION", question);
-        
+
         Ok(Self::render(&template, &variables))
     }
 }

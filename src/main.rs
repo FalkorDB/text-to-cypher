@@ -118,7 +118,7 @@ async fn process_text_to_cypher_request(
 ) {
     tracing::info!("Processing text to Cypher request: {request:?}");
 
-	// Step 1: Send processing status
+    // Step 1: Send processing status
     send_processing_status(&request, &service_target, &tx).await;
 
     // Step 2: Discover schema
@@ -160,13 +160,10 @@ fn generate_chat_request(
         chat_req = chat_req.append_message(genai_message);
     }
 
-    chat_req = chat_req.with_system(
-        TemplateEngine::render_system_prompt(ontology)
-            .unwrap_or_else(|e| {
-                tracing::error!("Failed to load system prompt template: {}", e);
-                format!("Generate OpenCypher statements using this ontology: {ontology}")
-            })
-    );
+    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(ontology).unwrap_or_else(|e| {
+        tracing::error!("Failed to load system prompt template: {}", e);
+        format!("Generate OpenCypher statements using this ontology: {ontology}")
+    }));
 
     // Pretty print the chat request as JSON for logging
     if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
@@ -236,21 +233,23 @@ fn process_last_user_message(
     question: &str,
     _ontology: &str,
 ) -> String {
-    TemplateEngine::render_user_prompt(question)
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to load user prompt template: {}", e);
-            format!("Generate an OpenCypher statement for: {question}")
-        })
+    TemplateEngine::render_user_prompt(question).unwrap_or_else(|e| {
+        tracing::error!("Failed to load user prompt template: {}", e);
+        format!("Generate an OpenCypher statement for: {question}")
+    })
 }
 
 async fn discover_and_send_schema(
     graph_name: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, ()> {
-    try_send!(tx, Progress::Status(format!("Discovering schema for graph: {graph_name}")));
+    try_send!(
+        tx,
+        Progress::Status(format!("Discovering schema for graph: {graph_name}"))
+    );
 
     let schema = discover_graph_schema(graph_name).await;
-    
+
     // Serialize and handle errors inline
     let Ok(json_schema) = serde_json::to_string(&schema) else {
         tracing::error!("Failed to serialize schema to JSON");
@@ -308,17 +307,29 @@ async fn process_chat_stream(
     while let Some(Ok(stream_event)) = stream.next().await {
         match stream_event {
             genai::chat::ChatStreamEvent::Start => {
-                send!(tx, Progress::ModelOutputChunk("\n-- ChatStreamEvent::Start\n".to_string(), String::new()));
+                send!(
+                    tx,
+                    Progress::ModelOutputChunk("\n-- ChatStreamEvent::Start\n".to_string(), String::new())
+                );
             }
             genai::chat::ChatStreamEvent::Chunk(chunk) => {
                 answer.push_str(&chunk.content);
-                send!(tx, Progress::ModelOutputChunk("\n-- ChatStreamEvent::Chunk:\n".to_string(), chunk.content));
+                send!(
+                    tx,
+                    Progress::ModelOutputChunk("\n-- ChatStreamEvent::Chunk:\n".to_string(), chunk.content)
+                );
             }
             genai::chat::ChatStreamEvent::ReasoningChunk(chunk) => {
-                send!(tx, Progress::ModelOutputChunk("\n-- ChatStreamEvent::ReasoningChunk:\n".to_string(), chunk.content));
+                send!(
+                    tx,
+                    Progress::ModelOutputChunk("\n-- ChatStreamEvent::ReasoningChunk:\n".to_string(), chunk.content)
+                );
             }
             genai::chat::ChatStreamEvent::End(end_event) => {
-                send!(tx, Progress::ModelOutputChunk(format!("\n-- ChatStreamEvent::End {end_event:?}\n"), String::new()));
+                send!(
+                    tx,
+                    Progress::ModelOutputChunk(format!("\n-- ChatStreamEvent::End {end_event:?}\n"), String::new())
+                );
             }
         }
     }
