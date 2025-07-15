@@ -91,7 +91,7 @@ enum Progress {
 )]
 #[post("/text_to_cypher")]
 async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Result<impl Responder, actix_web::Error> {
-    let mut request = req.into_inner();
+    let request = req.into_inner();
 
     // Initialize the client outside the spawn
     let client = genai::Client::default();
