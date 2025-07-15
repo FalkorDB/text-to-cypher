@@ -3,6 +3,9 @@ use actix_web_lab::sse::{self, Sse};
 use falkordb::FalkorClientBuilder;
 use falkordb::FalkorConnectionInfo;
 use futures_util::StreamExt;
+use genai::resolver::AuthData;
+use genai::resolver::AuthResolver;
+use genai::ModelIden;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing_subscriber::fmt;
@@ -64,12 +67,30 @@ struct HelloResponse {
     message: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema, Debug, Clone)]
+#[derive(Serialize, Deserialize, ToSchema, Clone)]
 struct TextToCypherRequest {
     graph_name: String,
     chat_request: ChatRequest,
     model: String,
+	key: Option<String>,
 }
+
+impl std::fmt::Debug for TextToCypherRequest {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let mut debug_struct = f.debug_struct("TextToCypherRequest");
+		debug_struct
+			.field("graph_name", &self.graph_name)
+			.field("chat_request", &self.chat_request)
+			.field("model", &self.model);
+		
+		if self.key.is_some() {
+			debug_struct.field("key", &"***");
+		}
+		
+		debug_struct.finish()
+	}
+}
+
 
 #[derive(Serialize, Deserialize, ToSchema)]
 enum Progress {
@@ -93,11 +114,24 @@ enum Progress {
 async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Result<impl Responder, actix_web::Error> {
     let request = req.into_inner();
 
-    // Initialize the client outside the spawn
-    let client = genai::Client::default();
-    let service_target = client.resolve_service_target(&request.model).await.map_err(ApiError::from)?;
+    let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
+        let key = key.clone(); // Clone the key for use in the closure
+        let auth_resolver = AuthResolver::from_resolver_fn(
+            move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
+                let ModelIden {
+                    adapter_kind,
+                    model_name,
+                } = model_iden;
+                tracing::info!("Using custom auth provider for {adapter_kind} (model: {model_name})");
 
-    tracing::info!("Resolved service target: {:?}", service_target.model);
+                // Use the provided key instead of reading from environment
+                Ok(Some(AuthData::from_single(key.clone())))
+            },
+        );
+        genai::Client::builder().with_auth_resolver(auth_resolver).build()
+    });
+    
+    let service_target = client.resolve_service_target(&request.model).await.map_err(ApiError::from)?;
 
     let (tx, rx) = mpsc::channel(100);
 
@@ -239,6 +273,7 @@ fn process_last_user_message(
     })
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn discover_and_send_schema(
     graph_name: &str,
     tx: &mpsc::Sender<sse::Event>,
@@ -296,6 +331,7 @@ async fn execute_chat_stream(
     process_chat_stream(chat_response, tx).await;
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn process_chat_stream(
     chat_response: genai::chat::ChatStreamResponse,
     tx: &mpsc::Sender<sse::Event>,
