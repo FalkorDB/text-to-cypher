@@ -1,0 +1,17 @@
+Generate an OpenCypher statement to answer the following question using the provided ontology.
+
+Requirements:
+Use only entities, relationships, and properties from the ontology
+Maintain correct relationship directions (source -> target)
+Return all relevant entities and relationships, not just requested attributes
+Ensure syntactically valid OpenCypher
+
+Question: {{QUESTION}}
+
+Validation Steps:
+1. Identify required entities and relationships from the question
+2. Verify all components exist in the ontology
+3. Construct query with proper syntax and direction
+4. Ensure comprehensive result set
+
+Generated OpenCypher:

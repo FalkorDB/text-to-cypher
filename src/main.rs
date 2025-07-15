@@ -10,12 +10,52 @@ use utoipa::OpenApi;
 use utoipa::ToSchema;
 use utoipa_swagger_ui::SwaggerUi;
 
+// Macro for functions returning ()
+macro_rules! send {
+    ($tx:expr, $progress:expr) => {
+        match serde_json::to_string(&$progress) {
+            Ok(json) => {
+                let event = sse::Event::Data(sse::Data::new(json));
+                if $tx.send(event).await.is_err() {
+                    tracing::warn!("Client disconnected, stopping stream");
+                    return;
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize progress update: {}", e);
+                return;
+            }
+        }
+    };
+}
+
+// Macro for functions returning Result<T, ()> - same name, different internal marker
+macro_rules! try_send {
+    ($tx:expr, $progress:expr) => {
+        match serde_json::to_string(&$progress) {
+            Ok(json) => {
+                let event = sse::Event::Data(sse::Data::new(json));
+                if $tx.send(event).await.is_err() {
+                    tracing::warn!("Client disconnected, stopping stream");
+                    return Err(());
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize progress update: {}", e);
+                return Err(());
+            }
+        }
+    };
+}
+
 mod chat;
 mod error;
 mod schema;
+mod template;
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
 use error::ApiError;
+use template::TemplateEngine;
 
 use crate::schema::discovery::Schema;
 
@@ -32,10 +72,13 @@ struct TextToCypherRequest {
 }
 
 #[derive(Serialize, Deserialize, ToSchema)]
-struct ProgressUpdate {
-    status: String,
-    message: String,
-    result: Option<String>,
+enum Progress {
+    Status(String),
+    Schema(String),
+    Cypher(String),
+    ModelOutputChunk(String, String),
+    Result(String),
+    Error(String),
 }
 
 #[utoipa::path(
@@ -49,8 +92,6 @@ struct ProgressUpdate {
 #[post("/text_to_cypher")]
 async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Result<impl Responder, actix_web::Error> {
     let mut request = req.into_inner();
-
-    request.model = "llama3.2".to_string(); // Default model, can be overridden by the request
 
     // Initialize the client outside the spawn
     let client = genai::Client::default();
@@ -75,101 +116,65 @@ async fn process_text_to_cypher_request(
     service_target: genai::ServiceTarget,
     tx: mpsc::Sender<sse::Event>,
 ) {
-    let adapter_kind = service_target.model.adapter_kind;
-    // Send initial status
-    let initial_update = ProgressUpdate {
-        status: "pending".to_string(),
-        message: "Job submitted, starting processing...".to_string(),
-        result: None,
-    };
+    tracing::info!("Processing text to Cypher request: {request:?}");
 
-    let event = sse::Event::Data(sse::Data::new(serde_json::to_string(&initial_update).unwrap()));
+	// Step 1: Send processing status
+    send_processing_status(&request, &service_target, &tx).await;
 
-    if tx.send(event).await.is_err() {
+    // Step 2: Discover schema
+    let Ok(schema) = discover_and_send_schema(&request.graph_name, &tx).await else {
         return;
-    }
-
-    // Send processing status
-    let processing_update = ProgressUpdate {
-        status: "processing".to_string(),
-        message: format!(
-            "Processing query for graph: {} using model: {} ({:?})",
-            request.graph_name, request.model, adapter_kind
-        ),
-        result: None,
     };
 
-    let event = sse::Event::Data(sse::Data::new(serde_json::to_string(&processing_update).unwrap()));
+    // Step 3: Generate chat request
+    let genai_chat_request = generate_chat_request(&request.chat_request, &schema);
 
-    if tx.send(event).await.is_err() {
-        return;
-    }
+    // Step 4: Execute chat stream and process response
+    execute_chat_stream(&client, &request.model, genai_chat_request, &tx).await;
+}
 
-    // Convert our ChatRequest to genai::chat::ChatRequest
-    let genai_chat_request: genai::chat::ChatRequest = request.chat_request.into();
+fn generate_chat_request(
+    chat_request: &ChatRequest,
+    ontology: &str,
+) -> genai::chat::ChatRequest {
+    let mut chat_req = genai::chat::ChatRequest::default();
 
-    // Make the actual request to the model
-    let chat_response = match client.exec_chat_stream(&request.model, genai_chat_request, None).await {
-        Ok(response) => response,
-        Err(e) => {
-            let error_update = ProgressUpdate {
-                status: "failed".to_string(),
-                message: format!("Chat request failed: {e}"),
-                result: None,
-            };
+    // Add user messages with special processing for the last user message
+    for (index, message) in chat_request.messages.iter().enumerate() {
+        let is_last_user_message = index == chat_request.messages.len() - 1 && message.role == ChatRole::User;
 
-            let event = sse::Event::Data(sse::Data::new(serde_json::to_string(&error_update).unwrap()));
-
-            let _ = tx.send(event).await;
-            return;
-        }
-    };
-
-    let mut answer = String::new();
-
-    // Extract the response stream
-    let mut stream = chat_response.stream;
-    while let Some(Ok(stream_event)) = stream.next().await {
-        let (event_info, content) = match stream_event {
-            genai::chat::ChatStreamEvent::Start => (Some("\n-- ChatStreamEvent::Start\n".to_string()), None),
-            genai::chat::ChatStreamEvent::Chunk(chunk) => {
-                answer.push_str(&chunk.content);
-                (Some("\n-- ChatStreamEvent::Chunk:\n".to_string()), Some(chunk.content))
+        let genai_message = match message.role {
+            ChatRole::User => {
+                if is_last_user_message {
+                    // Special processing for the last user message
+                    let processed_content = process_last_user_message(&message.content, ontology);
+                    genai::chat::ChatMessage::user(processed_content)
+                } else {
+                    genai::chat::ChatMessage::user(message.content.clone())
+                }
             }
-            genai::chat::ChatStreamEvent::ReasoningChunk(chunk) => (
-                Some("\n-- ChatStreamEvent::ReasoningChunk:\n".to_string()),
-                Some(chunk.content),
-            ),
-            genai::chat::ChatStreamEvent::End(end_event) => {
-                (Some(format!("\n-- ChatStreamEvent::End {end_event:?}\n")), None)
-            }
+            ChatRole::Assistant => genai::chat::ChatMessage::assistant(message.content.clone()),
+            ChatRole::System => genai::chat::ChatMessage::system(message.content.clone()),
         };
 
-        if let Some(event_info) = event_info {
-            let update = ProgressUpdate {
-                status: "processing".to_string(),
-                message: event_info,
-                result: content,
-            };
-
-            let event = sse::Event::Data(sse::Data::new(serde_json::to_string(&update).unwrap()));
-
-            if tx.send(event).await.is_err() {
-                return;
-            }
-        }
+        chat_req = chat_req.append_message(genai_message);
     }
 
-    // Send final summary
-    let summary = ProgressUpdate {
-        status: "completed".to_string(),
-        message: "Processing completed successfully.".to_string(),
-        result: Some(answer),
-    };
+    chat_req = chat_req.with_system(
+        TemplateEngine::render_system_prompt(ontology)
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to load system prompt template: {}", e);
+                format!("Generate OpenCypher statements using this ontology: {ontology}")
+            })
+    );
 
-    let event = sse::Event::Data(sse::Data::new(serde_json::to_string(&summary).unwrap()));
-
-    let _ = tx.send(event).await;
+    // Pretty print the chat request as JSON for logging
+    if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
+        tracing::info!("Generated genai chat request:\n{}", pretty_json);
+    } else {
+        tracing::info!("Generated genai chat request: {:?}", chat_req);
+    }
+    chat_req
 }
 
 #[derive(OpenApi)]
@@ -177,7 +182,7 @@ async fn process_text_to_cypher_request(
     paths(text_to_cypher),
     components(schemas(
         TextToCypherRequest,
-        ProgressUpdate,
+        Progress,
         ChatRequest,
         ChatMessage,
         ChatRole,
@@ -189,16 +194,6 @@ struct ApiDoc;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     fmt().with_max_level(tracing::Level::INFO).init();
-
-    let schema = create_schema().await;
-    // Print the discovered schema
-    tracing::info!("Discovered schema: {}", schema);
-
-    // Print the schema as JSON
-    match serde_json::to_string_pretty(&schema) {
-        Ok(json) => tracing::info!("Schema as JSON: \n{}", json),
-        Err(e) => tracing::error!("Failed to serialize schema to JSON: {}", e),
-    }
 
     tracing::info!("Starting server at http://localhost:8080/swagger-ui/");
 
@@ -217,7 +212,7 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-async fn create_schema() -> Schema {
+async fn discover_graph_schema(graph_name: &str) -> Schema {
     let connection_info: FalkorConnectionInfo = "falkor://127.0.0.1:6379".try_into().expect("Invalid connection info");
 
     let client = FalkorClientBuilder::new_async()
@@ -226,8 +221,8 @@ async fn create_schema() -> Schema {
         .await
         .expect("Failed to build client");
 
-    // Select the social graph
-    let mut graph = client.select_graph("social");
+    // Select the specified graph
+    let mut graph = client.select_graph(graph_name);
     let schema = Schema::discover_from_graph(&mut graph, 100)
         .await
         .expect("Failed to discover schema from graph");
@@ -235,4 +230,99 @@ async fn create_schema() -> Schema {
     // Print the discovered schema
     tracing::info!("Discovered schema: {schema}");
     schema
+}
+
+fn process_last_user_message(
+    question: &str,
+    _ontology: &str,
+) -> String {
+    TemplateEngine::render_user_prompt(question)
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to load user prompt template: {}", e);
+            format!("Generate an OpenCypher statement for: {question}")
+        })
+}
+
+async fn discover_and_send_schema(
+    graph_name: &str,
+    tx: &mpsc::Sender<sse::Event>,
+) -> Result<String, ()> {
+    try_send!(tx, Progress::Status(format!("Discovering schema for graph: {graph_name}")));
+
+    let schema = discover_graph_schema(graph_name).await;
+    
+    // Serialize and handle errors inline
+    let Ok(json_schema) = serde_json::to_string(&schema) else {
+        tracing::error!("Failed to serialize schema to JSON");
+        try_send!(tx, Progress::Error("Failed to serialize schema".to_string()));
+        return Err(());
+    };
+
+    tracing::info!("Discovered schema: {}", json_schema);
+    try_send!(tx, Progress::Schema(json_schema.clone()));
+    Ok(json_schema)
+}
+
+async fn send_processing_status(
+    request: &TextToCypherRequest,
+    service_target: &genai::ServiceTarget,
+    tx: &mpsc::Sender<sse::Event>,
+) {
+    let adapter_kind = service_target.model.adapter_kind;
+    send!(
+        tx,
+        Progress::Status(format!(
+            "Processing query for graph: {} using model: {} ({:?})",
+            request.graph_name, request.model, adapter_kind
+        ))
+    );
+}
+
+async fn execute_chat_stream(
+    client: &genai::Client,
+    model: &str,
+    genai_chat_request: genai::chat::ChatRequest,
+    tx: &mpsc::Sender<sse::Event>,
+) {
+    // Make the actual request to the model
+    let chat_response = match client.exec_chat_stream(model, genai_chat_request, None).await {
+        Ok(response) => response,
+        Err(e) => {
+            let error_update = Progress::Error(format!("Chat request failed: {e}"));
+            send!(tx, error_update);
+            return;
+        }
+    };
+
+    process_chat_stream(chat_response, tx).await;
+}
+
+async fn process_chat_stream(
+    chat_response: genai::chat::ChatStreamResponse,
+    tx: &mpsc::Sender<sse::Event>,
+) {
+    let mut answer = String::new();
+
+    // Extract the response stream
+    let mut stream = chat_response.stream;
+    while let Some(Ok(stream_event)) = stream.next().await {
+        match stream_event {
+            genai::chat::ChatStreamEvent::Start => {
+                send!(tx, Progress::ModelOutputChunk("\n-- ChatStreamEvent::Start\n".to_string(), String::new()));
+            }
+            genai::chat::ChatStreamEvent::Chunk(chunk) => {
+                answer.push_str(&chunk.content);
+                send!(tx, Progress::ModelOutputChunk("\n-- ChatStreamEvent::Chunk:\n".to_string(), chunk.content));
+            }
+            genai::chat::ChatStreamEvent::ReasoningChunk(chunk) => {
+                send!(tx, Progress::ModelOutputChunk("\n-- ChatStreamEvent::ReasoningChunk:\n".to_string(), chunk.content));
+            }
+            genai::chat::ChatStreamEvent::End(end_event) => {
+                send!(tx, Progress::ModelOutputChunk(format!("\n-- ChatStreamEvent::End {end_event:?}\n"), String::new()));
+            }
+        }
+    }
+
+    tracing::info!("Final answer: {}", answer);
+    send!(tx, Progress::Result(answer));
 }
