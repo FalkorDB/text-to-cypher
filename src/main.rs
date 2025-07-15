@@ -3,9 +3,9 @@ use actix_web_lab::sse::{self, Sse};
 use falkordb::FalkorClientBuilder;
 use falkordb::FalkorConnectionInfo;
 use futures_util::StreamExt;
+use genai::ModelIden;
 use genai::resolver::AuthData;
 use genai::resolver::AuthResolver;
-use genai::ModelIden;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing_subscriber::fmt;
@@ -72,25 +72,27 @@ struct TextToCypherRequest {
     graph_name: String,
     chat_request: ChatRequest,
     model: String,
-	key: Option<String>,
+    key: Option<String>,
 }
 
 impl std::fmt::Debug for TextToCypherRequest {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		let mut debug_struct = f.debug_struct("TextToCypherRequest");
-		debug_struct
-			.field("graph_name", &self.graph_name)
-			.field("chat_request", &self.chat_request)
-			.field("model", &self.model);
-		
-		if self.key.is_some() {
-			debug_struct.field("key", &"***");
-		}
-		
-		debug_struct.finish()
-	}
-}
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        let mut debug_struct = f.debug_struct("TextToCypherRequest");
+        debug_struct
+            .field("graph_name", &self.graph_name)
+            .field("chat_request", &self.chat_request)
+            .field("model", &self.model);
 
+        if self.key.is_some() {
+            debug_struct.field("key", &"***");
+        }
+
+        debug_struct.finish()
+    }
+}
 
 #[derive(Serialize, Deserialize, ToSchema)]
 enum Progress {
@@ -130,7 +132,7 @@ async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resul
         );
         genai::Client::builder().with_auth_resolver(auth_resolver).build()
     });
-    
+
     let service_target = client.resolve_service_target(&request.model).await.map_err(ApiError::from)?;
 
     let (tx, rx) = mpsc::channel(100);
