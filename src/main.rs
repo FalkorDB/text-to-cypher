@@ -51,13 +51,53 @@ macro_rules! try_send {
     };
 }
 
+// Macro for functions returning Result<String, Box<dyn Error>>
+macro_rules! try_send_boxed {
+    ($tx:expr, $progress:expr) => {
+        match serde_json::to_string(&$progress) {
+            Ok(json) => {
+                let event = sse::Event::Data(sse::Data::new(json));
+                if $tx.send(event).await.is_err() {
+                    tracing::warn!("Client disconnected, stopping stream");
+                    return Err("Client disconnected".into());
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize progress update: {}", e);
+                return Err(format!("Serialization failed: {}", e).into());
+            }
+        }
+    };
+}
+
+// Macro for functions returning String (returns empty string on error)
+macro_rules! send_or_empty {
+    ($tx:expr, $progress:expr) => {
+        match serde_json::to_string(&$progress) {
+            Ok(json) => {
+                let event = sse::Event::Data(sse::Data::new(json));
+                if $tx.send(event).await.is_err() {
+                    tracing::warn!("Client disconnected, stopping stream");
+                    return String::new();
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize progress update: {}", e);
+                return String::new();
+            }
+        }
+    };
+}
+
 mod chat;
 mod error;
+mod formatter;
 mod schema;
 mod template;
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
 use error::ApiError;
+use formatter::format_query_records;
 use template::TemplateEngine;
 
 use crate::schema::discovery::Schema;
@@ -163,19 +203,110 @@ async fn process_text_to_cypher_request(
     };
 
     // Step 3: Generate chat request
-    let genai_chat_request = generate_chat_request(&request.chat_request, &schema);
+    let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, &schema);
 
     // Step 4: Execute chat stream and process response
-    execute_chat_stream(&client, &request.model, genai_chat_request, &tx).await;
+    let query = execute_chat(&client, &request.model, genai_chat_request, &tx).await;
+
+    // Step 5: Execute the generated query
+    if query.trim().is_empty() {
+        tracing::warn!("No query generated from AI model");
+        send!(tx, Progress::Error("No valid query was generated".to_string()));
+        return;
+    }
+
+    let query = query.replace('\n', " ").replace("```", "").trim().to_string();
+    let query_result = match execute_query(&query, &request.graph_name, &tx).await {
+        Ok(result) => {
+			result
+        }
+        Err(e) => {
+            tracing::error!("Query execution failed: {}", e);
+            send!(tx, Progress::Error(format!("Query execution failed: {e}")));
+			return;
+        }
+    };
+	tracing::info!("Query executed successfully, result: {}", query_result);
+	
+
+	// Step 6: Send the final result
+	send!(tx, Progress::Result(query_result.clone()));
+
+	let genai_chat_request =  generate_answer_chat_request(&request.chat_request, &query, &query_result);
+	let answer = execute_chat_stream(&client, &request.model, genai_chat_request, &tx).await;
+	tracing::info!("Generated answer: {}", answer);
+
 }
 
-fn generate_chat_request(
+async fn execute_query(
+    query: &str,
+    graph_name: &str,
+    tx: &mpsc::Sender<sse::Event>,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    tracing::info!("Executing query: {}", query);
+    try_send_boxed!(tx, Progress::Status(format!("Executing query: {query}")));
+
+    let connection_info: FalkorConnectionInfo = "falkor://127.0.0.1:6379"
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
+
+    let client = FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .build()
+        .await
+        .map_err(|e| format!("Failed to build client: {e}"))?;
+
+    let graph_name = graph_name.to_string();
+    let query = query.to_string();
+
+    // Run the FalkorDB operations in a blocking context
+    let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query))
+        .await
+        .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
+
+    let formatted_result = match result {
+        Ok(records) => format_query_records(&records),
+        Err(e) => {
+            let error_msg = format!("Query execution failed: {e}");
+            try_send_boxed!(tx, Progress::Error(error_msg.clone()));
+            return Err(error_msg.into());
+        }
+    };
+
+    tracing::info!("Query result: {}", formatted_result);
+    try_send_boxed!(tx, Progress::Result(formatted_result.clone()));
+    Ok(formatted_result)
+}
+
+fn execute_query_blocking(
+    client: &falkordb::FalkorAsyncClient,
+    graph_name: &str,
+    query: &str,
+) -> Result<Vec<Vec<falkordb::FalkorValue>>, Box<dyn std::error::Error + Send + Sync>> {
+    // Create a new Tokio runtime for this blocking operation
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
+
+    rt.block_on(async {
+        let mut graph = client.select_graph(graph_name);
+        let query_result = graph
+            .ro_query(query)
+            .execute()
+            .await
+            .map_err(|e| format!("Query execution failed: {e}"))?;
+
+        let mut records = Vec::new();
+        for record in query_result.data {
+            records.push(record);
+        }
+        Ok(records)
+    })
+}
+
+fn generate_create_cypher_query_chat_request(
     chat_request: &ChatRequest,
     ontology: &str,
 ) -> genai::chat::ChatRequest {
     let mut chat_req = genai::chat::ChatRequest::default();
-
-    // Add user messages with special processing for the last user message
     for (index, message) in chat_request.messages.iter().enumerate() {
         let is_last_user_message = index == chat_request.messages.len() - 1 && message.role == ChatRole::User;
 
@@ -183,7 +314,7 @@ fn generate_chat_request(
             ChatRole::User => {
                 if is_last_user_message {
                     // Special processing for the last user message
-                    let processed_content = process_last_user_message(&message.content, ontology);
+                    let processed_content = process_last_user_message(&message.content);
                     genai::chat::ChatMessage::user(processed_content)
                 } else {
                     genai::chat::ChatMessage::user(message.content.clone())
@@ -209,6 +340,50 @@ fn generate_chat_request(
     }
     chat_req
 }
+
+fn generate_answer_chat_request(
+    chat_request: &ChatRequest,
+    cypher_query: &str,
+	cypher_result: &str,
+) -> genai::chat::ChatRequest {
+    let mut chat_req = genai::chat::ChatRequest::default();
+    for (index, message) in chat_request.messages.iter().enumerate() {
+        let is_last_user_message = index == chat_request.messages.len() - 1 && message.role == ChatRole::User;
+
+        let genai_message = match message.role {
+            ChatRole::User => {
+                if is_last_user_message {
+                    // Special processing for the last user message
+                    let processed_content = process_last_request_prompt(&message.content, cypher_query, cypher_result);
+                    genai::chat::ChatMessage::user(processed_content)
+                } else {
+                    genai::chat::ChatMessage::user(message.content.clone())
+                }
+            }
+            ChatRole::Assistant => genai::chat::ChatMessage::assistant(message.content.clone()),
+            ChatRole::System => genai::chat::ChatMessage::system(message.content.clone()),
+        };
+
+        chat_req = chat_req.append_message(genai_message);
+    }
+
+
+    // Pretty print the chat request as JSON for logging
+    if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
+        tracing::info!("Generated genai chat request:\n{}", pretty_json);
+    } else {
+        tracing::info!("Generated genai chat request: {:?}", chat_req);
+    }
+    chat_req
+}
+
+fn process_last_request_prompt(content: &str, cypher_query: &str, cypher_result: &str) -> String   {
+	 TemplateEngine::render_last_request_prompt(content, cypher_query,cypher_result).unwrap_or_else(|e| {
+        tracing::error!("Failed to load last_request_prompt template: {}", e);
+        format!("Generate an answer for: {content}")
+    })
+}
+
 
 #[derive(OpenApi)]
 #[openapi(
@@ -267,7 +442,6 @@ async fn discover_graph_schema(graph_name: &str) -> Schema {
 
 fn process_last_user_message(
     question: &str,
-    _ontology: &str,
 ) -> String {
     TemplateEngine::render_user_prompt(question).unwrap_or_else(|e| {
         tracing::error!("Failed to load user prompt template: {}", e);
@@ -314,30 +488,50 @@ async fn send_processing_status(
     );
 }
 
+async fn execute_chat(
+    client: &genai::Client,
+    model: &str,
+    genai_chat_request: genai::chat::ChatRequest,
+    tx: &mpsc::Sender<sse::Event>,
+) -> String {
+    // Make the actual request to the model
+    let chat_response = match client.exec_chat(model, genai_chat_request, None).await {
+        Ok(response) => response,
+        Err(e) => {
+            let error_update = Progress::Error(format!("Chat request failed: {e}"));
+            send_or_empty!(tx, error_update);
+            return String::from("NO ANSWER");
+        }
+    };
+	let res = chat_response.content_text_into_string().unwrap_or_else(|| String::from("NO ANSWER"));
+	send_or_empty!(tx, Progress::Result(res.clone()));
+	res
+}
+
 async fn execute_chat_stream(
     client: &genai::Client,
     model: &str,
     genai_chat_request: genai::chat::ChatRequest,
     tx: &mpsc::Sender<sse::Event>,
-) {
+) -> String {
     // Make the actual request to the model
     let chat_response = match client.exec_chat_stream(model, genai_chat_request, None).await {
         Ok(response) => response,
         Err(e) => {
             let error_update = Progress::Error(format!("Chat request failed: {e}"));
-            send!(tx, error_update);
-            return;
+            send_or_empty!(tx, error_update);
+            return String::new();
         }
     };
 
-    process_chat_stream(chat_response, tx).await;
+    process_chat_stream(chat_response, tx).await
 }
 
 #[allow(clippy::cognitive_complexity)]
 async fn process_chat_stream(
     chat_response: genai::chat::ChatStreamResponse,
     tx: &mpsc::Sender<sse::Event>,
-) {
+) -> String {
     let mut answer = String::new();
 
     // Extract the response stream
@@ -345,26 +539,26 @@ async fn process_chat_stream(
     while let Some(Ok(stream_event)) = stream.next().await {
         match stream_event {
             genai::chat::ChatStreamEvent::Start => {
-                send!(
+                send_or_empty!(
                     tx,
                     Progress::ModelOutputChunk("\n-- ChatStreamEvent::Start\n".to_string(), String::new())
                 );
             }
             genai::chat::ChatStreamEvent::Chunk(chunk) => {
                 answer.push_str(&chunk.content);
-                send!(
+                send_or_empty!(
                     tx,
                     Progress::ModelOutputChunk("\n-- ChatStreamEvent::Chunk:\n".to_string(), chunk.content)
                 );
             }
             genai::chat::ChatStreamEvent::ReasoningChunk(chunk) => {
-                send!(
+                send_or_empty!(
                     tx,
                     Progress::ModelOutputChunk("\n-- ChatStreamEvent::ReasoningChunk:\n".to_string(), chunk.content)
                 );
             }
             genai::chat::ChatStreamEvent::End(end_event) => {
-                send!(
+                send_or_empty!(
                     tx,
                     Progress::ModelOutputChunk(format!("\n-- ChatStreamEvent::End {end_event:?}\n"), String::new())
                 );
@@ -373,5 +567,6 @@ async fn process_chat_stream(
     }
 
     tracing::info!("Final answer: {}", answer);
-    send!(tx, Progress::Result(answer));
+    send_or_empty!(tx, Progress::Result(answer.clone()));
+    answer
 }

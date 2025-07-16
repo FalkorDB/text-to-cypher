@@ -36,4 +36,15 @@ impl TemplateEngine {
 
         Ok(Self::render(&template, &variables))
     }
+
+	pub fn render_last_request_prompt(question: &str, cypher_query: &str, cypher_result: &str) -> Result<String, std::io::Error> {
+        let template = Self::load_template("templates/last_request_prompt.txt")?;
+        let mut variables = HashMap::new();
+        variables.insert("CYPHER_QUERY", cypher_query);
+        variables.insert("CYPHER_RESULT", cypher_result);
+        variables.insert("USER_QUESTION", question);
+
+        Ok(Self::render(&template, &variables))
+    }
+
 }
