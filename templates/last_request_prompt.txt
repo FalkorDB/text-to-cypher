@@ -1,1 +1,2 @@
 Given that the data from this cypher query {{CYPHER_QUERY}} is {{CYPHER_RESULT}} answer this: {{USER_QUESTION}}
+In your answer do not mention the given data or the cypher query nor the cypher result

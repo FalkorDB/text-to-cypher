@@ -138,8 +138,9 @@ impl std::fmt::Debug for TextToCypherRequest {
 enum Progress {
     Status(String),
     Schema(String),
-    Cypher(String),
-    ModelOutputChunk(String, String),
+    CypherQuery(String),
+    CypherResult(String),
+    ModelOutputChunk(String),
     Result(String),
     Error(String),
 }
@@ -202,6 +203,11 @@ async fn process_text_to_cypher_request(
         return;
     };
 
+    send!(
+        tx,
+        Progress::Status(String::from("Generating Cypher query using schema ..."))
+    );
+
     // Step 3: Generate chat request
     let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, &schema);
 
@@ -216,26 +222,36 @@ async fn process_text_to_cypher_request(
     }
 
     let query = query.replace('\n', " ").replace("```", "").trim().to_string();
+
+    send!(tx, Progress::CypherQuery(query.clone()));
+
+    send!(tx, Progress::Status(String::from("Executing Cypher query...")));
+
+    tracing::info!("Executing Cypher Query: {}", &query);
+
     let query_result = match execute_query(&query, &request.graph_name, &tx).await {
-        Ok(result) => {
-			result
-        }
+        Ok(result) => result,
         Err(e) => {
             tracing::error!("Query execution failed: {}", e);
             send!(tx, Progress::Error(format!("Query execution failed: {e}")));
-			return;
+            return;
         }
     };
-	tracing::info!("Query executed successfully, result: {}", query_result);
-	
+    tracing::info!("Query executed successfully, result: {}", query_result);
 
-	// Step 6: Send the final result
-	send!(tx, Progress::Result(query_result.clone()));
+    // Step 6: Send the final result
+    send!(tx, Progress::CypherResult(query_result.clone()));
 
-	let genai_chat_request =  generate_answer_chat_request(&request.chat_request, &query, &query_result);
-	let answer = execute_chat_stream(&client, &request.model, genai_chat_request, &tx).await;
-	tracing::info!("Generated answer: {}", answer);
+    send!(
+        tx,
+        Progress::Status(String::from(
+            "Generating answer from chat history and Cypher output using AI model..."
+        ))
+    );
 
+    let genai_chat_request: genai::chat::ChatRequest =
+        generate_answer_chat_request(&request.chat_request, &query, &query_result);
+    execute_chat_stream(&client, &request.model, genai_chat_request, &tx).await;
 }
 
 async fn execute_query(
@@ -243,9 +259,6 @@ async fn execute_query(
     graph_name: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    tracing::info!("Executing query: {}", query);
-    try_send_boxed!(tx, Progress::Status(format!("Executing query: {query}")));
-
     let connection_info: FalkorConnectionInfo = "falkor://127.0.0.1:6379"
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
@@ -273,8 +286,6 @@ async fn execute_query(
         }
     };
 
-    tracing::info!("Query result: {}", formatted_result);
-    try_send_boxed!(tx, Progress::Result(formatted_result.clone()));
     Ok(formatted_result)
 }
 
@@ -344,7 +355,7 @@ fn generate_create_cypher_query_chat_request(
 fn generate_answer_chat_request(
     chat_request: &ChatRequest,
     cypher_query: &str,
-	cypher_result: &str,
+    cypher_result: &str,
 ) -> genai::chat::ChatRequest {
     let mut chat_req = genai::chat::ChatRequest::default();
     for (index, message) in chat_request.messages.iter().enumerate() {
@@ -367,7 +378,6 @@ fn generate_answer_chat_request(
         chat_req = chat_req.append_message(genai_message);
     }
 
-
     // Pretty print the chat request as JSON for logging
     if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
         tracing::info!("Generated genai chat request:\n{}", pretty_json);
@@ -377,13 +387,16 @@ fn generate_answer_chat_request(
     chat_req
 }
 
-fn process_last_request_prompt(content: &str, cypher_query: &str, cypher_result: &str) -> String   {
-	 TemplateEngine::render_last_request_prompt(content, cypher_query,cypher_result).unwrap_or_else(|e| {
+fn process_last_request_prompt(
+    content: &str,
+    cypher_query: &str,
+    cypher_result: &str,
+) -> String {
+    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result).unwrap_or_else(|e| {
         tracing::error!("Failed to load last_request_prompt template: {}", e);
         format!("Generate an answer for: {content}")
     })
 }
-
 
 #[derive(OpenApi)]
 #[openapi(
@@ -440,9 +453,7 @@ async fn discover_graph_schema(graph_name: &str) -> Schema {
     schema
 }
 
-fn process_last_user_message(
-    question: &str,
-) -> String {
+fn process_last_user_message(question: &str) -> String {
     TemplateEngine::render_user_prompt(question).unwrap_or_else(|e| {
         tracing::error!("Failed to load user prompt template: {}", e);
         format!("Generate an OpenCypher statement for: {question}")
@@ -503,9 +514,9 @@ async fn execute_chat(
             return String::from("NO ANSWER");
         }
     };
-	let res = chat_response.content_text_into_string().unwrap_or_else(|| String::from("NO ANSWER"));
-	send_or_empty!(tx, Progress::Result(res.clone()));
-	res
+    chat_response
+        .content_text_into_string()
+        .unwrap_or_else(|| String::from("NO ANSWER"))
 }
 
 async fn execute_chat_stream(
@@ -538,31 +549,13 @@ async fn process_chat_stream(
     let mut stream = chat_response.stream;
     while let Some(Ok(stream_event)) = stream.next().await {
         match stream_event {
-            genai::chat::ChatStreamEvent::Start => {
-                send_or_empty!(
-                    tx,
-                    Progress::ModelOutputChunk("\n-- ChatStreamEvent::Start\n".to_string(), String::new())
-                );
-            }
+            genai::chat::ChatStreamEvent::Start => {}
             genai::chat::ChatStreamEvent::Chunk(chunk) => {
                 answer.push_str(&chunk.content);
-                send_or_empty!(
-                    tx,
-                    Progress::ModelOutputChunk("\n-- ChatStreamEvent::Chunk:\n".to_string(), chunk.content)
-                );
+                send_or_empty!(tx, Progress::ModelOutputChunk(chunk.content));
             }
-            genai::chat::ChatStreamEvent::ReasoningChunk(chunk) => {
-                send_or_empty!(
-                    tx,
-                    Progress::ModelOutputChunk("\n-- ChatStreamEvent::ReasoningChunk:\n".to_string(), chunk.content)
-                );
-            }
-            genai::chat::ChatStreamEvent::End(end_event) => {
-                send_or_empty!(
-                    tx,
-                    Progress::ModelOutputChunk(format!("\n-- ChatStreamEvent::End {end_event:?}\n"), String::new())
-                );
-            }
+            genai::chat::ChatStreamEvent::ReasoningChunk(_chunk) => {}
+            genai::chat::ChatStreamEvent::End(_end_event) => {}
         }
     }
 
