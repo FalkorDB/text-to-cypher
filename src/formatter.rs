@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn test_multiple_records() {
         let records = vec![vec![FalkorValue::I64(1)], vec![FalkorValue::I64(2)]];
-        let expected = "Results (2 records):\n1. 1\n2. 2";
+        let expected = "1. 1\n2. 2";
         assert_eq!(format_query_records(&records), expected);
     }
 
