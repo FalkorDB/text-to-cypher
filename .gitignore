@@ -5,4 +5,5 @@ falkor.sh
 graph.sh
 request.sh
 ufc.dump
+.env
 

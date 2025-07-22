@@ -12,6 +12,7 @@ use tracing_subscriber::fmt;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
 use utoipa_swagger_ui::SwaggerUi;
+use std::sync::OnceLock;
 
 // Macro for functions returning ()
 macro_rules! send {
@@ -92,15 +93,48 @@ macro_rules! send_or_empty {
 mod chat;
 mod error;
 mod formatter;
+mod mcp;
 mod schema;
 mod template;
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
 use error::ApiError;
 use formatter::format_query_records;
+use mcp::run_mcp_server;
 use template::TemplateEngine;
 
 use crate::schema::discovery::Schema;
+
+// Configuration structure for default values from .env file
+#[derive(Debug, Clone)]
+struct AppConfig {
+    default_model: Option<String>,
+    default_key: Option<String>,
+}
+
+static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
+
+impl AppConfig {
+    fn load() -> Self {
+        // Load .env file if it exists, but don't fail if it doesn't
+        let _ = dotenvy::dotenv();
+        
+        let default_model = std::env::var("DEFAULT_MODEL").ok();
+        let default_key = std::env::var("DEFAULT_KEY").ok();
+        
+        tracing::info!("Loaded configuration - default_model: {:?}", 
+            default_model.as_ref().map(|_| "***"));
+        
+        Self {
+            default_model,
+            default_key,
+        }
+    }
+    
+    fn get() -> &'static Self {
+        APP_CONFIG.get_or_init(Self::load)
+    }
+}
 
 #[derive(Serialize, Deserialize, ToSchema)]
 struct HelloResponse {
@@ -111,7 +145,7 @@ struct HelloResponse {
 struct TextToCypherRequest {
     graph_name: String,
     chat_request: ChatRequest,
-    model: String,
+    model: Option<String>,
     key: Option<String>,
 }
 
@@ -155,7 +189,22 @@ enum Progress {
 )]
 #[post("/text_to_cypher")]
 async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Result<impl Responder, actix_web::Error> {
-    let request = req.into_inner();
+    let mut request = req.into_inner();
+    let config = AppConfig::get();
+    
+    // Apply defaults from .env file if values are not provided
+    if request.model.is_none() {
+        request.model.clone_from(&config.default_model);
+    }
+    
+    if request.key.is_none() {
+        request.key.clone_from(&config.default_key);
+    }
+    
+    // Ensure we have a model after applying defaults
+    let model = request.model.as_ref().ok_or_else(|| {
+        actix_web::error::ErrorBadRequest("Model must be provided either in request or as DEFAULT_MODEL in .env file")
+    })?;
 
     let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
         let key = key.clone(); // Clone the key for use in the closure
@@ -174,7 +223,7 @@ async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resul
         genai::Client::builder().with_auth_resolver(auth_resolver).build()
     });
 
-    let service_target = client.resolve_service_target(&request.model).await.map_err(ApiError::from)?;
+    let service_target = client.resolve_service_target(model).await.map_err(ApiError::from)?;
 
     let (tx, rx) = mpsc::channel(100);
 
@@ -195,6 +244,9 @@ async fn process_text_to_cypher_request(
 ) {
     tracing::info!("Processing text to Cypher request: {request:?}");
 
+    // Get the model name - should be available after applying defaults
+    let model = request.model.as_ref().expect("Model should be available after applying defaults");
+
     // Step 1: Send processing status
     send_processing_status(&request, &service_target, &tx).await;
 
@@ -212,7 +264,7 @@ async fn process_text_to_cypher_request(
     let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, &schema);
 
     // Step 4: Execute chat stream and process response
-    let query = execute_chat(&client, &request.model, genai_chat_request, &tx).await;
+    let query = execute_chat(&client, model, genai_chat_request, &tx).await;
 
     // Step 5: Execute the generated query
     if query.trim().is_empty() {
@@ -251,7 +303,7 @@ async fn process_text_to_cypher_request(
 
     let genai_chat_request: genai::chat::ChatRequest =
         generate_answer_chat_request(&request.chat_request, &query, &query_result);
-    execute_chat_stream(&client, &request.model, genai_chat_request, &tx).await;
+    execute_chat_stream(&client, model, genai_chat_request, &tx).await;
 }
 
 async fn execute_query(
@@ -415,22 +467,45 @@ struct ApiDoc;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     fmt().with_max_level(tracing::Level::INFO).init();
+    
+    // Initialize configuration from .env file
+    let _config = AppConfig::get();
 
     tracing::info!("Starting server at http://localhost:8080/swagger-ui/");
+    tracing::info!("Starting MCP server at http://localhost:8081/sse");
+
+    // Start MCP server in background
+    let mcp_handle = tokio::spawn(async {
+        tracing::info!("MCP server started");
+        if let Err(e) = run_mcp_server().await {
+            tracing::error!("MCP server error: {}", e);
+        }
+    });
 
     // Start the HTTP server with Swagger UI at /swagger-ui/
     // OpenAPI documentation will be available at /api-doc/openapi.json
     // Swagger UI will be accessible at:
     // http://localhost:8080/swagger-ui/
 
-    HttpServer::new(|| {
+    let http_server = HttpServer::new(|| {
         App::new()
             .service(text_to_cypher)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
     .bind(("127.0.0.1", 8080))?
-    .run()
-    .await
+    .run();
+
+    // Run both servers concurrently
+    tokio::select! {
+        result = http_server => {
+            tracing::info!("HTTP server stopped");
+            result
+        }
+        _ = mcp_handle => {
+            tracing::info!("MCP server stopped");
+            Ok(())
+        }
+    }
 }
 
 async fn discover_graph_schema(graph_name: &str) -> Schema {
@@ -490,11 +565,12 @@ async fn send_processing_status(
     tx: &mpsc::Sender<sse::Event>,
 ) {
     let adapter_kind = service_target.model.adapter_kind;
+    let model_name = request.model.as_deref().unwrap_or("unknown");
     send!(
         tx,
         Progress::Status(format!(
             "Processing query for graph: {} using model: {} ({:?})",
-            request.graph_name, request.model, adapter_kind
+            request.graph_name, model_name, adapter_kind
         ))
     );
 }
