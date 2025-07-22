@@ -69,6 +69,7 @@ jobs:
           file: ./Dockerfile
           push: false
           tags: text-to-cypher:latest
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
