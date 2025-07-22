@@ -1,0 +1,23 @@
+# Ignore everything by default
+*
+
+# Include only what we need
+!Cargo.toml
+!Cargo.lock
+!src/
+!templates/
+
+# Explicitly ignore these even if they match the includes above
+target/
+.git/
+.github/
+.history/
+.vscode/
+.env*
+dump.rdb
+ufc.dump
+*.sh
+readme.md
+.gitignore
+rustfmt.toml
+examples/

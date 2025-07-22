@@ -178,21 +178,18 @@ impl AppConfig {
     /// Check if MCP server should be started based on configuration completeness
     #[allow(clippy::cognitive_complexity)]
     fn should_start_mcp_server(&self) -> bool {
-        // Check if .env file exists and has both required properties
-        let env_exists = std::path::Path::new(".env").exists();
+        // Check if both required environment variables are available
         let has_model = self.default_model.is_some();
         let has_key = self.default_key.is_some();
 
-        let should_start = env_exists && has_model && has_key;
+        let should_start = has_model && has_key;
 
-        if !should_start {
-            if !env_exists {
-                tracing::warn!("MCP server not started: .env file not found");
-            } else if !has_model {
-                tracing::warn!("MCP server not started: DEFAULT_MODEL not set in .env file");
-            } else if !has_key {
-                tracing::warn!("MCP server not started: DEFAULT_KEY not set in .env file");
-            }
+        if should_start {
+            tracing::info!("MCP server will be started: both DEFAULT_MODEL and DEFAULT_KEY are configured");
+        } else if !has_model {
+            tracing::warn!("MCP server not started: DEFAULT_MODEL not set");
+        } else if !has_key {
+            tracing::warn!("MCP server not started: DEFAULT_KEY not set");
         }
 
         should_start
@@ -617,7 +614,7 @@ async fn main() -> std::io::Result<()> {
             .service(text_to_cypher)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(("0.0.0.0", 8080))?
     .run();
 
     // Run server(s) concurrently

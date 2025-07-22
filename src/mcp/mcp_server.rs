@@ -43,7 +43,7 @@ pub async fn run_mcp_server() -> SdkResult<()> {
         server_details,
         handler,
         HyperServerOptions {
-            host: "127.0.0.1".to_string(),
+            host: "0.0.0.0".to_string(),
             port: 3001,
             ping_interval: Duration::from_secs(5),
             ..Default::default()
