@@ -136,7 +136,6 @@ mod schema;
 mod template;
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
-use error::ApiError;
 use formatter::format_query_records;
 use mcp::run_mcp_server;
 use template::TemplateEngine;
@@ -260,10 +259,25 @@ async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resul
         request.key.clone_from(&config.default_key);
     }
 
+    let (tx, rx) = mpsc::channel(100);
+
     // Ensure we have a model after applying defaults
-    let model = request.model.as_ref().ok_or_else(|| {
-        actix_web::error::ErrorBadRequest("Model must be provided either in request or as DEFAULT_MODEL in .env file")
-    })?;
+    if request.model.is_none() {
+        // Send error via SSE instead of returning HTTP error
+        tokio::spawn(async move {
+            let error_event = sse::Event::Data(sse::Data::new(
+                serde_json::to_string(&Progress::Error(
+                    "Model must be provided either in request or as DEFAULT_MODEL in .env file".to_string(),
+                ))
+                .unwrap_or_else(|_| r#"{"Error":"Serialization failed"}"#.to_string()),
+            ));
+            let _ = tx.send(error_event).await;
+        });
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok::<_, actix_web::Error>);
+        return Ok(Sse::from_stream(stream));
+    }
+
+    let model = request.model.as_ref().unwrap(); // Safe to unwrap after the check above
 
     let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
         let key = key.clone(); // Clone the key for use in the closure
@@ -282,9 +296,22 @@ async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resul
         genai::Client::builder().with_auth_resolver(auth_resolver).build()
     });
 
-    let service_target = client.resolve_service_target(model).await.map_err(ApiError::from)?;
-
-    let (tx, rx) = mpsc::channel(100);
+    // Handle service target resolution errors via SSE
+    let service_target = match client.resolve_service_target(model).await {
+        Ok(target) => target,
+        Err(e) => {
+            // Send error via SSE instead of returning HTTP error
+            tokio::spawn(async move {
+                let error_event = sse::Event::Data(sse::Data::new(
+                    serde_json::to_string(&Progress::Error(format!("Failed to resolve service target: {e}")))
+                        .unwrap_or_else(|_| r#"{"Error":"Serialization failed"}"#.to_string()),
+                ));
+                let _ = tx.send(error_event).await;
+            });
+            let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok::<_, actix_web::Error>);
+            return Ok(Sse::from_stream(stream));
+        }
+    };
 
     tokio::spawn(async move {
         process_text_to_cypher_request(request, client, service_target, tx).await;
