@@ -77,7 +77,15 @@ impl ServerHandler for MyServerHandler {
 async fn forward_to_http_endpoint(
     tool_args: TextToCypherTool
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    // Create a simple chat request with the question
+    let http_request = create_http_request_payload(tool_args)?;
+    let response = send_http_request(&http_request).await?;
+    process_sse_response(response).await
+}
+
+// Create HTTP request payload for the text-to-cypher endpoint
+fn create_http_request_payload(
+    tool_args: TextToCypherTool
+) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
     let chat_request = ChatRequest {
         messages: vec![ChatMessage {
             role: ChatRole::User,
@@ -85,7 +93,6 @@ async fn forward_to_http_endpoint(
         }],
     };
 
-    // Create the HTTP request payload (matching TextToCypherRequest structure)
     let http_request = serde_json::json!({
         "graph_name": tool_args.graph_name,
         "chat_request": chat_request,
@@ -98,12 +105,18 @@ async fn forward_to_http_endpoint(
         serde_json::to_string_pretty(&http_request)?
     );
 
-    // Make HTTP request to the local endpoint
+    Ok(http_request)
+}
+
+// Send HTTP request to the text-to-cypher endpoint
+async fn send_http_request(
+    http_request: &serde_json::Value
+) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let response = client
         .post("http://127.0.0.1:8080/text_to_cypher")
         .header("Content-Type", "application/json")
-        .json(&http_request)
+        .json(http_request)
         .send()
         .await?;
 
@@ -111,7 +124,11 @@ async fn forward_to_http_endpoint(
         return Err(format!("HTTP request failed with status: {}", response.status()).into());
     }
 
-    // Handle the SSE stream
+    Ok(response)
+}
+
+// Process SSE response stream from the HTTP endpoint
+async fn process_sse_response(response: reqwest::Response) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let mut stream = response.bytes_stream();
     let mut result_buffer = String::new();
     let mut final_result = String::new();
@@ -120,72 +137,110 @@ async fn forward_to_http_endpoint(
         let chunk = chunk_result?;
         let chunk_str = String::from_utf8_lossy(&chunk);
 
-        // Parse SSE events
         for line in chunk_str.lines() {
             if let Some(data) = line.strip_prefix("data: ") {
-                // Remove "data: " prefix
-
-                // Parse the JSON data
-                if let Ok(progress) = serde_json::from_str::<serde_json::Value>(data) {
-                    if let Some(event_type) = progress.as_object().and_then(|obj| obj.keys().next()) {
-                        match event_type.as_str() {
-                            "Status" => {
-                                if let Some(status) = progress.get("Status").and_then(|v| v.as_str()) {
-                                    tracing::info!("Status: {}", status);
-                                    writeln!(result_buffer, "Status: {status}").unwrap();
-                                }
-                            }
-                            "Schema" => {
-                                if let Some(_schema) = progress.get("Schema").and_then(|v| v.as_str()) {
-                                    tracing::info!("Schema discovered");
-                                    result_buffer.push_str("Schema: Discovered\n");
-                                }
-                            }
-                            "CypherQuery" => {
-                                if let Some(query) = progress.get("CypherQuery").and_then(|v| v.as_str()) {
-                                    tracing::info!("Generated Cypher: {}", query);
-                                    writeln!(result_buffer, "Cypher Query: {query}").unwrap();
-                                }
-                            }
-                            "CypherResult" => {
-                                if let Some(cypher_result) = progress.get("CypherResult").and_then(|v| v.as_str()) {
-                                    tracing::info!("Cypher result: {}", cypher_result);
-                                    writeln!(result_buffer, "Query Result: {cypher_result}").unwrap();
-                                }
-                            }
-                            "ModelOutputChunk" => {
-                                if let Some(chunk) = progress.get("ModelOutputChunk").and_then(|v| v.as_str()) {
-                                    final_result.push_str(chunk);
-                                }
-                            }
-                            "Result" => {
-                                if let Some(result) = progress.get("Result").and_then(|v| v.as_str()) {
-                                    tracing::info!("Final result received");
-                                    final_result = result.to_string();
-                                }
-                            }
-                            "Error" => {
-                                if let Some(error) = progress.get("Error").and_then(|v| v.as_str()) {
-                                    tracing::error!("Error from HTTP endpoint: {}", error);
-                                    return Err(format!("Error from text-to-cypher service: {error}").into());
-                                }
-                            }
-                            _ => {
-                                tracing::debug!("Unknown event type: {}", event_type);
-                            }
-                        }
-                    }
-                }
+                process_sse_event(data, &mut result_buffer, &mut final_result)?;
             }
         }
     }
 
-    // Combine the process information with the final result
-    let complete_response = if final_result.is_empty() {
+    Ok(build_complete_response(&result_buffer, &final_result))
+}
+
+// Process individual SSE event
+fn process_sse_event(
+    data: &str,
+    result_buffer: &mut String,
+    final_result: &mut String,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Ok(progress) = serde_json::from_str::<serde_json::Value>(data) {
+        if let Some(event_type) = progress.as_object().and_then(|obj| obj.keys().next()) {
+            match event_type.as_str() {
+                "Status" => handle_status_event(&progress, result_buffer),
+                "Schema" => handle_schema_event(result_buffer),
+                "CypherQuery" => handle_cypher_query_event(&progress, result_buffer),
+                "CypherResult" => handle_cypher_result_event(&progress, result_buffer),
+                "ModelOutputChunk" => handle_model_output_chunk(&progress, final_result),
+                "Result" => handle_result_event(&progress, final_result),
+                "Error" => return handle_error_event(&progress),
+                _ => tracing::debug!("Unknown event type: {}", event_type),
+            }
+        }
+    }
+    Ok(())
+}
+
+// Handle different types of SSE events
+fn handle_status_event(
+    progress: &serde_json::Value,
+    result_buffer: &mut String,
+) {
+    if let Some(status) = progress.get("Status").and_then(|v| v.as_str()) {
+        tracing::info!("Status: {}", status);
+        writeln!(result_buffer, "Status: {status}").unwrap();
+    }
+}
+
+fn handle_schema_event(result_buffer: &mut String) {
+    tracing::info!("Schema discovered");
+    result_buffer.push_str("Schema: Discovered\n");
+}
+
+fn handle_cypher_query_event(
+    progress: &serde_json::Value,
+    result_buffer: &mut String,
+) {
+    if let Some(query) = progress.get("CypherQuery").and_then(|v| v.as_str()) {
+        tracing::info!("Generated Cypher: {}", query);
+        writeln!(result_buffer, "Cypher Query: {query}").unwrap();
+    }
+}
+
+fn handle_cypher_result_event(
+    progress: &serde_json::Value,
+    result_buffer: &mut String,
+) {
+    if let Some(cypher_result) = progress.get("CypherResult").and_then(|v| v.as_str()) {
+        tracing::info!("Cypher result: {}", cypher_result);
+        writeln!(result_buffer, "Query Result: {cypher_result}").unwrap();
+    }
+}
+
+fn handle_model_output_chunk(
+    progress: &serde_json::Value,
+    final_result: &mut String,
+) {
+    if let Some(chunk) = progress.get("ModelOutputChunk").and_then(|v| v.as_str()) {
+        final_result.push_str(chunk);
+    }
+}
+
+fn handle_result_event(
+    progress: &serde_json::Value,
+    final_result: &mut String,
+) {
+    if let Some(result) = progress.get("Result").and_then(|v| v.as_str()) {
+        tracing::info!("Final result received");
+        *final_result = result.to_string();
+    }
+}
+
+fn handle_error_event(progress: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(error) = progress.get("Error").and_then(|v| v.as_str()) {
+        tracing::error!("Error from HTTP endpoint: {}", error);
+        return Err(format!("Error from text-to-cypher service: {error}").into());
+    }
+    Ok(())
+}
+
+// Build the complete response from buffer and final result
+fn build_complete_response(
+    result_buffer: &str,
+    final_result: &str,
+) -> String {
+    if final_result.is_empty() {
         result_buffer.trim().to_string()
     } else {
         format!("{}\n\nFinal Answer:\n{}", result_buffer.trim(), final_result)
-    };
-
-    Ok(complete_response)
+    }
 }

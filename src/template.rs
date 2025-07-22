@@ -3,10 +3,16 @@ use std::collections::HashMap;
 pub struct TemplateEngine;
 
 impl TemplateEngine {
+    /// Load a template from a file path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read.
     pub fn load_template(template_path: &str) -> Result<String, std::io::Error> {
         std::fs::read_to_string(template_path)
     }
 
+    #[must_use]
     pub fn render(
         template: &str,
         variables: &HashMap<&str, &str>,
@@ -21,6 +27,11 @@ impl TemplateEngine {
         result
     }
 
+    /// Render the system prompt template with the given ontology.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the template file cannot be read.
     pub fn render_system_prompt(ontology: &str) -> Result<String, std::io::Error> {
         let template = Self::load_template("templates/system_prompt.txt")?;
         let mut variables = HashMap::new();
@@ -29,6 +40,11 @@ impl TemplateEngine {
         Ok(Self::render(&template, &variables))
     }
 
+    /// Render the user prompt template with the given question.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the template file cannot be read.
     pub fn render_user_prompt(question: &str) -> Result<String, std::io::Error> {
         let template = Self::load_template("templates/user_prompt.txt")?;
         let mut variables = HashMap::new();
@@ -37,6 +53,11 @@ impl TemplateEngine {
         Ok(Self::render(&template, &variables))
     }
 
+    /// Render the last request prompt template with the given parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the template file cannot be read.
     pub fn render_last_request_prompt(
         question: &str,
         cypher_query: &str,

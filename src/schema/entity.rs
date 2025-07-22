@@ -13,6 +13,7 @@ pub struct Entity {
 }
 
 impl Entity {
+    #[must_use]
     pub const fn new(
         label: String,
         attributes: Vec<Attribute>,

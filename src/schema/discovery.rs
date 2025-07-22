@@ -176,6 +176,11 @@ impl Schema {
         Ok(relationship_attributes)
     }
 
+    /// Discover the schema from a graph database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the graph operations fail.
     pub async fn discover_from_graph(
         graph: &mut AsyncGraph,
         sample_size: usize,

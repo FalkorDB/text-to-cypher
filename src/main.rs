@@ -33,6 +33,44 @@ macro_rules! send {
     };
 }
 
+// Macro for functions returning Option<T>
+macro_rules! send_option {
+    ($tx:expr, $progress:expr) => {
+        match serde_json::to_string(&$progress) {
+            Ok(json) => {
+                let event = sse::Event::Data(sse::Data::new(json));
+                if $tx.send(event).await.is_err() {
+                    tracing::warn!("Client disconnected, stopping stream");
+                    return None;
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize progress update: {}", e);
+                return None;
+            }
+        }
+    };
+}
+
+// Macro for functions returning Result<T, ()>
+macro_rules! send_result {
+    ($tx:expr, $progress:expr) => {
+        match serde_json::to_string(&$progress) {
+            Ok(json) => {
+                let event = sse::Event::Data(sse::Data::new(json));
+                if $tx.send(event).await.is_err() {
+                    tracing::warn!("Client disconnected, stopping stream");
+                    return Err(());
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize progress update: {}", e);
+                return Err(());
+            }
+        }
+    };
+}
+
 // Macro for functions returning Result<T, ()> - same name, different internal marker
 macro_rules! try_send {
     ($tx:expr, $progress:expr) => {
@@ -117,13 +155,14 @@ static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
 impl AppConfig {
     fn load() -> Self {
         // Load .env file if it exists, but don't fail if it doesn't
-        let _ = dotenvy::dotenv();
+        let env_loaded = dotenvy::dotenv().is_ok();
 
         let default_model = std::env::var("DEFAULT_MODEL").ok();
         let default_key = std::env::var("DEFAULT_KEY").ok();
 
         tracing::info!(
-            "Loaded configuration - default_model: {:?}",
+            "Loaded configuration - env_file_loaded: {}, default_model: {:?}",
+            env_loaded,
             default_model.as_ref().map(|_| "***")
         );
 
@@ -136,11 +175,29 @@ impl AppConfig {
     fn get() -> &'static Self {
         APP_CONFIG.get_or_init(Self::load)
     }
-}
 
-#[derive(Serialize, Deserialize, ToSchema)]
-struct HelloResponse {
-    message: String,
+    /// Check if MCP server should be started based on configuration completeness
+    #[allow(clippy::cognitive_complexity)]
+    fn should_start_mcp_server(&self) -> bool {
+        // Check if .env file exists and has both required properties
+        let env_exists = std::path::Path::new(".env").exists();
+        let has_model = self.default_model.is_some();
+        let has_key = self.default_key.is_some();
+
+        let should_start = env_exists && has_model && has_key;
+
+        if !should_start {
+            if !env_exists {
+                tracing::warn!("MCP server not started: .env file not found");
+            } else if !has_model {
+                tracing::warn!("MCP server not started: DEFAULT_MODEL not set in .env file");
+            } else if !has_key {
+                tracing::warn!("MCP server not started: DEFAULT_KEY not set in .env file");
+            }
+        }
+
+        should_start
+    }
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Clone)]
@@ -246,7 +303,6 @@ async fn process_text_to_cypher_request(
 ) {
     tracing::info!("Processing text to Cypher request: {request:?}");
 
-    // Get the model name - should be available after applying defaults
     let model = request
         .model
         .as_ref()
@@ -260,45 +316,78 @@ async fn process_text_to_cypher_request(
         return;
     };
 
-    send!(
+    // Step 3: Generate and execute cypher query
+    let Some(query) = generate_cypher_query(&request, &schema, &client, model, &tx).await else {
+        return;
+    };
+
+    // Step 4: Execute the query and get results
+    let Ok(query_result) = execute_cypher_query(&query, &request.graph_name, &tx).await else {
+        return;
+    };
+
+    // Step 5: Generate final answer using AI
+    generate_final_answer(&request, &query, &query_result, &client, model, &tx).await;
+}
+
+#[allow(clippy::cognitive_complexity)]
+async fn generate_cypher_query(
+    request: &TextToCypherRequest,
+    schema: &str,
+    client: &genai::Client,
+    model: &str,
+    tx: &mpsc::Sender<sse::Event>,
+) -> Option<String> {
+    send_option!(
         tx,
         Progress::Status(String::from("Generating Cypher query using schema ..."))
     );
 
-    // Step 3: Generate chat request
-    let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, &schema);
+    let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, schema);
+    let query = execute_chat(client, model, genai_chat_request, tx).await;
 
-    // Step 4: Execute chat stream and process response
-    let query = execute_chat(&client, model, genai_chat_request, &tx).await;
-
-    // Step 5: Execute the generated query
     if query.trim().is_empty() {
         tracing::warn!("No query generated from AI model");
-        send!(tx, Progress::Error("No valid query was generated".to_string()));
-        return;
+        send_option!(tx, Progress::Error("No valid query was generated".to_string()));
+        return None;
     }
 
-    let query = query.replace('\n', " ").replace("```", "").trim().to_string();
+    let clean_query = query.replace('\n', " ").replace("```", "").trim().to_string();
+    send_option!(tx, Progress::CypherQuery(clean_query.clone()));
+    Some(clean_query)
+}
 
-    send!(tx, Progress::CypherQuery(query.clone()));
+#[allow(clippy::cognitive_complexity)]
+async fn execute_cypher_query(
+    query: &str,
+    graph_name: &str,
+    tx: &mpsc::Sender<sse::Event>,
+) -> Result<String, ()> {
+    send_result!(tx, Progress::Status(String::from("Executing Cypher query...")));
+    tracing::info!("Executing Cypher Query: {}", query);
 
-    send!(tx, Progress::Status(String::from("Executing Cypher query...")));
-
-    tracing::info!("Executing Cypher Query: {}", &query);
-
-    let query_result = match execute_query(&query, &request.graph_name, &tx).await {
-        Ok(result) => result,
+    match execute_query(query, graph_name, tx).await {
+        Ok(result) => {
+            tracing::info!("Query executed successfully, result: {}", result);
+            send_result!(tx, Progress::CypherResult(result.clone()));
+            Ok(result)
+        }
         Err(e) => {
             tracing::error!("Query execution failed: {}", e);
-            send!(tx, Progress::Error(format!("Query execution failed: {e}")));
-            return;
+            send_result!(tx, Progress::Error(format!("Query execution failed: {e}")));
+            Err(())
         }
-    };
-    tracing::info!("Query executed successfully, result: {}", query_result);
+    }
+}
 
-    // Step 6: Send the final result
-    send!(tx, Progress::CypherResult(query_result.clone()));
-
+async fn generate_final_answer(
+    request: &TextToCypherRequest,
+    query: &str,
+    query_result: &str,
+    client: &genai::Client,
+    model: &str,
+    tx: &mpsc::Sender<sse::Event>,
+) {
     send!(
         tx,
         Progress::Status(String::from(
@@ -306,9 +395,8 @@ async fn process_text_to_cypher_request(
         ))
     );
 
-    let genai_chat_request: genai::chat::ChatRequest =
-        generate_answer_chat_request(&request.chat_request, &query, &query_result);
-    execute_chat_stream(&client, model, genai_chat_request, &tx).await;
+    let genai_chat_request = generate_answer_chat_request(&request.chat_request, query, query_result);
+    execute_chat_stream(client, model, genai_chat_request, tx).await;
 }
 
 async fn execute_query(
@@ -474,18 +562,23 @@ async fn main() -> std::io::Result<()> {
     fmt().with_max_level(tracing::Level::INFO).init();
 
     // Initialize configuration from .env file
-    let _config = AppConfig::get();
+    let config = AppConfig::get();
 
     tracing::info!("Starting server at http://localhost:8080/swagger-ui/");
-    tracing::info!("Starting MCP server at http://localhost:8081/sse");
 
-    // Start MCP server in background
-    let mcp_handle = tokio::spawn(async {
-        tracing::info!("MCP server started");
-        if let Err(e) = run_mcp_server().await {
-            tracing::error!("MCP server error: {}", e);
-        }
-    });
+    // Conditionally start MCP server based on configuration
+    let mcp_handle = if config.should_start_mcp_server() {
+        tracing::info!("Starting MCP server at http://localhost:8081/sse");
+        Some(tokio::spawn(async {
+            tracing::info!("MCP server started");
+            if let Err(e) = run_mcp_server().await {
+                tracing::error!("MCP server error: {}", e);
+            }
+        }))
+    } else {
+        tracing::info!("MCP server not started - check .env file configuration");
+        None
+    };
 
     // Start the HTTP server with Swagger UI at /swagger-ui/
     // OpenAPI documentation will be available at /api-doc/openapi.json
@@ -500,16 +593,25 @@ async fn main() -> std::io::Result<()> {
     .bind(("127.0.0.1", 8080))?
     .run();
 
-    // Run both servers concurrently
-    tokio::select! {
-        result = http_server => {
-            tracing::info!("HTTP server stopped");
-            result
+    // Run server(s) concurrently
+    if let Some(mcp_handle) = mcp_handle {
+        // Run both HTTP and MCP servers
+        tokio::select! {
+            result = http_server => {
+                tracing::info!("HTTP server stopped");
+                result
+            }
+            _ = mcp_handle => {
+                tracing::info!("MCP server stopped");
+                Ok(())
+            }
         }
-        _ = mcp_handle => {
-            tracing::info!("MCP server stopped");
-            Ok(())
-        }
+    } else {
+        // Run only HTTP server
+        tracing::info!("Running HTTP server only");
+        let result = http_server.await;
+        tracing::info!("HTTP server stopped");
+        result
     }
 }
 

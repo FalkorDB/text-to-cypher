@@ -13,6 +13,7 @@ pub struct Relation {
 }
 
 impl Relation {
+    #[must_use]
     pub const fn new(
         label: String,
         source: String,

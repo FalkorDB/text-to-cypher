@@ -1,6 +1,6 @@
 {
     "rust-analyzer.check.command": "clippy",
-    "rust-analyzer.check.extraArgs": ["--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::cargo", "-A", "clippy::missing-errors-doc", "-A", "clippy::missing-panics-doc"],
+    "rust-analyzer.check.extraArgs": ["--", "-W", "clippy::pedantic", "-W", "clippy::nursery", "-W", "clippy::cargo", "-A", "clippy::missing-errors-doc", "-A", "clippy::missing-panics-doc", "-A", "clippy::multiple-crate-versions"],
     "python.testing.pytestArgs": [
         "tests"
     ],

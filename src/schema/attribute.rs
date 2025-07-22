@@ -27,6 +27,7 @@ pub struct Attribute {
 }
 
 impl Attribute {
+    #[must_use]
     pub const fn new(
         name: String,
         r#type: AttributeType,

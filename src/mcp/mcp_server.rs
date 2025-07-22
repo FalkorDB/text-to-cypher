@@ -9,6 +9,11 @@ use rust_mcp_sdk::schema::{
 
 use rust_mcp_sdk::error::SdkResult;
 
+/// Run the MCP server.
+///
+/// # Errors
+///
+/// Returns an error if the server fails to start or encounters a runtime error.
 pub async fn run_mcp_server() -> SdkResult<()> {
     // Note: Tracing is already initialized in main, no need to initialize it again
 
