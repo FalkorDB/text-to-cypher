@@ -7,12 +7,12 @@ use genai::ModelIden;
 use genai::resolver::AuthData;
 use genai::resolver::AuthResolver;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tracing_subscriber::fmt;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
 use utoipa_swagger_ui::SwaggerUi;
-use std::sync::OnceLock;
 
 // Macro for functions returning ()
 macro_rules! send {
@@ -118,19 +118,21 @@ impl AppConfig {
     fn load() -> Self {
         // Load .env file if it exists, but don't fail if it doesn't
         let _ = dotenvy::dotenv();
-        
+
         let default_model = std::env::var("DEFAULT_MODEL").ok();
         let default_key = std::env::var("DEFAULT_KEY").ok();
-        
-        tracing::info!("Loaded configuration - default_model: {:?}", 
-            default_model.as_ref().map(|_| "***"));
-        
+
+        tracing::info!(
+            "Loaded configuration - default_model: {:?}",
+            default_model.as_ref().map(|_| "***")
+        );
+
         Self {
             default_model,
             default_key,
         }
     }
-    
+
     fn get() -> &'static Self {
         APP_CONFIG.get_or_init(Self::load)
     }
@@ -191,16 +193,16 @@ enum Progress {
 async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Result<impl Responder, actix_web::Error> {
     let mut request = req.into_inner();
     let config = AppConfig::get();
-    
+
     // Apply defaults from .env file if values are not provided
     if request.model.is_none() {
         request.model.clone_from(&config.default_model);
     }
-    
+
     if request.key.is_none() {
         request.key.clone_from(&config.default_key);
     }
-    
+
     // Ensure we have a model after applying defaults
     let model = request.model.as_ref().ok_or_else(|| {
         actix_web::error::ErrorBadRequest("Model must be provided either in request or as DEFAULT_MODEL in .env file")
@@ -245,7 +247,10 @@ async fn process_text_to_cypher_request(
     tracing::info!("Processing text to Cypher request: {request:?}");
 
     // Get the model name - should be available after applying defaults
-    let model = request.model.as_ref().expect("Model should be available after applying defaults");
+    let model = request
+        .model
+        .as_ref()
+        .expect("Model should be available after applying defaults");
 
     // Step 1: Send processing status
     send_processing_status(&request, &service_target, &tx).await;
@@ -467,7 +472,7 @@ struct ApiDoc;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     fmt().with_max_level(tracing::Level::INFO).init();
-    
+
     // Initialize configuration from .env file
     let _config = AppConfig::get();
 
