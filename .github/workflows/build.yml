@@ -81,9 +81,28 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Cache cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-cross-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-cross-
+            ${{ runner.os }}-cargo-
+
       - name: Install cross-compilation tools
         run: |
+          # Install musl tools for static linking
+          sudo apt-get update
+          sudo apt-get install -y musl-tools musl-dev
+          
+          # Install cross compilation tool
           cargo install cross --git https://github.com/cross-rs/cross
+          
+          # Add required targets
           rustup target add x86_64-unknown-linux-gnu
           rustup target add x86_64-unknown-linux-musl
           rustup target add aarch64-unknown-linux-gnu
@@ -92,9 +111,20 @@ jobs:
         run: |
           mkdir -p release-artifacts
           
+          # Show available targets and tools
+          echo "Available Rust targets:"
+          rustup target list --installed
+          echo "Cross version:"
+          cross --version
+          
           # Build for different platforms
+          echo "Building for x86_64-unknown-linux-gnu..."
           cargo build --release --target x86_64-unknown-linux-gnu
-          cargo build --release --target x86_64-unknown-linux-musl
+          
+          echo "Building for x86_64-unknown-linux-musl..."
+          cross build --release --target x86_64-unknown-linux-musl
+          
+          echo "Building for aarch64-unknown-linux-gnu..."
           cross build --release --target aarch64-unknown-linux-gnu
           
           # Copy binaries
