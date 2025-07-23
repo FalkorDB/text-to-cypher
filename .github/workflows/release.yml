@@ -42,8 +42,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools musl-dev
           
-          # Install cross compilation tool
-          cargo install cross --git https://github.com/cross-rs/cross
+          # Install cross compilation tool (use specific stable version)
+          cargo install cross --version 0.2.5
           
           # Add required targets
           rustup target add x86_64-unknown-linux-gnu
@@ -51,6 +51,8 @@ jobs:
           rustup target add aarch64-unknown-linux-gnu
 
       - name: Build release binaries
+        env:
+          CROSS_CONTAINER_IN_CONTAINER: true
         run: |
           mkdir -p release-artifacts
           
@@ -65,7 +67,8 @@ jobs:
           cargo build --release --target x86_64-unknown-linux-gnu
           
           echo "Building for x86_64-unknown-linux-musl..."
-          cross build --release --target x86_64-unknown-linux-musl
+          # Try using cargo directly for musl with system tools
+          CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unknown-linux-musl
           
           echo "Building for aarch64-unknown-linux-gnu..."
           cross build --release --target aarch64-unknown-linux-gnu
