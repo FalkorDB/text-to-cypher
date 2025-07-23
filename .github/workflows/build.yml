@@ -280,7 +280,7 @@ jobs:
           echo "prerelease=${{ github.event.inputs.prerelease || 'false' }}" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.release_name }}
