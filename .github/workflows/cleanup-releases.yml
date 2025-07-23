@@ -1,0 +1,83 @@
+name: Cleanup Old Releases
+
+on:
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      keep_releases:
+        description: 'Number of releases to keep'
+        required: true
+        default: '10'
+        type: number
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup old releases
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const keepReleases = ${{ github.event.inputs.keep_releases || 10 }};
+            
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            
+            // Sort releases by creation date (newest first)
+            const sortedReleases = releases.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            
+            // Keep only the specified number of latest releases
+            const releasesToDelete = sortedReleases.slice(keepReleases);
+            
+            console.log(`Found ${releases.length} total releases`);
+            console.log(`Keeping latest ${keepReleases} releases`);
+            console.log(`Deleting ${releasesToDelete.length} old releases`);
+            
+            if (releasesToDelete.length === 0) {
+              console.log('No releases to delete');
+              return;
+            }
+            
+            let deletedCount = 0;
+            let failedCount = 0;
+            
+            for (const release of releasesToDelete) {
+              try {
+                console.log(`Deleting release: ${release.tag_name} (${release.name}) created ${release.created_at}`);
+                await github.rest.repos.deleteRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: release.id
+                });
+                
+                // Also delete the associated tag
+                try {
+                  await github.rest.git.deleteRef({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ref: `tags/${release.tag_name}`
+                  });
+                  console.log(`✅ Deleted release and tag: ${release.tag_name}`);
+                  deletedCount++;
+                } catch (tagError) {
+                  console.log(`⚠️  Deleted release but failed to delete tag ${release.tag_name}: ${tagError.message}`);
+                  deletedCount++;
+                }
+              } catch (error) {
+                console.log(`❌ Failed to delete release ${release.tag_name}: ${error.message}`);
+                failedCount++;
+              }
+            }
+            
+            console.log(`\n📊 Cleanup Summary:`);
+            console.log(`✅ Successfully deleted: ${deletedCount} releases`);
+            console.log(`❌ Failed to delete: ${failedCount} releases`);
+            console.log(`🎯 Total releases remaining: ${releases.length - deletedCount}`);

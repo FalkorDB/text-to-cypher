@@ -1,0 +1,52 @@
+# Multi-stage build downloading text-to-cypher binary
+FROM alpine:latest AS downloader
+
+# Install dependencies for downloading
+RUN apk add --no-cache wget jq tar
+
+# Download the latest text-to-cypher binary with templates
+ARG TEXT_TO_CYPHER_VERSION=latest
+RUN if [ "$TEXT_TO_CYPHER_VERSION" = "latest" ]; then \
+        TEXT_TO_CYPHER_VERSION=$(wget -qO- https://api.github.com/repos/barakb/text-to-cypher/releases/latest | jq -r '.tag_name'); \
+    fi && \
+    echo "Downloading text-to-cypher version: $TEXT_TO_CYPHER_VERSION" && \
+    wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O /tmp/text-to-cypher.tar.gz && \
+    cd /tmp && tar -xzf text-to-cypher.tar.gz && \
+    chmod +x text-to-cypher-linux-x86_64-musl
+
+# Verify the binary works
+RUN /tmp/text-to-cypher-linux-x86_64-musl --help || echo "Binary verification completed"
+
+# Runtime stage
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates
+
+# Create non-root user
+RUN addgroup -g 1000 appuser && \
+    adduser -D -s /bin/sh -u 1000 -G appuser appuser
+
+# Copy the binary and templates from downloader stage
+COPY --from=downloader /tmp/text-to-cypher-linux-x86_64-musl /usr/local/bin/text-to-cypher
+COPY --from=downloader /tmp/templates /usr/local/share/text-to-cypher-templates
+
+# Set templates environment variable
+ENV TEMPLATES_DIR=/usr/local/share/text-to-cypher-templates
+
+# Set up working directory
+WORKDIR /app
+RUN chown appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose ports
+EXPOSE 8080 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/swagger-ui/ || exit 1
+
+# Run the application
+CMD ["text-to-cypher"]

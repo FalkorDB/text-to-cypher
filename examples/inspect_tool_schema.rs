@@ -16,7 +16,7 @@ fn main() {
     let input_schema = &tool.input_schema;
     println!("\nInput Schema:");
     if let Ok(pretty_json) = serde_json::to_string_pretty(input_schema) {
-        println!("{}", pretty_json);
+        println!("{pretty_json}");
     }
 
     println!("\n===========================================");

@@ -47,8 +47,8 @@ RUN chown -R appuser:appuser /app
 # Switch to non-root user
 USER appuser
 
-# Expose the port your application runs on
-EXPOSE 8080
+# Expose the ports your application runs on
+EXPOSE 8080 3001
 
 # Run the binary
 CMD ["./text-to-cypher"]
