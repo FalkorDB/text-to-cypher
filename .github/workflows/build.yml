@@ -2,8 +2,13 @@ name: build
 
 on:
   push:
+    branches:
+      - master
     tags:
-      - 'v*'  # Only trigger on version tags starting with 'v'
+      - 'v*'  # Also trigger on version tags for releases
+  pull_request:
+    branches:
+      - master
   workflow_dispatch:
     inputs:
       version:
@@ -28,7 +33,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
+  # CI job - runs on every push/PR to master
+  ci:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -64,9 +70,10 @@ jobs:
       - name: Build
         run: cargo build --release
 
+  # Release job - only runs on version tags or manual dispatch
   release:
     runs-on: ubuntu-latest
-    needs: check
+    needs: ci
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
@@ -324,7 +331,7 @@ jobs:
             RUN apk add --no-cache wget tar && \
                 wget https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/packages/text-to-cypher-linux-x86_64-musl.tar.gz && \
                 tar -xzf text-to-cypher-linux-x86_64-musl.tar.gz && \
-                mv text-to-cypher-linux-x86_64-musl /usr/local/bin/text-to-cypher && \
+                mv text-to-cypher /usr/local/bin/text-to-cypher && \
                 mv templates /usr/local/share/text-to-cypher-templates && \
                 rm text-to-cypher-linux-x86_64-musl.tar.gz
             ENV TEMPLATES_DIR=/usr/local/share/text-to-cypher-templates
@@ -337,6 +344,7 @@ jobs:
             release-artifacts/text-to-cypher-linux-*
           draft: false
 
+  # Release cleanup job - only runs after successful release
   cleanup-old-releases:
     runs-on: ubuntu-latest
     needs: release
