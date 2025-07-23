@@ -1,0 +1,26 @@
+# Simple Dockerfile using GitHub Release v0.1.0-alpha.1
+FROM alpine:latest
+
+# Install required dependencies
+RUN apk add --no-cache ca-certificates wget tar
+
+# Download and install text-to-cypher from GitHub release
+RUN wget https://github.com/barakb/text-to-cypher/releases/download/v2025.07.23-d1092dc/packages/text-to-cypher-linux-x86_64-musl.tar.gz && \
+    tar -xzf text-to-cypher-linux-x86_64-musl.tar.gz && \
+    mv text-to-cypher /usr/local/bin/text-to-cypher && \
+    chmod +x /usr/local/bin/text-to-cypher && \
+    mv templates /usr/local/share/text-to-cypher-templates && \
+    rm text-to-cypher-linux-x86_64-musl.tar.gz
+
+# Set environment variables
+ENV TEMPLATES_DIR=/usr/local/share/text-to-cypher-templates
+
+# Expose ports for HTTP API and MCP server
+EXPOSE 8080 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/swagger-ui/ || exit 1
+
+# Run the application
+CMD ["text-to-cypher"]

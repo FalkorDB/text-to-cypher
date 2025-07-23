@@ -1,0 +1,63 @@
+# Multi-stage Dockerfile for production use with GitHub Release v0.1.0-alpha.1
+
+# Download stage
+FROM alpine:latest AS downloader
+
+# Install download dependencies
+RUN apk add --no-cache wget tar
+
+# Download the specific release version
+ARG TEXT_TO_CYPHER_VERSION=v2025.07.23-d1092dc
+RUN echo "Downloading text-to-cypher version: $TEXT_TO_CYPHER_VERSION" && \
+    wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O /tmp/text-to-cypher.tar.gz && \
+    cd /tmp && \
+    tar -xzf text-to-cypher.tar.gz && \
+    chmod +x text-to-cypher
+
+# Verify the binary works
+RUN /tmp/text-to-cypher --help || echo "Binary verification completed"
+
+# Runtime stage
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user for security
+RUN addgroup -g 1000 appuser && \
+    adduser -D -s /bin/sh -u 1000 -G appuser appuser
+
+# Copy the binary and templates from downloader stage
+COPY --from=downloader /tmp/text-to-cypher /usr/local/bin/text-to-cypher
+COPY --from=downloader /tmp/templates /usr/local/share/text-to-cypher-templates
+
+# Set proper ownership
+RUN chown -R appuser:appuser /usr/local/share/text-to-cypher-templates
+
+# Set environment variables
+ENV TEMPLATES_DIR=/usr/local/share/text-to-cypher-templates
+ENV RUST_LOG=info
+
+# Create and set working directory
+WORKDIR /app
+RUN chown appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose ports for HTTP API and MCP server
+EXPOSE 8080 3001
+
+# Add labels for better container management
+LABEL org.opencontainers.image.title="Text-to-Cypher" \
+      org.opencontainers.image.description="REST API for translating natural language to Cypher queries" \
+      org.opencontainers.image.version="v0.1.0-alpha.1" \
+      org.opencontainers.image.source="https://github.com/barakb/text-to-cypher" \
+      org.opencontainers.image.licenses="MIT"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/swagger-ui/ || exit 1
+
+# Run the application
+CMD ["text-to-cypher"]

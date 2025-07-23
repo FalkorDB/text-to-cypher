@@ -2,11 +2,8 @@ name: build
 
 on:
   push:
-    branches:
-      - master
-  pull_request:
-    branches:
-      - master
+    tags:
+      - 'v*'  # Only trigger on version tags starting with 'v'
   workflow_dispatch:
     inputs:
       version:
@@ -70,7 +67,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -162,8 +159,21 @@ jobs:
           # Create tar.gz packages that include templates
           mkdir -p packages
           for binary in text-to-cypher-linux-*; do
-            package_name="${binary}.tar.gz"
-            tar -czf "packages/${package_name}" "$binary" templates/
+            if [ -f "$binary" ]; then
+              package_name="${binary}.tar.gz"
+              echo "Creating package: $package_name"
+              # Create a temporary directory for this package
+              temp_dir="temp_${binary}"
+              mkdir -p "$temp_dir"
+              # Copy binary with standard name and templates
+              cp "$binary" "$temp_dir/text-to-cypher"
+              cp -r templates "$temp_dir/"
+              # Create tar from the temp directory
+              tar -czf "packages/${package_name}" -C "$temp_dir" .
+              # Clean up temp directory
+              rm -rf "$temp_dir"
+              echo "✅ Created package: packages/$package_name"
+            fi
           done
           
           # Create checksums for packages only
@@ -270,8 +280,8 @@ jobs:
               RELEASE_NAME="Release $TAG"
             fi
           else
-            # Use automatic versioning for push events
-            TAG="v$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)"
+            # Use the tag from the push event
+            TAG="${GITHUB_REF#refs/tags/}"
             RELEASE_NAME="Release $TAG"
           fi
           
@@ -321,13 +331,16 @@ jobs:
             CMD ["text-to-cypher"]
             ```
           files: |
-            release-artifacts/*
+            release-artifacts/packages/*
+            release-artifacts/checksums.txt
+            release-artifacts/install.sh
+            release-artifacts/text-to-cypher-linux-*
           draft: false
 
   cleanup-old-releases:
     runs-on: ubuntu-latest
     needs: release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Cleanup old releases
         uses: actions/github-script@v7

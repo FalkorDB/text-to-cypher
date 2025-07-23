@@ -1,0 +1,66 @@
+# Versioned Dockerfile - allows easy version switching via build args
+# Usage: docker build --build-arg VERSION=v0.1.0-alpha.1 -t text-to-cypher:v0.1.0-alpha.1 .
+
+FROM alpine:latest AS downloader
+
+# Build argument for version selection
+ARG VERSION=v2025.07.23-d1092dc
+ARG ARCH=x86_64-musl
+
+# Install download dependencies
+RUN apk add --no-cache wget jq tar
+
+# Download the specified release version
+RUN echo "Downloading text-to-cypher version: $VERSION for architecture: $ARCH" && \
+    DOWNLOAD_URL="https://github.com/barakb/text-to-cypher/releases/download/$VERSION/packages/text-to-cypher-linux-$ARCH.tar.gz" && \
+    echo "Download URL: $DOWNLOAD_URL" && \
+    wget "$DOWNLOAD_URL" -O /tmp/text-to-cypher.tar.gz && \
+    cd /tmp && \
+    tar -xzf text-to-cypher.tar.gz && \
+    chmod +x text-to-cypher
+
+# Runtime stage  
+FROM alpine:latest
+
+ARG VERSION=v2025.07.23-d1092dc
+ARG ARCH=x86_64-musl
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates
+
+# Create non-root user
+RUN addgroup -g 1000 appuser && \
+    adduser -D -s /bin/sh -u 1000 -G appuser appuser
+
+# Copy the binary and templates
+COPY --from=downloader /tmp/text-to-cypher /usr/local/bin/text-to-cypher
+COPY --from=downloader /tmp/templates /usr/local/share/text-to-cypher-templates
+
+# Set ownership
+RUN chown -R appuser:appuser /usr/local/share/text-to-cypher-templates
+
+# Environment variables
+ENV TEMPLATES_DIR=/usr/local/share/text-to-cypher-templates
+ENV RUST_LOG=info
+
+# Working directory
+WORKDIR /app
+RUN chown appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
+# Ports
+EXPOSE 8080 3001
+
+# Labels with version info
+LABEL org.opencontainers.image.title="Text-to-Cypher" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.source="https://github.com/barakb/text-to-cypher"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/swagger-ui/ || exit 1
+
+# Run
+CMD ["text-to-cypher"]

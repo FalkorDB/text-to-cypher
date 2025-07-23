@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  text-to-cypher:
+    build:
+      context: .
+      dockerfile: Dockerfile.multistage
+      args:
+        TEXT_TO_CYPHER_VERSION: v0.1.0-alpha.1
+    container_name: text-to-cypher
+    ports:
+      - "8080:8080"  # HTTP API
+      - "3001:3001"  # MCP Server
+    environment:
+      # Configure your AI service here
+      - DEFAULT_MODEL=gpt-4o-mini
+      - DEFAULT_KEY=${OPENAI_API_KEY}  # Set this in your .env file
+      - RUST_LOG=info
+      # Templates are pre-configured in the image
+      - TEMPLATES_DIR=/usr/local/share/text-to-cypher-templates
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/swagger-ui/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - text-to-cypher-network
+
+  # Optional: Add a graph database (FalkorDB/Neo4j)
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: falkordb
+    ports:
+      - "6379:6379"  # Redis protocol port
+    volumes:
+      - falkordb_data:/data
+    environment:
+      - FALKORDB_ARGS=--save 60 1 --loglevel warning
+    restart: unless-stopped
+    networks:
+      - text-to-cypher-network
+
+  # Optional: Monitoring with simple health check service
+  healthcheck:
+    image: alpine:latest
+    container_name: healthcheck
+    command: |
+      sh -c '
+        apk add --no-cache curl &&
+        while true; do
+          echo "Health check at $$(date)"
+          curl -f http://text-to-cypher:8080/swagger-ui/ || echo "Service not ready"
+          sleep 30
+        done
+      '
+    depends_on:
+      - text-to-cypher
+    networks:
+      - text-to-cypher-network
+    restart: unless-stopped
+
+volumes:
+  falkordb_data:
+    driver: local
+
+networks:
+  text-to-cypher-network:
+    driver: bridge
+    
+# Example .env file content:
+# OPENAI_API_KEY=your-openai-api-key-here
+# DEFAULT_MODEL=gpt-4o-mini
