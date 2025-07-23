@@ -1,10 +1,5 @@
 [build.env]
 passthrough = [
+    "HOSTNAME",
     "RUST_LOG",
 ]
-
-[target.x86_64-unknown-linux-musl]
-# Use the default cross image for musl (more stable)
-
-[target.aarch64-unknown-linux-gnu]
-# Use the default cross image for aarch64

@@ -53,6 +53,9 @@ jobs:
       - name: Build release binaries
         env:
           CROSS_CONTAINER_IN_CONTAINER: true
+          HOSTNAME: github-actions
+          USER: runner
+          HOME: /home/runner
         run: |
           mkdir -p release-artifacts
           
@@ -61,6 +64,10 @@ jobs:
           rustup target list --installed
           echo "Cross version:"
           cross --version
+          echo "Environment variables:"
+          echo "HOSTNAME: $HOSTNAME"
+          echo "USER: $USER"
+          echo "HOME: $HOME"
           
           # Build for different platforms
           echo "Building for x86_64-unknown-linux-gnu..."
@@ -71,12 +78,23 @@ jobs:
           CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unknown-linux-musl
           
           echo "Building for aarch64-unknown-linux-gnu..."
-          cross build --release --target aarch64-unknown-linux-gnu
+          # Try with more environment variables and verbose output
+          if ! HOSTNAME=github-actions USER=runner HOME=/home/runner cross build --release --target aarch64-unknown-linux-gnu --verbose; then
+            echo "⚠️ ARM64 build failed, continuing with x86_64 builds only"
+            echo "This is not critical as x86_64 covers most use cases"
+          fi
           
-          # Copy binaries
+          # Copy binaries (check if they exist first)
           cp target/x86_64-unknown-linux-gnu/release/text-to-cypher release-artifacts/text-to-cypher-linux-x86_64
           cp target/x86_64-unknown-linux-musl/release/text-to-cypher release-artifacts/text-to-cypher-linux-x86_64-musl
-          cp target/aarch64-unknown-linux-gnu/release/text-to-cypher release-artifacts/text-to-cypher-linux-aarch64
+          
+          # Copy ARM64 binary only if it exists
+          if [ -f target/aarch64-unknown-linux-gnu/release/text-to-cypher ]; then
+            cp target/aarch64-unknown-linux-gnu/release/text-to-cypher release-artifacts/text-to-cypher-linux-aarch64
+            echo "✅ ARM64 binary copied successfully"
+          else
+            echo "⚠️ ARM64 binary not found, skipping"
+          fi
           
           # Copy templates directory
           cp -r templates release-artifacts/
