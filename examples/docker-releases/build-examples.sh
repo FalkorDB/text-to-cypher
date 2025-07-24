@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-VERSION=${1:-v0.1.0-alpha.12}
+VERSION=${1:-v0.1.0-alpha.1}
 PLATFORMS=${2:-"linux/amd64,linux/arm64"}
 
 echo -e "${YELLOW}Building Multi-Architecture Docker examples for text-to-cypher $VERSION${NC}"
@@ -33,11 +33,11 @@ docker buildx use multiarch-builder
 
 # Build simple version (multi-arch)
 echo -e "${GREEN}Building simple multi-architecture Dockerfile...${NC}"
-docker buildx build --platform $PLATFORMS -f Dockerfile.simple -t text-to-cypher:simple-$VERSION .
+docker buildx build --platform $PLATFORMS --build-arg VERSION=$VERSION -f Dockerfile.simple -t text-to-cypher:simple-$VERSION .
 
 # Build multi-stage version (multi-arch)
 echo -e "${GREEN}Building multi-stage multi-architecture Dockerfile...${NC}"
-docker buildx build --platform $PLATFORMS -f Dockerfile.multistage -t text-to-cypher:production-$VERSION .
+docker buildx build --platform $PLATFORMS --build-arg TEXT_TO_CYPHER_VERSION=$VERSION -f Dockerfile.multistage -t text-to-cypher:production-$VERSION .
 
 # Build versioned version (multi-arch)
 echo -e "${GREEN}Building versioned multi-architecture Dockerfile...${NC}"
@@ -50,7 +50,7 @@ echo -e "${YELLOW}Built images are stored in buildx cache (not loaded locally)${
 
 # Build single platform version for local testing
 echo -e "${GREEN}Building single platform version for local testing...${NC}"
-docker buildx build --platform linux/amd64 -f Dockerfile.simple -t text-to-cypher:simple-$VERSION-local --load .
+docker buildx build --platform linux/amd64 --build-arg VERSION=$VERSION -f Dockerfile.simple -t text-to-cypher:simple-$VERSION-local --load .
 echo -e "${YELLOW}Available images:${NC}"
 docker images | grep text-to-cypher
 
