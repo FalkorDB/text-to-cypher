@@ -75,15 +75,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            use_cross: false
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             use_cross: false
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            use_cross: true
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             use_cross: true
@@ -175,7 +169,7 @@ jobs:
           done
           
           # Copy templates from any artifact (they're all the same)
-          cp -r artifacts/binary-x86_64-unknown-linux-gnu/templates release-artifacts/
+          cp -r artifacts/binary-x86_64-unknown-linux-musl/templates release-artifacts/
           
           # Create packages
           cd release-artifacts
@@ -357,10 +351,9 @@ jobs:
             
             ### 📋 Manual Downloads:
             - **Complete Packages** (includes binary + templates):
-              - `packages/text-to-cypher-linux-x86_64.tar.gz` (x86_64 with glibc)
               - `packages/text-to-cypher-linux-x86_64-musl.tar.gz` (x86_64 static)
-              - `packages/text-to-cypher-linux-aarch64.tar.gz` (ARM64 with glibc)
               - `packages/text-to-cypher-linux-aarch64-musl.tar.gz` (ARM64 static)
+            - **Checksums**: `checksums.txt`
             - **Checksums**: `checksums.txt`
             
             ### 🐳 Use in Your Dockerfiles:
