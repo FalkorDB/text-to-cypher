@@ -26,8 +26,8 @@ RUN case "${TARGETARCH}" in \
     tar -xzf text-to-cypher.tar.gz && \
     chmod +x text-to-cypher
 
-# Verify the binary works
-RUN /tmp/text-to-cypher --help || echo "Binary verification completed"
+# Verify the binary exists and is executable
+RUN test -x /tmp/text-to-cypher && echo "Binary verification completed"
 
 # Runtime stage
 FROM alpine:latest
