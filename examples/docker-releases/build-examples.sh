@@ -34,6 +34,18 @@ docker build -f Dockerfile.versioned \
   --build-arg ARCH=x86_64 \
   -t text-to-cypher:$VERSION-x86_64-glibc .
 
+echo -e "${GREEN}Building versioned Dockerfile for ARM64 (musl)...${NC}"
+docker build -f Dockerfile.versioned \
+  --build-arg VERSION=$VERSION \
+  --build-arg ARCH=aarch64-musl \
+  -t text-to-cypher:$VERSION-aarch64 .
+
+echo -e "${GREEN}Building versioned Dockerfile for ARM64 (glibc)...${NC}"
+docker build -f Dockerfile.versioned \
+  --build-arg VERSION=$VERSION \
+  --build-arg ARCH=aarch64 \
+  -t text-to-cypher:$VERSION-aarch64-glibc .
+
 echo -e "${GREEN}All builds completed successfully!${NC}"
 echo -e "${YELLOW}Available images:${NC}"
 docker images | grep text-to-cypher

@@ -110,6 +110,7 @@ jobs:
           rustup target add x86_64-unknown-linux-gnu
           rustup target add x86_64-unknown-linux-musl
           rustup target add aarch64-unknown-linux-gnu
+          rustup target add aarch64-unknown-linux-musl
 
       - name: Build release binaries
         env:
@@ -141,20 +142,32 @@ jobs:
           echo "Building for aarch64-unknown-linux-gnu..."
           # Try with more environment variables and verbose output
           if ! HOSTNAME=github-actions USER=runner HOME=/home/runner cross build --release --target aarch64-unknown-linux-gnu --verbose; then
-            echo "⚠️ ARM64 build failed, continuing with x86_64 builds only"
-            echo "This is not critical as x86_64 covers most use cases"
+            echo "⚠️ ARM64 (glibc) build failed, continuing without it"
+          fi
+          
+          echo "Building for aarch64-unknown-linux-musl..."
+          # Try ARM64 musl build
+          if ! HOSTNAME=github-actions USER=runner HOME=/home/runner cross build --release --target aarch64-unknown-linux-musl --verbose; then
+            echo "⚠️ ARM64 (musl) build failed, continuing without it"
           fi
           
           # Copy binaries (check if they exist first)
           cp target/x86_64-unknown-linux-gnu/release/text-to-cypher release-artifacts/text-to-cypher-linux-x86_64
           cp target/x86_64-unknown-linux-musl/release/text-to-cypher release-artifacts/text-to-cypher-linux-x86_64-musl
           
-          # Copy ARM64 binary only if it exists
+          # Copy ARM64 binaries only if they exist
           if [ -f target/aarch64-unknown-linux-gnu/release/text-to-cypher ]; then
             cp target/aarch64-unknown-linux-gnu/release/text-to-cypher release-artifacts/text-to-cypher-linux-aarch64
-            echo "✅ ARM64 binary copied successfully"
+            echo "✅ ARM64 (glibc) binary copied successfully"
           else
-            echo "⚠️ ARM64 binary not found, skipping"
+            echo "⚠️ ARM64 (glibc) binary not found, skipping"
+          fi
+          
+          if [ -f target/aarch64-unknown-linux-musl/release/text-to-cypher ]; then
+            cp target/aarch64-unknown-linux-musl/release/text-to-cypher release-artifacts/text-to-cypher-linux-aarch64-musl
+            echo "✅ ARM64 (musl) binary copied successfully"
+          else
+            echo "⚠️ ARM64 (musl) binary not found, skipping"
           fi
           
           # Copy templates directory
@@ -216,9 +229,9 @@ jobs:
           case "$OS" in
             Linux*)
               case "$ARCH" in
-                x86_64)  PLATFORM="linux-x86_64" ;;
-                aarch64) PLATFORM="linux-aarch64" ;;
-                arm64)   PLATFORM="linux-aarch64" ;;
+                x86_64)  PLATFORM="linux-x86_64-musl" ;;  # Prefer musl for better compatibility
+                aarch64) PLATFORM="linux-aarch64-musl" ;; # Prefer musl for better compatibility
+                arm64)   PLATFORM="linux-aarch64-musl" ;; # Prefer musl for better compatibility
                 *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
               esac
               ;;
@@ -319,9 +332,10 @@ jobs:
             
             ### 📋 Manual Downloads:
             - **Complete Packages** (includes binary + templates):
-              - `packages/text-to-cypher-linux-x86_64.tar.gz`
-              - `packages/text-to-cypher-linux-x86_64-musl.tar.gz`
-              - `packages/text-to-cypher-linux-aarch64.tar.gz`
+              - `packages/text-to-cypher-linux-x86_64.tar.gz` (x86_64 with glibc)
+              - `packages/text-to-cypher-linux-x86_64-musl.tar.gz` (x86_64 static)
+              - `packages/text-to-cypher-linux-aarch64.tar.gz` (ARM64 with glibc)
+              - `packages/text-to-cypher-linux-aarch64-musl.tar.gz` (ARM64 static)
             - **Checksums**: `checksums.txt`
             
             ### 🐳 Use in Your Dockerfiles:
