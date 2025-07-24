@@ -21,7 +21,7 @@ RUN case "${TARGETARCH}" in \
     esac && \
     echo "Downloading text-to-cypher version: $VERSION for ${TARGETOS}/${TARGETARCH}" && \
     echo "Rust target: ${RUST_ARCH}" && \
-    DOWNLOAD_URL="https://github.com/barakb/text-to-cypher/releases/download/$VERSION/packages/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
+    DOWNLOAD_URL="https://github.com/barakb/text-to-cypher/releases/download/$VERSION/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
     echo "Download URL: $DOWNLOAD_URL" && \
     wget "$DOWNLOAD_URL" -O /tmp/text-to-cypher.tar.gz && \
     cd /tmp && \

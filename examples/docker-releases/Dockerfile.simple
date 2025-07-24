@@ -18,7 +18,7 @@ RUN case "${TARGETARCH}" in \
       *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac && \
     echo "Building for ${TARGETOS}/${TARGETARCH} -> rust target: ${RUST_ARCH}" && \
-    wget https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/packages/text-to-cypher-linux-${RUST_ARCH}.tar.gz && \
+    wget https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-${RUST_ARCH}.tar.gz && \
     tar -xzf text-to-cypher-linux-${RUST_ARCH}.tar.gz && \
     mv text-to-cypher /usr/local/bin/text-to-cypher && \
     chmod +x /usr/local/bin/text-to-cypher && \
