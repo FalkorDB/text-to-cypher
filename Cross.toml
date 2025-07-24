@@ -1,9 +1,6 @@
 [build.env]
 passthrough = [
-    "HOSTNAME",
     "RUST_LOG",
-    "USER",
-    "HOME",
     "CROSS_CONTAINER_IN_CONTAINER",
 ]
 

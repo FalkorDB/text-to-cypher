@@ -161,7 +161,7 @@ jobs:
             echo "Cross configuration:"
             cat Cross.toml
             echo "Environment:"
-            env | grep -E "(CROSS|DOCKER|HOST|USER|HOME)" || echo "No relevant env vars"
+            env | grep -E "(CROSS|DOCKER|RUST)" || echo "No relevant env vars"
             exit 1
           fi
           echo "✅ ARM64 GNU build completed successfully"
@@ -176,7 +176,7 @@ jobs:
             echo "Cross configuration:"
             cat Cross.toml
             echo "Environment:"
-            env | grep -E "(CROSS|DOCKER|HOST|USER|HOME)" || echo "No relevant env vars"
+            env | grep -E "(CROSS|DOCKER|RUST)" || echo "No relevant env vars"
             exit 1
           fi
           echo "✅ ARM64 musl build completed successfully"
