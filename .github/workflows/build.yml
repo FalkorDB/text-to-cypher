@@ -114,15 +114,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools musl-dev
 
-      - name: Install cross (for cross-compilation targets)
+      - name: Install cross-compilation tools (for ARM64 targets)
         if: matrix.use_cross
         run: |
-          cargo install cross --git https://github.com/cross-rs/cross
+          # Install Zig for cross-compilation
+          sudo snap install zig --classic
+          # Install cargo-zigbuild
+          cargo install cargo-zigbuild
 
       - name: Build binary
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }}
+            cargo zigbuild --release --target ${{ matrix.target }}
           elif [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
             CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target ${{ matrix.target }}
           else
