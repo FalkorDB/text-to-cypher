@@ -4,10 +4,11 @@ passthrough = [
     "RUST_LOG",
     "USER",
     "HOME",
+    "CROSS_CONTAINER_IN_CONTAINER",
 ]
 
 [target.aarch64-unknown-linux-gnu]
-image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:0.2.5"
 
 [target.aarch64-unknown-linux-musl]
-image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:0.2.5"

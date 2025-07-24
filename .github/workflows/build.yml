@@ -117,8 +117,8 @@ jobs:
           
           # Pre-pull cross-compilation images to avoid timeout issues
           echo "Pre-pulling cross-compilation Docker images..."
-          docker pull ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main || true
-          docker pull ghcr.io/cross-rs/aarch64-unknown-linux-musl:main || true
+          docker pull ghcr.io/cross-rs/aarch64-unknown-linux-gnu:0.2.5 || echo "Failed to pre-pull aarch64-gnu image"
+          docker pull ghcr.io/cross-rs/aarch64-unknown-linux-musl:0.2.5 || echo "Failed to pre-pull aarch64-musl image"
 
       - name: Build release binaries
         timeout-minutes: 30  # Increase timeout for cross-compilation
@@ -153,11 +153,54 @@ jobs:
           
           echo "Building for aarch64-unknown-linux-gnu..."
           # ARM64 build is now mandatory - fail if it doesn't work
-          HOSTNAME=github-actions USER=runner HOME=/home/runner cross build --release --target aarch64-unknown-linux-gnu --verbose
+          echo "Attempting ARM64 GNU build with detailed output..."
+          if ! cross build --release --target aarch64-unknown-linux-gnu --verbose; then
+            echo "❌ ARM64 GNU build failed!"
+            echo "Docker images available:"
+            docker images | grep cross-rs || echo "No cross-rs images found"
+            echo "Cross configuration:"
+            cat Cross.toml
+            echo "Environment:"
+            env | grep -E "(CROSS|DOCKER|HOST|USER|HOME)" || echo "No relevant env vars"
+            exit 1
+          fi
+          echo "✅ ARM64 GNU build completed successfully"
           
           echo "Building for aarch64-unknown-linux-musl..."
           # ARM64 musl build is now mandatory - fail if it doesn't work
-          HOSTNAME=github-actions USER=runner HOME=/home/runner cross build --release --target aarch64-unknown-linux-musl --verbose
+          echo "Attempting ARM64 musl build with detailed output..."
+          if ! cross build --release --target aarch64-unknown-linux-musl --verbose; then
+            echo "❌ ARM64 musl build failed!"
+            echo "Docker images available:"
+            docker images | grep cross-rs || echo "No cross-rs images found"
+            echo "Cross configuration:"
+            cat Cross.toml
+            echo "Environment:"
+            env | grep -E "(CROSS|DOCKER|HOST|USER|HOME)" || echo "No relevant env vars"
+            exit 1
+          fi
+          echo "✅ ARM64 musl build completed successfully"
+          
+          # Verify all binaries exist before proceeding
+          echo "Verifying all binaries were built successfully..."
+          REQUIRED_BINARIES=(
+            "target/x86_64-unknown-linux-gnu/release/text-to-cypher"
+            "target/x86_64-unknown-linux-musl/release/text-to-cypher"
+            "target/aarch64-unknown-linux-gnu/release/text-to-cypher"
+            "target/aarch64-unknown-linux-musl/release/text-to-cypher"
+          )
+          
+          for binary in "${REQUIRED_BINARIES[@]}"; do
+            if [ ! -f "$binary" ]; then
+              echo "❌ Missing required binary: $binary"
+              echo "Available files in target directories:"
+              find target -name "text-to-cypher" -type f || echo "No text-to-cypher binaries found"
+              exit 1
+            else
+              echo "✅ Found: $binary"
+              ls -la "$binary"
+            fi
+          done
           
           # Copy binaries (all should exist now since builds are mandatory)
           cp target/x86_64-unknown-linux-gnu/release/text-to-cypher release-artifacts/text-to-cypher-linux-x86_64
