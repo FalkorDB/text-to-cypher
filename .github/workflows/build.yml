@@ -117,9 +117,6 @@ jobs:
 
       - name: Build release binaries
         timeout-minutes: 30  # Increase timeout for cross-compilation
-        env:
-          CROSS_CONTAINER_IN_CONTAINER: true
-          RUST_LOG: debug
         run: |
           mkdir -p release-artifacts
           
@@ -130,9 +127,6 @@ jobs:
           cross --version
           echo "Docker version:"
           docker --version
-          echo "Environment variables:"
-          echo "CROSS_CONTAINER_IN_CONTAINER: $CROSS_CONTAINER_IN_CONTAINER"
-          echo "RUST_LOG: $RUST_LOG"
           
           # Build for different platforms
           echo "Building for x86_64-unknown-linux-gnu..."
@@ -144,37 +138,15 @@ jobs:
           
           echo "Building for aarch64-unknown-linux-gnu..."
           # ARM64 build is now mandatory - fail if it doesn't work
-          echo "Attempting ARM64 GNU build with detailed output..."
-          # Unset problematic environment variables before cross compilation
-          unset HOSTNAME USER HOME
-          if ! cross build --release --target aarch64-unknown-linux-gnu --verbose; then
-            echo "❌ ARM64 GNU build failed!"
-            echo "Docker images available:"
-            docker images | grep cross-rs || echo "No cross-rs images found"
-            echo "Cross configuration:"
-            cat Cross.toml
-            echo "Environment:"
-            env | grep -E "(CROSS|DOCKER|RUST)" || echo "No relevant env vars"
-            exit 1
-          fi
-          echo "✅ ARM64 GNU build completed successfully"
+          echo "Attempting ARM64 GNU build with clean environment..."
+          env -i PATH="$PATH" CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
+            cross build --release --target aarch64-unknown-linux-gnu --verbose
           
           echo "Building for aarch64-unknown-linux-musl..."
           # ARM64 musl build is now mandatory - fail if it doesn't work
-          echo "Attempting ARM64 musl build with detailed output..."
-          # Unset problematic environment variables before cross compilation
-          unset HOSTNAME USER HOME
-          if ! cross build --release --target aarch64-unknown-linux-musl --verbose; then
-            echo "❌ ARM64 musl build failed!"
-            echo "Docker images available:"
-            docker images | grep cross-rs || echo "No cross-rs images found"
-            echo "Cross configuration:"
-            cat Cross.toml
-            echo "Environment:"
-            env | grep -E "(CROSS|DOCKER|RUST)" || echo "No relevant env vars"
-            exit 1
-          fi
-          echo "✅ ARM64 musl build completed successfully"
+          echo "Attempting ARM64 musl build with clean environment..."
+          env -i PATH="$PATH" CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
+            cross build --release --target aarch64-unknown-linux-musl --verbose
           
           # Verify all binaries exist before proceeding
           echo "Verifying all binaries were built successfully..."
