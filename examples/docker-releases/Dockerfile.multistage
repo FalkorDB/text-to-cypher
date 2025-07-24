@@ -1,15 +1,27 @@
-# Multi-stage Dockerfile for production use with GitHub Release v0.1.0-alpha.1
+# Multi-stage Multi-Architecture Dockerfile for production use with GitHub Release
 
 # Download stage
 FROM alpine:latest AS downloader
+
+# Buildx provides these automatically
+ARG TARGETARCH
+ARG TARGETOS
 
 # Install download dependencies
 RUN apk add --no-cache wget tar
 
 # Download the specific release version
-ARG TEXT_TO_CYPHER_VERSION=v2025.07.23-d1092dc
-RUN echo "Downloading text-to-cypher version: $TEXT_TO_CYPHER_VERSION" && \
-    wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O /tmp/text-to-cypher.tar.gz && \
+ARG TEXT_TO_CYPHER_VERSION=v0.1.0-alpha.3
+
+# Map Docker architecture to our binary naming convention
+RUN case "${TARGETARCH}" in \
+      "amd64") export RUST_ARCH="x86_64-musl" ;; \
+      "arm64") export RUST_ARCH="aarch64-musl" ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    echo "Downloading text-to-cypher version: $TEXT_TO_CYPHER_VERSION" && \
+    echo "Target: ${TARGETOS}/${TARGETARCH} -> rust target: ${RUST_ARCH}" && \
+    wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-${RUST_ARCH}.tar.gz -O /tmp/text-to-cypher.tar.gz && \
     cd /tmp && \
     tar -xzf text-to-cypher.tar.gz && \
     chmod +x text-to-cypher

@@ -1,18 +1,27 @@
-# Versioned Dockerfile - allows easy version switching via build args
-# Usage: docker build --build-arg VERSION=v0.1.0-alpha.1 -t text-to-cypher:v0.1.0-alpha.1 .
+# Multi-Architecture Versioned Dockerfile - allows easy version switching via build args
+# Usage: docker buildx build --platform linux/amd64,linux/arm64 --build-arg VERSION=v1.0.0 -t text-to-cypher:v1.0.0 .
 
 FROM alpine:latest AS downloader
 
+# Buildx provides these automatically
+ARG TARGETARCH
+ARG TARGETOS
+
 # Build argument for version selection
 ARG VERSION=v2025.07.23-d1092dc
-ARG ARCH=x86_64-musl
 
 # Install download dependencies
 RUN apk add --no-cache wget jq tar
 
-# Download the specified release version
-RUN echo "Downloading text-to-cypher version: $VERSION for architecture: $ARCH" && \
-    DOWNLOAD_URL="https://github.com/barakb/text-to-cypher/releases/download/$VERSION/packages/text-to-cypher-linux-$ARCH.tar.gz" && \
+# Map Docker architecture to our binary naming convention and download
+RUN case "${TARGETARCH}" in \
+      "amd64") export RUST_ARCH="x86_64-musl" ;; \
+      "arm64") export RUST_ARCH="aarch64-musl" ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    echo "Downloading text-to-cypher version: $VERSION for ${TARGETOS}/${TARGETARCH}" && \
+    echo "Rust target: ${RUST_ARCH}" && \
+    DOWNLOAD_URL="https://github.com/barakb/text-to-cypher/releases/download/$VERSION/packages/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
     echo "Download URL: $DOWNLOAD_URL" && \
     wget "$DOWNLOAD_URL" -O /tmp/text-to-cypher.tar.gz && \
     cd /tmp && \
@@ -23,7 +32,6 @@ RUN echo "Downloading text-to-cypher version: $VERSION for architecture: $ARCH" 
 FROM alpine:latest
 
 ARG VERSION=v2025.07.23-d1092dc
-ARG ARCH=x86_64-musl
 
 # Install runtime dependencies
 RUN apk add --no-cache ca-certificates

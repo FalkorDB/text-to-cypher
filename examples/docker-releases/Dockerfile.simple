@@ -1,16 +1,29 @@
-# Simple Dockerfile using GitHub Release v0.1.0-alpha.1
+# Simple Multi-Architecture Dockerfile using GitHub Release
 FROM alpine:latest
+
+# Buildx provides these automatically
+ARG TARGETARCH
+ARG TARGETOS
+
+# Version can be overridden at build time
+ARG VERSION=v0.1.0-alpha.3
 
 # Install required dependencies
 RUN apk add --no-cache ca-certificates wget tar
 
-# Download and install text-to-cypher from GitHub release
-RUN wget https://github.com/barakb/text-to-cypher/releases/download/v2025.07.23-d1092dc/packages/text-to-cypher-linux-x86_64-musl.tar.gz && \
-    tar -xzf text-to-cypher-linux-x86_64-musl.tar.gz && \
+# Map Docker architecture to our binary naming convention
+RUN case "${TARGETARCH}" in \
+      "amd64") export RUST_ARCH="x86_64-musl" ;; \
+      "arm64") export RUST_ARCH="aarch64-musl" ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    echo "Building for ${TARGETOS}/${TARGETARCH} -> rust target: ${RUST_ARCH}" && \
+    wget https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/packages/text-to-cypher-linux-${RUST_ARCH}.tar.gz && \
+    tar -xzf text-to-cypher-linux-${RUST_ARCH}.tar.gz && \
     mv text-to-cypher /usr/local/bin/text-to-cypher && \
     chmod +x /usr/local/bin/text-to-cypher && \
     mv templates /usr/local/share/text-to-cypher-templates && \
-    rm text-to-cypher-linux-x86_64-musl.tar.gz
+    rm text-to-cypher-linux-${RUST_ARCH}.tar.gz
 
 # Set environment variables
 ENV TEMPLATES_DIR=/usr/local/share/text-to-cypher-templates

@@ -1,51 +1,52 @@
-# Example Docker Usage with GitHub Release v0.1.0-alpha.1
+# Docker Multi-Architecture Examples
 
-This directory contains examples of how to use the `text-to-cypher` binary from GitHub releases in Docker containers.
+This directory contains Docker examples for building multi-architecture images of text-to-cypher using Docker Buildx.
+
+## 🏗️ Multi-Architecture Support
+
+All Dockerfiles automatically detect the target architecture and download the appropriate binary:
+- **AMD64 (x86_64)**: Downloads `text-to-cypher-linux-x86_64-musl.tar.gz`
+- **ARM64 (aarch64)**: Downloads `text-to-cypher-linux-aarch64-musl.tar.gz`
+
+## 📋 Available Dockerfiles
+
+### 1. `Dockerfile.simple` - Basic Single-Stage Build
+Simple multi-architecture build that downloads and runs text-to-cypher.
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.simple -t text-to-cypher:simple .
+```
+
+### 2. `Dockerfile.multistage` - Production Multi-Stage Build
+Optimized production build with multi-stage architecture and proper security.
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.multistage -t text-to-cypher:production .
+```
+
+### 3. `Dockerfile.versioned` - Parameterized Version Build
+Allows specifying the version at build time.
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.versioned \
+  --build-arg VERSION=v1.0.0 \
+  -t text-to-cypher:v1.0.0 .
+```
 
 ## 🚀 Quick Start
 
-### Simple Download Example
+### Prerequisites
+- Docker with Buildx enabled  
+- Internet connection to download releases from GitHub
 
-```dockerfile
-FROM alpine:latest
-
-# Install dependencies
-RUN apk add --no-cache ca-certificates wget tar
-
-# Download the specific release
-RUN wget https://github.com/barakb/text-to-cypher/releases/download/v0.1.0-alpha.1/packages/text-to-cypher-linux-x86_64-musl.tar.gz && \
-    tar -xzf text-to-cypher-linux-x86_64-musl.tar.gz && \
-    mv text-to-cypher-linux-x86_64-musl /usr/local/bin/text-to-cypher && \
-    mv templates /usr/local/share/text-to-cypher-templates && \
-    rm text-to-cypher-linux-x86_64-musl.tar.gz
-
-# Set environment variables
-ENV TEMPLATES_DIR=/usr/local/share/text-to-cypher-templates
-
-# Expose ports
-EXPOSE 8080 3001
-
-# Run the application
-CMD ["text-to-cypher"]
+### Build All Examples (Local)
+```bash
+./build-examples.sh v1.0.0
 ```
 
-### Build and Run
-
+### Build and Push to Registry
 ```bash
-# Build the Docker image
-docker build -t text-to-cypher:v0.1.0-alpha.1 .
-
-# Run with environment variables
-docker run -d \
-  --name text-to-cypher \
-  -p 8080:8080 \
-  -p 3001:3001 \
-  -e DEFAULT_MODEL="gpt-4o-mini" \
-  -e DEFAULT_KEY="your-api-key-here" \
-  text-to-cypher:v0.1.0-alpha.1
-
-# Check if it's running
-curl http://localhost:8080/swagger-ui/
+./build-and-push.sh v1.0.0 ghcr.io/your-username/text-to-cypher
 ```
 
 ## 📁 Example Files

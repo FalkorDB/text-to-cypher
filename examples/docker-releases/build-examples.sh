@@ -1,5 +1,5 @@
 #!/bin/bash
-# build-examples.sh - Script to build all Docker examples
+# build-examples.sh - Script to build all Docker examples with multi-architecture support
 
 set -e
 
@@ -7,48 +7,58 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-VERSION=${1:-v2025.07.23-d1092dc}
+VERSION=${1:-v0.1.0-alpha.3}
+PLATFORMS=${2:-"linux/amd64,linux/arm64"}
 
-echo -e "${YELLOW}Building Docker examples for text-to-cypher $VERSION${NC}"
+echo -e "${YELLOW}Building Multi-Architecture Docker examples for text-to-cypher $VERSION${NC}"
+echo -e "${BLUE}Platforms: $PLATFORMS${NC}"
 
-# Build simple version
-echo -e "${GREEN}Building simple Dockerfile...${NC}"
-docker build -f Dockerfile.simple -t text-to-cypher:simple-$VERSION .
+# Ensure buildx is available
+if ! docker buildx version >/dev/null 2>&1; then
+    echo -e "${RED}Docker buildx is required for multi-architecture builds${NC}"
+    exit 1
+fi
 
-# Build multi-stage version
-echo -e "${GREEN}Building multi-stage Dockerfile...${NC}"
-docker build -f Dockerfile.multistage -t text-to-cypher:production-$VERSION .
+# Create a builder instance if it doesn't exist
+if ! docker buildx inspect multiarch-builder >/dev/null 2>&1; then
+    echo -e "${YELLOW}Creating buildx builder instance...${NC}"
+    docker buildx create --name multiarch-builder --driver docker-container --bootstrap
+fi
 
-# Build versioned with different architectures
-echo -e "${GREEN}Building versioned Dockerfile for x86_64...${NC}"
-docker build -f Dockerfile.versioned \
+echo -e "${YELLOW}Using buildx builder: multiarch-builder${NC}"
+docker buildx use multiarch-builder
+
+# Build simple version (multi-arch)
+echo -e "${GREEN}Building simple multi-architecture Dockerfile...${NC}"
+docker buildx build --platform $PLATFORMS -f Dockerfile.simple -t text-to-cypher:simple-$VERSION .
+
+# Build multi-stage version (multi-arch)
+echo -e "${GREEN}Building multi-stage multi-architecture Dockerfile...${NC}"
+docker buildx build --platform $PLATFORMS -f Dockerfile.multistage -t text-to-cypher:production-$VERSION .
+
+# Build versioned version (multi-arch)
+echo -e "${GREEN}Building versioned multi-architecture Dockerfile...${NC}"
+docker buildx build --platform $PLATFORMS -f Dockerfile.versioned \
   --build-arg VERSION=$VERSION \
-  --build-arg ARCH=x86_64-musl \
-  -t text-to-cypher:$VERSION-x86_64 .
+  -t text-to-cypher:$VERSION .
 
-echo -e "${GREEN}Building versioned Dockerfile for regular x86_64...${NC}"
-docker build -f Dockerfile.versioned \
-  --build-arg VERSION=$VERSION \
-  --build-arg ARCH=x86_64 \
-  -t text-to-cypher:$VERSION-x86_64-glibc .
+echo -e "${GREEN}All multi-architecture builds completed successfully!${NC}"
+echo -e "${YELLOW}Built images are stored in buildx cache (not loaded locally)${NC}"
 
-echo -e "${GREEN}Building versioned Dockerfile for ARM64 (musl)...${NC}"
-docker build -f Dockerfile.versioned \
-  --build-arg VERSION=$VERSION \
-  --build-arg ARCH=aarch64-musl \
-  -t text-to-cypher:$VERSION-aarch64 .
-
-echo -e "${GREEN}Building versioned Dockerfile for ARM64 (glibc)...${NC}"
-docker build -f Dockerfile.versioned \
-  --build-arg VERSION=$VERSION \
-  --build-arg ARCH=aarch64 \
-  -t text-to-cypher:$VERSION-aarch64-glibc .
-
-echo -e "${GREEN}All builds completed successfully!${NC}"
+# Build single platform version for local testing
+echo -e "${GREEN}Building single platform version for local testing...${NC}"
+docker buildx build --platform linux/amd64 -f Dockerfile.simple -t text-to-cypher:simple-$VERSION-local --load .
 echo -e "${YELLOW}Available images:${NC}"
 docker images | grep text-to-cypher
 
-echo -e "${YELLOW}To run an example:${NC}"
-echo "docker run -d -p 8080:8080 -p 3001:3001 -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key text-to-cypher:production-$VERSION"
+echo -e "${YELLOW}To inspect multi-arch manifest (if pushed to registry):${NC}"
+echo "docker buildx imagetools inspect text-to-cypher:$VERSION"
+
+echo -e "${YELLOW}To run the local test image:${NC}"
+echo "docker run -d -p 8080:8080 -p 3001:3001 -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key text-to-cypher:simple-$VERSION-local"
+
+echo -e "${BLUE}Note: Multi-arch images are built for platforms: $PLATFORMS${NC}"
+echo -e "${BLUE}Use build-and-push.sh to push multi-arch images to a registry${NC}"
