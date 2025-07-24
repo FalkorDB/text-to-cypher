@@ -114,19 +114,11 @@ jobs:
           
           # Setup Docker for cross-compilation
           docker --version
-          
-          # Pre-pull cross-compilation images to avoid timeout issues
-          echo "Pre-pulling cross-compilation Docker images..."
-          docker pull ghcr.io/cross-rs/aarch64-unknown-linux-gnu:0.2.5 || echo "Failed to pre-pull aarch64-gnu image"
-          docker pull ghcr.io/cross-rs/aarch64-unknown-linux-musl:0.2.5 || echo "Failed to pre-pull aarch64-musl image"
 
       - name: Build release binaries
         timeout-minutes: 30  # Increase timeout for cross-compilation
         env:
           CROSS_CONTAINER_IN_CONTAINER: true
-          HOSTNAME: github-actions
-          USER: runner
-          HOME: /home/runner
           RUST_LOG: debug
         run: |
           mkdir -p release-artifacts
@@ -139,9 +131,8 @@ jobs:
           echo "Docker version:"
           docker --version
           echo "Environment variables:"
-          echo "HOSTNAME: $HOSTNAME"
-          echo "USER: $USER"
-          echo "HOME: $HOME"
+          echo "CROSS_CONTAINER_IN_CONTAINER: $CROSS_CONTAINER_IN_CONTAINER"
+          echo "RUST_LOG: $RUST_LOG"
           
           # Build for different platforms
           echo "Building for x86_64-unknown-linux-gnu..."
@@ -154,6 +145,8 @@ jobs:
           echo "Building for aarch64-unknown-linux-gnu..."
           # ARM64 build is now mandatory - fail if it doesn't work
           echo "Attempting ARM64 GNU build with detailed output..."
+          # Unset problematic environment variables before cross compilation
+          unset HOSTNAME USER HOME
           if ! cross build --release --target aarch64-unknown-linux-gnu --verbose; then
             echo "❌ ARM64 GNU build failed!"
             echo "Docker images available:"
@@ -169,6 +162,8 @@ jobs:
           echo "Building for aarch64-unknown-linux-musl..."
           # ARM64 musl build is now mandatory - fail if it doesn't work
           echo "Attempting ARM64 musl build with detailed output..."
+          # Unset problematic environment variables before cross compilation
+          unset HOSTNAME USER HOME
           if ! cross build --release --target aarch64-unknown-linux-musl --verbose; then
             echo "❌ ARM64 musl build failed!"
             echo "Docker images available:"
