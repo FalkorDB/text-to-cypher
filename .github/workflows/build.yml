@@ -117,8 +117,14 @@ jobs:
       - name: Install cross-compilation tools (for ARM64 targets)
         if: matrix.use_cross
         run: |
-          # Install Zig for cross-compilation
-          sudo snap install zig --classic
+          # Install Zig for cross-compilation (direct download)
+          ZIG_VERSION="0.13.0"
+          wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
+          tar -xf "zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
+          sudo mv "zig-linux-x86_64-${ZIG_VERSION}" /opt/zig
+          sudo ln -sf /opt/zig/zig /usr/local/bin/zig
+          # Verify installation
+          zig version
           # Install cargo-zigbuild
           cargo install cargo-zigbuild
 
