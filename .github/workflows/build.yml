@@ -72,7 +72,23 @@ jobs:
 
   # Release job - only runs on version tags or manual dispatch
   release:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: false
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+    
+    runs-on: ${{ matrix.os }}
     needs: ci
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
@@ -83,6 +99,7 @@ jobs:
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          target: ${{ matrix.target }}
           override: true
 
       - name: Cache cargo dependencies
@@ -92,119 +109,120 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-cross-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-cross-
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
             ${{ runner.os }}-cargo-
 
-      - name: Install cross-compilation tools
+      - name: Install musl tools (for musl targets)
+        if: contains(matrix.target, 'musl')
         run: |
-          # Install musl tools for static linking
           sudo apt-get update
           sudo apt-get install -y musl-tools musl-dev
-          
-          # Install cross compilation tool (use specific stable version)
-          cargo install cross --version 0.2.5
-          
-          # Add required targets
-          rustup target add x86_64-unknown-linux-gnu
-          rustup target add x86_64-unknown-linux-musl
-          rustup target add aarch64-unknown-linux-gnu
-          rustup target add aarch64-unknown-linux-musl
-          
-          # Setup Docker for cross-compilation
-          docker --version
 
-      - name: Build release binaries
-        timeout-minutes: 30  # Increase timeout for cross-compilation
+      - name: Install cross (for cross-compilation targets)
+        if: matrix.use_cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build binary
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          elif [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+
+      - name: Prepare artifacts
         run: |
           mkdir -p release-artifacts
+          # Copy binary
+          cp target/${{ matrix.target }}/release/text-to-cypher release-artifacts/text-to-cypher-linux-$(echo ${{ matrix.target }} | sed 's/unknown-linux-//' | sed 's/-unknown-linux//')
+          # Copy templates
+          cp -r templates release-artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: release-artifacts/
+
+  # Combine artifacts and create release
+  create-release:
+    runs-on: ubuntu-latest
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Combine artifacts and create packages
+        run: |
+          mkdir -p release-artifacts/packages
           
-          # Show available targets and tools
-          echo "Available Rust targets:"
-          rustup target list --installed
-          echo "Cross version:"
-          cross --version
-          echo "Docker version:"
-          docker --version
-          
-          # Build for different platforms
-          echo "Building for x86_64-unknown-linux-gnu..."
-          cargo build --release --target x86_64-unknown-linux-gnu
-          
-          echo "Building for x86_64-unknown-linux-musl..."
-          # Try using cargo directly for musl with system tools
-          CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unknown-linux-musl
-          
-          echo "Building for aarch64-unknown-linux-gnu..."
-          # ARM64 build is now mandatory - fail if it doesn't work
-          echo "Attempting ARM64 GNU build with clean environment..."
-          env -i PATH="$PATH" CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
-            cross build --release --target aarch64-unknown-linux-gnu --verbose
-          
-          echo "Building for aarch64-unknown-linux-musl..."
-          # ARM64 musl build is now mandatory - fail if it doesn't work
-          echo "Attempting ARM64 musl build with clean environment..."
-          env -i PATH="$PATH" CARGO_HOME="$CARGO_HOME" RUSTUP_HOME="$RUSTUP_HOME" \
-            cross build --release --target aarch64-unknown-linux-musl --verbose
-          
-          # Verify all binaries exist before proceeding
-          echo "Verifying all binaries were built successfully..."
-          REQUIRED_BINARIES=(
-            "target/x86_64-unknown-linux-gnu/release/text-to-cypher"
-            "target/x86_64-unknown-linux-musl/release/text-to-cypher"
-            "target/aarch64-unknown-linux-gnu/release/text-to-cypher"
-            "target/aarch64-unknown-linux-musl/release/text-to-cypher"
-          )
-          
-          for binary in "${REQUIRED_BINARIES[@]}"; do
-            if [ ! -f "$binary" ]; then
-              echo "❌ Missing required binary: $binary"
-              echo "Available files in target directories:"
-              find target -name "text-to-cypher" -type f || echo "No text-to-cypher binaries found"
-              exit 1
-            else
-              echo "✅ Found: $binary"
-              ls -la "$binary"
+          # Combine all binaries
+          for artifact_dir in artifacts/binary-*; do
+            if [ -d "$artifact_dir" ]; then
+              cp "$artifact_dir"/text-to-cypher-linux-* release-artifacts/ 2>/dev/null || true
             fi
           done
           
-          # Copy binaries (all should exist now since builds are mandatory)
-          cp target/x86_64-unknown-linux-gnu/release/text-to-cypher release-artifacts/text-to-cypher-linux-x86_64
-          cp target/x86_64-unknown-linux-musl/release/text-to-cypher release-artifacts/text-to-cypher-linux-x86_64-musl
-          cp target/aarch64-unknown-linux-gnu/release/text-to-cypher release-artifacts/text-to-cypher-linux-aarch64
-          cp target/aarch64-unknown-linux-musl/release/text-to-cypher release-artifacts/text-to-cypher-linux-aarch64-musl
+          # Copy templates from any artifact (they're all the same)
+          cp -r artifacts/binary-x86_64-unknown-linux-gnu/templates release-artifacts/
           
-          echo "✅ All binaries (x86_64 and ARM64) built successfully"
-          
-          # Copy templates directory
-          cp -r templates release-artifacts/
-          
-          # Create complete packages with templates
+          # Create packages
           cd release-artifacts
-          
-          # Create tar.gz packages that include templates
-          mkdir -p packages
           for binary in text-to-cypher-linux-*; do
             if [ -f "$binary" ]; then
               package_name="${binary}.tar.gz"
               echo "Creating package: $package_name"
-              # Create a temporary directory for this package
               temp_dir="temp_${binary}"
               mkdir -p "$temp_dir"
-              # Copy binary with standard name and templates
               cp "$binary" "$temp_dir/text-to-cypher"
               cp -r templates "$temp_dir/"
-              # Create tar from the temp directory
               tar -czf "packages/${package_name}" -C "$temp_dir" .
-              # Clean up temp directory
               rm -rf "$temp_dir"
               echo "✅ Created package: packages/$package_name"
             fi
           done
           
-          # Create checksums for packages only
+          # Create checksums
           sha256sum packages/*.tar.gz > checksums.txt
+          
+          # List everything we're releasing
+          echo "📦 Release artifacts:"
+          ls -la packages/
+          echo "📄 Checksums:"
+          cat checksums.txt
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: |
+            release-artifacts/packages/
+            release-artifacts/checksums.txt
+            release-artifacts/text-to-cypher-linux-*
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          files: |
+            release-artifacts/packages/*.tar.gz
+            release-artifacts/checksums.txt
+            release-artifacts/text-to-cypher-linux-*
+          generate_release_notes: true
 
       - name: Create installation script
         run: |
