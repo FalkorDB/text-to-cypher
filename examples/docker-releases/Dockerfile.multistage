@@ -11,7 +11,7 @@ ARG TARGETOS
 RUN apk add --no-cache wget tar
 
 # Download the specific release version
-ARG TEXT_TO_CYPHER_VERSION=v0.1.0-alpha.3
+ARG TEXT_TO_CYPHER_VERSION=v0.1.0-alpha.12
 
 # Map Docker architecture to our binary naming convention
 RUN case "${TARGETARCH}" in \

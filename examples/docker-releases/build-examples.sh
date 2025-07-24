@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-VERSION=${1:-v0.1.0-alpha.3}
+VERSION=${1:-v0.1.0-alpha.12}
 PLATFORMS=${2:-"linux/amd64,linux/arm64"}
 
 echo -e "${YELLOW}Building Multi-Architecture Docker examples for text-to-cypher $VERSION${NC}"

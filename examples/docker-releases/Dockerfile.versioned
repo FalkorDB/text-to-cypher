@@ -8,7 +8,7 @@ ARG TARGETARCH
 ARG TARGETOS
 
 # Build argument for version selection
-ARG VERSION=v2025.07.23-d1092dc
+ARG VERSION=v0.1.0-alpha.12
 
 # Install download dependencies
 RUN apk add --no-cache wget jq tar

@@ -6,7 +6,7 @@ ARG TARGETARCH
 ARG TARGETOS
 
 # Version can be overridden at build time
-ARG VERSION=v0.1.0-alpha.3
+ARG VERSION=v0.1.0-alpha.12
 
 # Install required dependencies
 RUN apk add --no-cache ca-certificates wget tar
