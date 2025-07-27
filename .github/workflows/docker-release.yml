@@ -73,6 +73,43 @@ jobs:
       - name: Make docker-build.sh executable
         run: chmod +x ./docker-build.sh
 
+      - name: Wait for release assets to be available
+        run: |
+          echo "Waiting for release assets to be fully uploaded..."
+          VERSION="${{ steps.extract_version.outputs.release_tag }}"
+          
+          # Check if assets are available with retry logic
+          for i in {1..10}; do
+            echo "Attempt $i/10: Checking release assets availability..."
+            
+            # Check if both required assets exist
+            X86_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-x86_64-musl.tar.gz"
+            ARM_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-aarch64-musl.tar.gz"
+            
+            X86_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$X86_URL")
+            ARM_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$ARM_URL")
+            
+            echo "x86_64 asset status: $X86_STATUS"
+            echo "aarch64 asset status: $ARM_STATUS"
+            
+            if [ "$X86_STATUS" = "200" ] && [ "$ARM_STATUS" = "200" ]; then
+              echo "✅ All release assets are available!"
+              break
+            elif [ "$X86_STATUS" = "302" ] && [ "$ARM_STATUS" = "302" ]; then
+              echo "✅ All release assets are available (with redirects)!"
+              break
+            else
+              echo "⏳ Assets not ready yet, waiting 30 seconds..."
+              sleep 30
+            fi
+            
+            if [ $i -eq 10 ]; then
+              echo "❌ Timeout waiting for release assets to become available"
+              echo "This might be a temporary issue. You can retry the workflow manually."
+              exit 1
+            fi
+          done
+
       - name: Build and push Docker images
         run: |
           # Build and push to GitHub Container Registry

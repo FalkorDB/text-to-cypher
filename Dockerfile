@@ -10,15 +10,30 @@ ARG TARGETARCH
 # Install download dependencies
 RUN apk add --no-cache wget tar
 
-# Download the appropriate binary based on target architecture
+# Download the appropriate binary based on target architecture with retry logic
 RUN echo "Downloading text-to-cypher ${VERSION} for ${TARGETPLATFORM} (${TARGETOS}/${TARGETARCH})" && \
     case "${TARGETARCH}" in \
       "amd64") export RUST_ARCH="x86_64-musl" ;; \
       "arm64") export RUST_ARCH="aarch64-musl" ;; \
       *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac && \
-    wget -O /tmp/text-to-cypher.tar.gz \
-      "https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
+    DOWNLOAD_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
+    echo "Download URL: ${DOWNLOAD_URL}" && \
+    for i in 1 2 3 4 5; do \
+      echo "Download attempt $i/5..." && \
+      if wget -O /tmp/text-to-cypher.tar.gz "${DOWNLOAD_URL}"; then \
+        echo "✅ Download successful on attempt $i" && \
+        break; \
+      else \
+        echo "❌ Download attempt $i failed" && \
+        if [ $i -eq 5 ]; then \
+          echo "All download attempts failed" && \
+          exit 1; \
+        fi && \
+        echo "Waiting 10 seconds before retry..." && \
+        sleep 10; \
+      fi; \
+    done && \
     cd /tmp && \
     tar -xzf text-to-cypher.tar.gz && \
     chmod +x text-to-cypher
