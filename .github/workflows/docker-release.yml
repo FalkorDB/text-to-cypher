@@ -75,8 +75,13 @@ jobs:
 
       - name: Wait for release assets to be available
         run: |
-          echo "Waiting for release assets to be fully uploaded..."
+          echo "🚀 Starting asset availability check..."
           VERSION="${{ steps.extract_version.outputs.release_tag }}"
+          
+          echo "🔍 Debug: Version information:"
+          echo "  Raw release_tag: '${{ steps.extract_version.outputs.release_tag }}'"
+          echo "  Computed VERSION: '${VERSION}'"
+          echo "  Event name: '${{ github.event_name }}'"
           
           # Enhanced asset checking with build workflow status monitoring
           MAX_ATTEMPTS=60  # 30 minutes total (60 × 30 seconds)
@@ -99,34 +104,75 @@ jobs:
             X86_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-x86_64-musl.tar.gz"
             ARM_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-aarch64-musl.tar.gz"
             
-            X86_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$X86_URL")
-            ARM_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$ARM_URL")
+            echo "🔍 Debug: Checking asset URLs:"
+            echo "  VERSION: ${VERSION}"
+            echo "  X86_URL: ${X86_URL}"
+            echo "  ARM_URL: ${ARM_URL}"
             
-            echo "x86_64 asset status: $X86_STATUS"
-            echo "aarch64 asset status: $ARM_STATUS"
+            echo "🌐 Testing x86_64 asset..."
+            X86_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$X86_URL")
+            echo "  Raw curl exit code: $?"
+            echo "  HTTP status: $X86_STATUS"
+            
+            echo "🌐 Testing aarch64 asset..."
+            ARM_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$ARM_URL")
+            echo "  Raw curl exit code: $?"
+            echo "  HTTP status: $ARM_STATUS"
+            
+            # Test with verbose curl for debugging
+            echo "🔍 Detailed x86_64 asset check:"
+            curl -v -s -o /dev/null -w "Final HTTP code: %{http_code}\n" "$X86_URL" 2>&1 | head -10
+            
+            echo "🔍 Detailed aarch64 asset check:"
+            curl -v -s -o /dev/null -w "Final HTTP code: %{http_code}\n" "$ARM_URL" 2>&1 | head -10
             
             # Accept both 200 (direct) and 302 (redirect) as success
             X86_OK=false
             ARM_OK=false
             
-            if [ "$X86_STATUS" = "200" ] || [ "$X86_STATUS" = "302" ]; then
+            echo "🧪 Evaluating x86_64 status (received: '$X86_STATUS'):"
+            if [ "$X86_STATUS" = "200" ]; then
               X86_OK=true
-              echo "✅ x86_64 asset is available"
+              echo "  ✅ Status 200 - Direct download available"
+            elif [ "$X86_STATUS" = "302" ]; then
+              X86_OK=true
+              echo "  ✅ Status 302 - Redirect (likely to S3/CDN)"
             else
-              echo "⏳ x86_64 asset not ready (status: $X86_STATUS)"
+              echo "  ❌ Unexpected status: '$X86_STATUS'"
+              echo "  Expected: '200' or '302'"
             fi
             
-            if [ "$ARM_STATUS" = "200" ] || [ "$ARM_STATUS" = "302" ]; then
+            echo "🧪 Evaluating aarch64 status (received: '$ARM_STATUS'):"
+            if [ "$ARM_STATUS" = "200" ]; then
               ARM_OK=true
-              echo "✅ aarch64 asset is available" 
+              echo "  ✅ Status 200 - Direct download available"
+            elif [ "$ARM_STATUS" = "302" ]; then
+              ARM_OK=true
+              echo "  ✅ Status 302 - Redirect (likely to S3/CDN)"
             else
-              echo "⏳ aarch64 asset not ready (status: $ARM_STATUS)"
+              echo "  ❌ Unexpected status: '$ARM_STATUS'"
+              echo "  Expected: '200' or '302'"
             fi
+            
+            echo "📊 Asset availability summary:"
+            echo "  x86_64: $X86_OK (status: $X86_STATUS)"
+            echo "  aarch64: $ARM_OK (status: $ARM_STATUS)"
             
             # Both assets must be available
+            echo "🎯 Decision logic evaluation:"
+            echo "  X86_OK='$X86_OK' (type: $(echo "$X86_OK" | wc -c) chars)"
+            echo "  ARM_OK='$ARM_OK' (type: $(echo "$ARM_OK" | wc -c) chars)"
+            echo "  String comparison test:"
+            echo "    X86_OK == 'true': $([ "$X86_OK" = "true" ] && echo "YES" || echo "NO")"
+            echo "    ARM_OK == 'true': $([ "$ARM_OK" = "true" ] && echo "YES" || echo "NO")"
+            echo "  Combined condition: $([ "$X86_OK" = "true" ] && [ "$ARM_OK" = "true" ] && echo "BOTH_TRUE" || echo "NOT_BOTH_TRUE")"
+            
             if [ "$X86_OK" = "true" ] && [ "$ARM_OK" = "true" ]; then
               echo "🎉 All release assets are available!"
               break
+            else
+              echo "⏳ Waiting for assets to become available..."
+              echo "  Missing: $([ "$X86_OK" != "true" ] && echo "x86_64 " || echo "")$([ "$ARM_OK" != "true" ] && echo "aarch64" || echo "")"
             fi
             
             # Provide helpful status updates
