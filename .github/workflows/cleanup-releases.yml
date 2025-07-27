@@ -7,9 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       keep_releases:
-        description: 'Number of releases to keep'
+        description: 'Number of stable releases to keep'
         required: true
         default: '10'
+        type: number
+      keep_prereleases:
+        description: 'Number of prereleases to keep'
+        required: true
+        default: '1'
         type: number
 
 permissions:
@@ -24,6 +29,7 @@ jobs:
         with:
           script: |
             const keepReleases = ${{ github.event.inputs.keep_releases || 10 }};
+            const keepPrereleases = ${{ github.event.inputs.keep_prereleases || 1 }};
             
             const { data: releases } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
@@ -34,12 +40,19 @@ jobs:
             // Sort releases by creation date (newest first)
             const sortedReleases = releases.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             
-            // Keep only the specified number of latest releases
-            const releasesToDelete = sortedReleases.slice(keepReleases);
+            // Separate stable releases from prereleases
+            const stableReleases = sortedReleases.filter(release => !release.prerelease);
+            const prereleases = sortedReleases.filter(release => release.prerelease);
             
-            console.log(`Found ${releases.length} total releases`);
-            console.log(`Keeping latest ${keepReleases} releases`);
-            console.log(`Deleting ${releasesToDelete.length} old releases`);
+            // Determine which releases to delete
+            const stableToDelete = stableReleases.slice(keepReleases);
+            const prereleasesToDelete = prereleases.slice(keepPrereleases);
+            const releasesToDelete = [...stableToDelete, ...prereleasesToDelete];
+            
+            console.log(`Found ${releases.length} total releases:`);
+            console.log(`  - ${stableReleases.length} stable releases (keeping latest ${keepReleases})`);
+            console.log(`  - ${prereleases.length} prereleases (keeping latest ${keepPrereleases})`);
+            console.log(`Deleting ${releasesToDelete.length} old releases (${stableToDelete.length} stable + ${prereleasesToDelete.length} prereleases)`);
             
             if (releasesToDelete.length === 0) {
               console.log('No releases to delete');
@@ -51,7 +64,8 @@ jobs:
             
             for (const release of releasesToDelete) {
               try {
-                console.log(`Deleting release: ${release.tag_name} (${release.name}) created ${release.created_at}`);
+                const releaseType = release.prerelease ? 'prerelease' : 'stable';
+                console.log(`Deleting ${releaseType}: ${release.tag_name} (${release.name}) created ${release.created_at}`);
                 await github.rest.repos.deleteRelease({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -65,10 +79,10 @@ jobs:
                     repo: context.repo.repo,
                     ref: `tags/${release.tag_name}`
                   });
-                  console.log(`✅ Deleted release and tag: ${release.tag_name}`);
+                  console.log(`✅ Deleted ${releaseType} and tag: ${release.tag_name}`);
                   deletedCount++;
                 } catch (tagError) {
-                  console.log(`⚠️  Deleted release but failed to delete tag ${release.tag_name}: ${tagError.message}`);
+                  console.log(`⚠️  Deleted ${releaseType} but failed to delete tag ${release.tag_name}: ${tagError.message}`);
                   deletedCount++;
                 }
               } catch (error) {
@@ -80,4 +94,6 @@ jobs:
             console.log(`\n📊 Cleanup Summary:`);
             console.log(`✅ Successfully deleted: ${deletedCount} releases`);
             console.log(`❌ Failed to delete: ${failedCount} releases`);
+            console.log(`🎯 Stable releases remaining: ${stableReleases.length - stableToDelete.length}`);
+            console.log(`🎯 Prereleases remaining: ${prereleases.length - prereleasesToDelete.length}`);
             console.log(`🎯 Total releases remaining: ${releases.length - deletedCount}`);
