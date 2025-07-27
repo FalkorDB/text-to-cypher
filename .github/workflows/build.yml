@@ -77,10 +77,8 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
-            use_cross: false
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            use_cross: true
+            os: ubuntu-24.04-arm64  # Use native ARM64 runner
     
     runs-on: ${{ matrix.os }}
     needs: ci
@@ -114,35 +112,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools musl-dev
 
-      - name: Install cross-compilation tools (for ARM64 targets)
-        if: matrix.use_cross
-        run: |
-          # Install Zig for cross-compilation (latest stable version)
-          ZIG_VERSION="0.14.1"
-          echo "Installing Zig version: ${ZIG_VERSION}"
-          wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
-          tar -xf "zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
-          sudo mv "zig-linux-x86_64-${ZIG_VERSION}" /opt/zig
-          sudo ln -sf /opt/zig/zig /usr/local/bin/zig
-          # Verify installation
-          zig version
-          echo "✅ Zig installed successfully"
-          # Install cargo-zigbuild
-          echo "Installing cargo-zigbuild..."
-          cargo install cargo-zigbuild
-          echo "✅ cargo-zigbuild installed successfully"
-
       - name: Build binary
         run: |
-          echo "Building for target: ${{ matrix.target }}"
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            echo "Using cargo-zigbuild for cross-compilation..."
-            cargo zigbuild --release --target ${{ matrix.target }} --verbose
-          elif [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+          echo "Building for target: ${{ matrix.target }} on ${{ matrix.os }}"
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
             echo "Using musl-gcc for x86_64 musl target..."
             CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target ${{ matrix.target }} --verbose
           else
-            echo "Using standard cargo build..."
+            echo "Using standard cargo build for native compilation..."
             cargo build --release --target ${{ matrix.target }} --verbose
           fi
           echo "✅ Build completed successfully for ${{ matrix.target }}"
