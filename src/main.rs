@@ -162,7 +162,7 @@ impl AppConfig {
         tracing::info!(
             "Loaded configuration - env_file_loaded: {}, default_model: {:?}",
             env_loaded,
-            default_model.as_ref().map(|_| "***")
+            default_model
         );
 
         Self {

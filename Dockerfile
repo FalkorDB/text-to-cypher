@@ -1,54 +1,63 @@
-# Build stage
-FROM rust:1.88-alpine AS builder
+# Build stage - Download release binaries instead of building from source
+FROM alpine:3.22 AS downloader
 
-# Install build dependencies
-RUN apk add --no-cache musl-dev curl
+# Arguments for the release version and target platform
+ARG VERSION=v0.1.0-alpha.1
+ARG TARGETPLATFORM
+ARG TARGETOS=linux
+ARG TARGETARCH
 
-# Set the working directory
+# Install download dependencies
+RUN apk add --no-cache wget tar
+
+# Download the appropriate binary based on target architecture
+RUN echo "Downloading text-to-cypher ${VERSION} for ${TARGETPLATFORM} (${TARGETOS}/${TARGETARCH})" && \
+    case "${TARGETARCH}" in \
+      "amd64") export RUST_ARCH="x86_64-musl" ;; \
+      "arm64") export RUST_ARCH="aarch64-musl" ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac && \
+    wget -O /tmp/text-to-cypher.tar.gz \
+      "https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
+    cd /tmp && \
+    tar -xzf text-to-cypher.tar.gz && \
+    chmod +x text-to-cypher
+
+# Verify the binary works
+RUN test -x /tmp/text-to-cypher && echo "Binary verification completed"
+
+# Runtime stage - Use FalkorDB as base image
+FROM falkordb/falkordb:latest
+
+# Install runtime dependencies and supervisord
+RUN apt-get update && apt-get install -y ca-certificates supervisor && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for security (if not already exists)
+RUN groupadd -g 1000 appuser 2>/dev/null || true && \
+    useradd -m -s /bin/bash -u 1000 -g appuser appuser 2>/dev/null || true
+
+# Set the working directory for our application
 WORKDIR /app
 
-# Copy the Cargo files first for better layer caching
-COPY Cargo.toml Cargo.lock ./
+# Copy the compiled binary from the downloader stage
+COPY --from=downloader /tmp/text-to-cypher /app/text-to-cypher
 
-# Create a dummy src/main.rs to build dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-
-# Build dependencies (this layer will be cached unless Cargo.toml changes)
-RUN cargo build --release && rm -rf src
-
-# Copy the actual source code
-COPY src ./src
-
-# Build the actual application
-RUN cargo build --release
-
-# Runtime stage
-FROM alpine:3.22
-
-# Install runtime dependencies if needed (for your case, you might need ca-certificates for HTTPS)
-RUN apk add --no-cache ca-certificates
-
-# Create a non-root user for security
-RUN addgroup -g 1000 appuser && \
-    adduser -D -s /bin/sh -u 1000 -G appuser appuser
-
-# Set the working directory
-WORKDIR /app
-
-# Copy the compiled binary from the builder stage
-COPY --from=builder /app/target/release/text-to-cypher /app/text-to-cypher
-
-# Copy the templates directory
+# Copy the templates directory (fallback to local if not in release)
 COPY templates ./templates
 
 # Change ownership to the non-root user
 RUN chown -R appuser:appuser /app
 
-# Switch to non-root user
-USER appuser
-
-# Expose the ports your application runs on
+# Expose the ports your application runs on (in addition to FalkorDB's ports)
 EXPOSE 8080 3001
 
-# Run the binary
-CMD ["./text-to-cypher"]
+# Copy supervisord configuration and scripts
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY entrypoint.sh /entrypoint.sh
+
+# Create supervisor log directory and make scripts executable
+RUN mkdir -p /var/log/supervisor && \
+    chmod +x /entrypoint.sh
+
+# Use ENTRYPOINT instead of CMD to ensure it runs
+ENTRYPOINT ["/entrypoint.sh"]

@@ -6,6 +6,8 @@
 !Cargo.lock
 !src/
 !templates/
+!supervisord.conf
+!entrypoint.sh
 
 # Explicitly ignore these even if they match the includes above
 target/
@@ -16,7 +18,6 @@ target/
 .env*
 dump.rdb
 ufc.dump
-*.sh
 readme.md
 .gitignore
 rustfmt.toml
