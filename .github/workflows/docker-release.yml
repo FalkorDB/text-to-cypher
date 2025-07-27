@@ -95,9 +95,9 @@ jobs:
               fi
             fi
             
-            # Check if both required assets exist (package format with templates)
-            X86_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/packages/text-to-cypher-linux-x86_64-musl.tar.gz"
-            ARM_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/packages/text-to-cypher-linux-aarch64-musl.tar.gz"
+            # Check if both required assets exist (root level .tar.gz files with templates)
+            X86_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-x86_64-musl.tar.gz"
+            ARM_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-aarch64-musl.tar.gz"
             
             X86_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$X86_URL")
             ARM_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$ARM_URL")
