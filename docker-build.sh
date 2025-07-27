@@ -8,6 +8,7 @@ show_usage() {
     echo "  --version VERSION       Set the version tag (default: v0.1.0-alpha.1)"
     echo "  --platforms PLATFORMS   Set target platforms (default: linux/amd64,linux/arm64)"
     echo "  --image-name NAME       Set image name (default: text-to-cypher)"
+    echo "  --registry REGISTRY     Set registry prefix (e.g., ghcr.io/owner/repo)"
     echo "  --push                  Push to registry (default: load locally)"
     echo "  --local                 Load locally only (default behavior)"
     echo "  --help                  Show this help message"
@@ -16,12 +17,14 @@ show_usage() {
     echo "  $0 --version v1.0.0 --push"
     echo "  $0 --local --version latest"
     echo "  $0 --platforms linux/amd64 --version v1.0.0"
+    echo "  $0 --registry ghcr.io/owner/repo --push --version v1.0.0"
 }
 
 # Default values
 VERSION="v0.1.0-alpha.1"
 PLATFORMS="linux/amd64,linux/arm64"
 IMAGE_NAME="text-to-cypher"
+REGISTRY=""
 PUSH=false
 
 # Parse command line arguments
@@ -37,6 +40,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --image-name)
             IMAGE_NAME="$2"
+            shift 2
+            ;;
+        --registry)
+            REGISTRY="$2"
             shift 2
             ;;
         --push)
@@ -70,6 +77,12 @@ echo -e "${YELLOW}Building Docker image with buildx...${NC}"
 echo -e "${BLUE}Version: ${VERSION}${NC}"
 echo -e "${BLUE}Platforms: ${PLATFORMS}${NC}"
 echo -e "${BLUE}Image: ${IMAGE_NAME}${NC}"
+if [ -n "$REGISTRY" ]; then
+    echo -e "${BLUE}Registry: ${REGISTRY}${NC}"
+    FULL_IMAGE_NAME="${REGISTRY}/${IMAGE_NAME}"
+else
+    FULL_IMAGE_NAME="${IMAGE_NAME}"
+fi
 
 # Ensure buildx is available
 if ! docker buildx version >/dev/null 2>&1; then
@@ -94,8 +107,8 @@ if [ "$PUSH" = "true" ]; then
     docker buildx build \
         --platform ${PLATFORMS} \
         --build-arg VERSION=${VERSION} \
-        -t ${IMAGE_NAME}:${VERSION} \
-        -t ${IMAGE_NAME}:latest \
+        -t ${FULL_IMAGE_NAME}:${VERSION} \
+        -t ${FULL_IMAGE_NAME}:latest \
         --push \
         .
 else
@@ -103,8 +116,8 @@ else
     docker buildx build \
         --platform ${PLATFORMS} \
         --build-arg VERSION=${VERSION} \
-        -t ${IMAGE_NAME}:${VERSION} \
-        -t ${IMAGE_NAME}:latest \
+        -t ${FULL_IMAGE_NAME}:${VERSION} \
+        -t ${FULL_IMAGE_NAME}:latest \
         --load \
         .
 fi
@@ -114,7 +127,7 @@ if [ $? -eq 0 ]; then
     echo -e "${GREEN}✅ Docker image built successfully!${NC}"
     echo ""
     echo -e "${YELLOW}To run the container:${NC}"
-    echo "  docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 ${IMAGE_NAME}:${VERSION}"
+    echo "  docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 ${FULL_IMAGE_NAME}:${VERSION}"
     echo ""
     echo -e "${YELLOW}Available ports:${NC}"
     echo "  - 6379: FalkorDB (Redis protocol)"
@@ -124,12 +137,15 @@ if [ $? -eq 0 ]; then
     echo ""
     echo -e "${YELLOW}To run with environment variables:${NC}"
     echo "  docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \\"
-    echo "    -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key ${IMAGE_NAME}:${VERSION}"
+    echo "    -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key ${FULL_IMAGE_NAME}:${VERSION}"
     echo ""
     echo -e "${BLUE}Built for platforms: ${PLATFORMS}${NC}"
     
     if [ "$PUSH" = "true" ]; then
         echo -e "${BLUE}Image pushed to registry${NC}"
+        if [ -n "$REGISTRY" ]; then
+            echo -e "${BLUE}Registry: ${REGISTRY}${NC}"
+        fi
     else
         echo -e "${BLUE}Image available locally (use --push to push to registry)${NC}"
     fi

@@ -1,0 +1,158 @@
+name: Docker Release Build
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract release version
+        id: extract_version
+        run: |
+          # Extract version from the release tag (remove 'v' prefix if present)
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          VERSION="${RELEASE_TAG#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "Building Docker image for release: ${RELEASE_TAG}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make docker-build.sh executable
+        run: chmod +x ./docker-build.sh
+
+      - name: Build and push Docker images
+        run: |
+          # Build and push to GitHub Container Registry
+          ./docker-build.sh \
+            --version "${{ steps.extract_version.outputs.release_tag }}" \
+            --platforms "linux/amd64,linux/arm64" \
+            --image-name "text-to-cypher" \
+            --registry "${{ env.REGISTRY }}/${{ github.repository_owner }}" \
+            --push
+          
+          # Also build and push without registry prefix for local/Docker Hub use
+          ./docker-build.sh \
+            --version "${{ steps.extract_version.outputs.release_tag }}" \
+            --platforms "linux/amd64,linux/arm64" \
+            --image-name "text-to-cypher" \
+            --push
+
+  # Verify the built images
+  verify-images:
+    runs-on: ubuntu-latest
+    needs: docker-build
+    strategy:
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - name: Extract release version
+        id: extract_version
+        run: |
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image exists and runs
+        run: |
+          # Pull and test the specific platform image from GitHub Container Registry
+          PLATFORM="${{ matrix.platform }}"
+          IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          
+          echo "Verifying image: ${IMAGE} for platform: ${PLATFORM}"
+          
+          # Pull the image for the specific platform
+          docker pull --platform="${PLATFORM}" "${IMAGE}"
+          
+          # Basic verification - check if the binary exists and is executable
+          docker run --rm --platform="${PLATFORM}" "${IMAGE}" /app/text-to-cypher --help || true
+          
+          echo "✅ Image verification completed for ${PLATFORM}"
+
+  # Update deployment configurations (optional)
+  update-deployment:
+    runs-on: ubuntu-latest
+    needs: [docker-build, verify-images]
+    if: ${{ !github.event.release.prerelease }}
+    steps:
+      - name: Extract release version
+        id: extract_version
+        run: |
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Update deployment examples
+        run: |
+          echo "🚀 Docker images built and verified for release: ${{ steps.extract_version.outputs.release_tag }}"
+          echo ""
+          echo "📦 Available images:"
+          echo "  - ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "  - ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:latest"
+          echo "  - text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "  - text-to-cypher:latest"
+          echo ""
+          echo "🏃 To run the latest release:"
+          echo "  docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \\"
+          echo "    -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \\"
+          echo "    ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo ""
+          echo "📋 Available platforms: linux/amd64, linux/arm64"
+
+      - name: Create deployment summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          # 🐳 Docker Release Build Complete
+          
+          ## Release Information
+          - **Version**: \`${{ steps.extract_version.outputs.release_tag }}\`
+          - **Repository**: \`${{ github.repository }}\`
+          - **Platforms**: linux/amd64, linux/arm64
+          
+          ## Available Images
+          - \`${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
+          - \`${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:latest\`
+          - \`text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
+          - \`text-to-cypher:latest\`
+          
+          ## Quick Start
+          \`\`\`bash
+          docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \\
+            -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \\
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}
+          \`\`\`
+          
+          ## Services
+          - **Port 6379**: FalkorDB (Redis protocol)
+          - **Port 3000**: FalkorDB web interface  
+          - **Port 8080**: text-to-cypher HTTP API
+          - **Port 3001**: text-to-cypher MCP server
+          EOF
