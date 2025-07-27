@@ -83,6 +83,10 @@ jobs:
           echo "  Computed VERSION: '${VERSION}'"
           echo "  Event name: '${{ github.event_name }}'"
           
+          # Fix: Use the clean version without 'v' prefix for URL construction
+          CLEAN_VERSION="${VERSION#v}"
+          echo "  Clean version for URLs: '${CLEAN_VERSION}'"
+          
           # Enhanced asset checking with build workflow status monitoring
           MAX_ATTEMPTS=60  # 30 minutes total (60 × 30 seconds)
           ATTEMPT=1
@@ -101,11 +105,12 @@ jobs:
             fi
             
             # Check if both required assets exist (root level .tar.gz files with templates)
-            X86_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-x86_64-musl.tar.gz"
-            ARM_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-aarch64-musl.tar.gz"
+            X86_URL="https://github.com/barakb/text-to-cypher/releases/download/v${CLEAN_VERSION}/text-to-cypher-linux-x86_64-musl.tar.gz"
+            ARM_URL="https://github.com/barakb/text-to-cypher/releases/download/v${CLEAN_VERSION}/text-to-cypher-linux-aarch64-musl.tar.gz"
             
             echo "🔍 Debug: Checking asset URLs:"
             echo "  VERSION: ${VERSION}"
+            echo "  CLEAN_VERSION: ${CLEAN_VERSION}"
             echo "  X86_URL: ${X86_URL}"
             echo "  ARM_URL: ${ARM_URL}"
             
@@ -197,7 +202,7 @@ jobs:
               echo ""
               echo "Next steps:"
               echo "1. Check build workflow: https://github.com/barakb/text-to-cypher/actions"
-              echo "2. Check release assets: https://github.com/barakb/text-to-cypher/releases/tag/$VERSION"
+              echo "2. Check release assets: https://github.com/barakb/text-to-cypher/releases/tag/v$CLEAN_VERSION"
               echo "3. Retry this workflow manually if builds completed"
               exit 1
             fi
