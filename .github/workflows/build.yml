@@ -117,26 +117,35 @@ jobs:
       - name: Install cross-compilation tools (for ARM64 targets)
         if: matrix.use_cross
         run: |
-          # Install Zig for cross-compilation (direct download)
-          ZIG_VERSION="0.13.0"
+          # Install Zig for cross-compilation (latest stable version)
+          ZIG_VERSION="0.14.1"
+          echo "Installing Zig version: ${ZIG_VERSION}"
           wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
           tar -xf "zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
           sudo mv "zig-linux-x86_64-${ZIG_VERSION}" /opt/zig
           sudo ln -sf /opt/zig/zig /usr/local/bin/zig
           # Verify installation
           zig version
+          echo "✅ Zig installed successfully"
           # Install cargo-zigbuild
+          echo "Installing cargo-zigbuild..."
           cargo install cargo-zigbuild
+          echo "✅ cargo-zigbuild installed successfully"
 
       - name: Build binary
         run: |
+          echo "Building for target: ${{ matrix.target }}"
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cargo zigbuild --release --target ${{ matrix.target }}
+            echo "Using cargo-zigbuild for cross-compilation..."
+            cargo zigbuild --release --target ${{ matrix.target }} --verbose
           elif [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
-            CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target ${{ matrix.target }}
+            echo "Using musl-gcc for x86_64 musl target..."
+            CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target ${{ matrix.target }} --verbose
           else
-            cargo build --release --target ${{ matrix.target }}
+            echo "Using standard cargo build..."
+            cargo build --release --target ${{ matrix.target }} --verbose
           fi
+          echo "✅ Build completed successfully for ${{ matrix.target }}"
 
       - name: Prepare artifacts
         run: |
