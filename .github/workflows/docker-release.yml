@@ -34,21 +34,51 @@ jobs:
       - name: Extract release version
         id: extract_version
         run: |
+          echo "🔍 Debug: Event context information:"
+          echo "  Event name: '${{ github.event_name }}'"
+          echo "  Head branch: '${{ github.event.workflow_run.head_branch }}'"
+          echo "  Head SHA: '${{ github.event.workflow_run.head_sha }}'"
+          echo "  Conclusion: '${{ github.event.workflow_run.conclusion }}'"
+          
           # Extract version from different trigger types
           if [ "${{ github.event_name }}" = "release" ]; then
             RELEASE_TAG="${{ github.event.release.tag_name }}"
+            echo "📋 Using release tag: $RELEASE_TAG"
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
-            # For workflow_run, extract from the head branch if it's a tag
-            if [[ "${{ github.event.workflow_run.head_branch }}" =~ ^v[0-9] ]]; then
-              RELEASE_TAG="${{ github.event.workflow_run.head_branch }}"
+            # For workflow_run, we need to check if it was triggered by a tag
+            # The head_branch might be the tag name, or we might need to look at the head_sha
+            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
+            echo "🔍 Checking head_branch: '$HEAD_BRANCH'"
+            
+            if [[ "$HEAD_BRANCH" =~ ^v[0-9] ]]; then
+              RELEASE_TAG="$HEAD_BRANCH"
+              echo "✅ Found tag in head_branch: $RELEASE_TAG"
             else
-              echo "Workflow run was not triggered by a tag, skipping Docker build"
-              exit 0
+              # Try to get tag from GitHub API using the head SHA
+              HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+              echo "🔍 Checking if SHA $HEAD_SHA corresponds to a tag..."
+              
+              # Use GitHub API to find tags pointing to this SHA
+              TAG_RESPONSE=$(curl -s -H "Authorization: token ${{ github.token }}" \
+                "https://api.github.com/repos/${{ github.repository }}/git/refs/tags")
+              
+              # Find tag that points to our SHA
+              RELEASE_TAG=$(echo "$TAG_RESPONSE" | jq -r --arg sha "$HEAD_SHA" \
+                '.[] | select(.object.sha == $sha) | .ref | sub("refs/tags/"; "")')
+              
+              if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "null" ]; then
+                echo "✅ Found tag for SHA: $RELEASE_TAG"
+              else
+                echo "❌ No tag found for SHA $HEAD_SHA, skipping Docker build"
+                exit 0
+              fi
             fi
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
             RELEASE_TAG="${{ github.ref_name }}"
+            echo "📋 Using push tag: $RELEASE_TAG"
           else
             RELEASE_TAG="${{ github.event.inputs.version }}"
+            echo "📋 Using manual input: $RELEASE_TAG"
           fi
           
           # Only proceed if workflow_run was successful (when applicable)
