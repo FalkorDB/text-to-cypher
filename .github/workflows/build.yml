@@ -113,17 +113,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools musl-dev
 
-      - name: Install cross for ARM64 cross-compilation
-        if: matrix.use_cross
+      - name: Install ARM64 musl cross-compilation tools
+        if: matrix.use_cross && contains(matrix.target, 'aarch64') && contains(matrix.target, 'musl')
         run: |
-          cargo install cross --git https://github.com/cross-rs/cross
+          # Install musl-cross for ARM64
+          wget https://more.musl.cc/x86_64-linux-musl/aarch64-linux-musl-cross.tgz
+          tar -xzf aarch64-linux-musl-cross.tgz
+          sudo mv aarch64-linux-musl-cross /opt/
+          echo "/opt/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
 
       - name: Build binary
         run: |
           echo "Building for target: ${{ matrix.target }} on ${{ matrix.os }}"
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            echo "Using cross for cross-compilation..."
-            cross build --release --target ${{ matrix.target }} --verbose
+          if [ "${{ matrix.use_cross }}" = "true" ] && [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            echo "Using musl cross-compilation for ARM64..."
+            export CC_aarch64_unknown_linux_musl=/opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc
+            cargo build --release --target ${{ matrix.target }} --verbose
           elif [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
             echo "Using musl-gcc for x86_64 musl target..."
             CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target ${{ matrix.target }} --verbose
