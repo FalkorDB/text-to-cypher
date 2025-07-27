@@ -282,11 +282,11 @@ jobs:
             PUSH_ENABLED=false
           fi
           
-          # Build locally first (always works)
-          echo "🔧 Building images locally..."
+          # Build locally first (single platform only - multi-platform can't load to local daemon)
+          echo "🔧 Building image locally for current platform (linux/amd64)..."
           ./docker-build.sh \
             --version "${{ steps.extract_version.outputs.release_tag }}" \
-            --platforms "linux/amd64,linux/arm64" \
+            --platforms "linux/amd64" \
             --image-name "text-to-cypher"
           
           if [ "$PUSH_ENABLED" = "true" ]; then
@@ -327,17 +327,19 @@ jobs:
               echo "This is optional and might be due to authentication issues"
             fi
             
-            echo "� Build Summary:"
-            echo "  - Local Build: ✅ Success"
-            echo "  - GitHub Container Registry: $([ $GHCR_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "❌ Failed")"
-            echo "  - Docker Hub: $([ $DOCKERHUB_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "⚠️ Failed (optional)")"
+            echo "📊 Build Summary:"
+            echo "  - Local Build (amd64): ✅ Success"
+            echo "  - GitHub Container Registry (multi-platform): $([ $GHCR_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "❌ Failed")"
+            echo "  - Docker Hub (multi-platform): $([ $DOCKERHUB_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "⚠️ Failed (optional)")"
           else
             echo "📊 Build Summary:"
-            echo "  - Local Build: ✅ Success"
+            echo "  - Local Build (amd64): ✅ Success"
             echo "  - Registry Push: ⚠️ Skipped (authentication failed)"
             echo ""
             echo "ℹ️ Images were built successfully but not pushed to registries."
             echo "   This is normal if you don't have push permissions."
+            echo "   Note: Only built for current platform (amd64) since multi-platform"
+            echo "         builds require pushing to a registry."
           fi
           
           echo "✅ Docker build process completed successfully"
