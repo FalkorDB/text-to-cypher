@@ -7,7 +7,7 @@ on:
     workflows: ["build"]
     types:
       - completed
-    branches: [master]
+    # Remove branch filter to allow tag-triggered builds to trigger Docker workflow
   workflow_dispatch:
     inputs:
       version:
