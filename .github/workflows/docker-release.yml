@@ -3,9 +3,11 @@ name: Docker Release Build
 on:
   release:
     types: [published]
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows: ["build"]
+    types:
+      - completed
+    branches: [master]
   workflow_dispatch:
     inputs:
       version:
@@ -30,14 +32,29 @@ jobs:
       - name: Extract release version
         id: extract_version
         run: |
-          # Extract version from either the release tag, pushed tag, or workflow input
+          # Extract version from different trigger types
           if [ "${{ github.event_name }}" = "release" ]; then
             RELEASE_TAG="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # For workflow_run, extract from the head branch if it's a tag
+            if [[ "${{ github.event.workflow_run.head_branch }}" =~ ^v[0-9] ]]; then
+              RELEASE_TAG="${{ github.event.workflow_run.head_branch }}"
+            else
+              echo "Workflow run was not triggered by a tag, skipping Docker build"
+              exit 0
+            fi
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
             RELEASE_TAG="${{ github.ref_name }}"
           else
             RELEASE_TAG="${{ github.event.inputs.version }}"
           fi
+          
+          # Only proceed if workflow_run was successful (when applicable)
+          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
+            echo "Build workflow did not complete successfully, skipping Docker build"
+            exit 0
+          fi
+          
           VERSION="${RELEASE_TAG#v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "release_tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
@@ -84,9 +101,17 @@ jobs:
       - name: Extract release version
         id: extract_version
         run: |
-          # Extract version from either the release tag, pushed tag, or workflow input
+          # Extract version from different trigger types
           if [ "${{ github.event_name }}" = "release" ]; then
             RELEASE_TAG="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # For workflow_run, extract from the head branch if it's a tag
+            if [[ "${{ github.event.workflow_run.head_branch }}" =~ ^v[0-9] ]]; then
+              RELEASE_TAG="${{ github.event.workflow_run.head_branch }}"
+            else
+              echo "Not a tag-triggered workflow run, skipping"
+              exit 0
+            fi
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
             RELEASE_TAG="${{ github.ref_name }}"
           else
@@ -124,14 +149,22 @@ jobs:
   update-deployment:
     runs-on: ubuntu-latest
     needs: [docker-build, verify-images]
-    if: ${{ !github.event.release.prerelease || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
+    if: ${{ !github.event.release.prerelease || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run' }}
     steps:
       - name: Extract release version
         id: extract_version
         run: |
-          # Extract version from either the release tag, pushed tag, or workflow input
+          # Extract version from different trigger types
           if [ "${{ github.event_name }}" = "release" ]; then
             RELEASE_TAG="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # For workflow_run, extract from the head branch if it's a tag
+            if [[ "${{ github.event.workflow_run.head_branch }}" =~ ^v[0-9] ]]; then
+              RELEASE_TAG="${{ github.event.workflow_run.head_branch }}"
+            else
+              echo "Not a tag-triggered workflow run, skipping"
+              exit 0
+            fi
           elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
             RELEASE_TAG="${{ github.ref_name }}"
           else
