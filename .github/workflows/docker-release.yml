@@ -95,7 +95,7 @@ jobs:
               fi
             fi
             
-            # Check if both required assets exist (package format used by Dockerfile)
+            # Check if both required assets exist (package format with templates)
             X86_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/packages/text-to-cypher-linux-x86_64-musl.tar.gz"
             ARM_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/packages/text-to-cypher-linux-aarch64-musl.tar.gz"
             

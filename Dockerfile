@@ -57,8 +57,8 @@ WORKDIR /app
 # Copy the compiled binary from the downloader stage
 COPY --from=downloader /tmp/text-to-cypher /app/text-to-cypher
 
-# Copy the templates directory (fallback to local if not in release)
-COPY templates ./templates
+# Copy the templates from the downloaded package (contains the correct templates for this version)
+COPY --from=downloader /tmp/templates ./templates
 
 # Change ownership to the non-root user
 RUN chown -R appuser:appuser /app

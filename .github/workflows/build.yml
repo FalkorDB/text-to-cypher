@@ -209,19 +209,6 @@ jobs:
             release-artifacts/checksums.txt
             release-artifacts/text-to-cypher-linux-*
 
-      - name: Create GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
-          files: |
-            release-artifacts/packages/*.tar.gz
-            release-artifacts/checksums.txt
-            release-artifacts/text-to-cypher-linux-*
-          generate_release_notes: true
-
       - name: Create installation script
         run: |
           cat > release-artifacts/install.sh << 'EOF'
