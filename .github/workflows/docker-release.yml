@@ -25,8 +25,8 @@ env:
 jobs:
   docker-build:
     runs-on: ubuntu-latest
-    # Only run if the build workflow was triggered by a tag
-    if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
+    # Only run for completed workflows (will check if tag-triggered inside the steps)
+    if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
