@@ -7,7 +7,7 @@ on:
     workflows: ["build"]
     types:
       - completed
-    # Remove branch filter to allow tag-triggered builds to trigger Docker workflow
+    # Only trigger for tag-based builds, not regular pushes to master
   workflow_dispatch:
     inputs:
       version:
@@ -25,6 +25,8 @@ env:
 jobs:
   docker-build:
     runs-on: ubuntu-latest
+    # Only run if the build workflow was triggered by a tag
+    if: ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && startsWith(github.event.workflow_run.head_branch, 'v')) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
