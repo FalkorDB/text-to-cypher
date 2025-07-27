@@ -78,9 +78,22 @@ jobs:
           echo "Waiting for release assets to be fully uploaded..."
           VERSION="${{ steps.extract_version.outputs.release_tag }}"
           
-          # Check if assets are available with retry logic
-          for i in {1..10}; do
-            echo "Attempt $i/10: Checking release assets availability..."
+          # Enhanced asset checking with build workflow status monitoring
+          MAX_ATTEMPTS=60  # 30 minutes total (60 × 30 seconds)
+          ATTEMPT=1
+          
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Checking release assets availability..."
+            
+            # Check build workflow status first
+            if [ "${{ github.event_name }}" = "workflow_run" ]; then
+              BUILD_STATUS="${{ github.event.workflow_run.conclusion }}"
+              echo "📊 Build workflow status: $BUILD_STATUS"
+              if [ "$BUILD_STATUS" = "failure" ] || [ "$BUILD_STATUS" = "cancelled" ]; then
+                echo "❌ Build workflow failed/cancelled - no assets will be available"
+                exit 1
+              fi
+            fi
             
             # Check if both required assets exist
             X86_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-x86_64-musl.tar.gz"
@@ -92,22 +105,60 @@ jobs:
             echo "x86_64 asset status: $X86_STATUS"
             echo "aarch64 asset status: $ARM_STATUS"
             
-            if [ "$X86_STATUS" = "200" ] && [ "$ARM_STATUS" = "200" ]; then
-              echo "✅ All release assets are available!"
-              break
-            elif [ "$X86_STATUS" = "302" ] && [ "$ARM_STATUS" = "302" ]; then
-              echo "✅ All release assets are available (with redirects)!"
-              break
+            # Accept both 200 (direct) and 302 (redirect) as success
+            X86_OK=false
+            ARM_OK=false
+            
+            if [ "$X86_STATUS" = "200" ] || [ "$X86_STATUS" = "302" ]; then
+              X86_OK=true
+              echo "✅ x86_64 asset is available"
             else
-              echo "⏳ Assets not ready yet, waiting 30 seconds..."
-              sleep 30
+              echo "⏳ x86_64 asset not ready (status: $X86_STATUS)"
             fi
             
-            if [ $i -eq 10 ]; then
-              echo "❌ Timeout waiting for release assets to become available"
-              echo "This might be a temporary issue. You can retry the workflow manually."
+            if [ "$ARM_STATUS" = "200" ] || [ "$ARM_STATUS" = "302" ]; then
+              ARM_OK=true
+              echo "✅ aarch64 asset is available" 
+            else
+              echo "⏳ aarch64 asset not ready (status: $ARM_STATUS)"
+            fi
+            
+            # Both assets must be available
+            if [ "$X86_OK" = "true" ] && [ "$ARM_OK" = "true" ]; then
+              echo "🎉 All release assets are available!"
+              break
+            fi
+            
+            # Provide helpful status updates
+            if [ $((ATTEMPT % 5)) -eq 0 ]; then
+              ELAPSED_MINUTES=$((ATTEMPT * 30 / 60))
+              echo "📈 Progress update after $ELAPSED_MINUTES minutes:"
+              echo "  - x86_64 build: $([ "$X86_OK" = "true" ] && echo "✅ Complete" || echo "🔄 In progress")"
+              echo "  - aarch64 build: $([ "$ARM_OK" = "true" ] && echo "✅ Complete" || echo "🔄 In progress")"
+              echo "  - Note: ARM64 builds typically take longer than x86_64"
+            fi
+            
+            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+              echo "❌ Timeout after $MAX_ATTEMPTS attempts (30 minutes)"
+              echo "Final asset status:"
+              echo "  - x86_64: $X86_STATUS ($([ "$X86_OK" = "true" ] && echo "✅ Available" || echo "❌ Missing"))"
+              echo "  - aarch64: $ARM_STATUS ($([ "$ARM_OK" = "true" ] && echo "✅ Available" || echo "❌ Missing"))"
+              echo ""
+              echo "Possible causes:"
+              echo "1. Cross-platform build taking longer than 30 minutes"
+              echo "2. Build workflow failed for one or both architectures"
+              echo "3. GitHub release asset upload issues"
+              echo ""
+              echo "Next steps:"
+              echo "1. Check build workflow: https://github.com/barakb/text-to-cypher/actions"
+              echo "2. Check release assets: https://github.com/barakb/text-to-cypher/releases/tag/$VERSION"
+              echo "3. Retry this workflow manually if builds completed"
               exit 1
             fi
+            
+            echo "⏳ Waiting 30 seconds... ($(($ATTEMPT * 30 / 60)) min elapsed, up to 30 min total)"
+            sleep 30
+            ATTEMPT=$((ATTEMPT + 1))
           done
 
       - name: Build and push Docker images
