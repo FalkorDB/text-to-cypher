@@ -393,7 +393,7 @@ jobs:
           # Try to verify images from different sources
           PLATFORM="${{ matrix.platform }}"
           GHCR_IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
-          DOCKERHUB_IMAGE="text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          DOCKERHUB_IMAGE="${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
           
           echo "Verifying images for platform: ${PLATFORM}"
           
@@ -487,8 +487,8 @@ jobs:
           echo "📦 Available images:"
           echo "  - ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
           echo "  - ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:latest"
-          echo "  - text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
-          echo "  - text-to-cypher:latest"
+          echo "  - ${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "  - ${{ github.repository_owner }}/text-to-cypher:latest"
           echo ""
           echo "🏃 To run the latest release:"
           echo "  docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \\"
@@ -510,8 +510,8 @@ jobs:
           ## Available Images
           - \`${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
           - \`${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:latest\`
-          - \`text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
-          - \`text-to-cypher:latest\`
+          - \`${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
+          - \`${{ github.repository_owner }}/text-to-cypher:latest\`
           
           ## Quick Start
           \`\`\`bash
