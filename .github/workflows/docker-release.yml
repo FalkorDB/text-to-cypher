@@ -130,15 +130,18 @@ jobs:
       - name: Wait for release assets to be available
         run: |
           echo "🚀 Starting asset availability check..."
-          VERSION="${{ steps.extract_version.outputs.release_tag }}"
+          VERSION="${{ steps.extract_version.outputs.version }}"
+          RELEASE_TAG="${{ steps.extract_version.outputs.release_tag }}"
           
           echo "🔍 Debug: Version information:"
           echo "  Raw release_tag: '${{ steps.extract_version.outputs.release_tag }}'"
-          echo "  Computed VERSION: '${VERSION}'"
+          echo "  Clean version: '${{ steps.extract_version.outputs.version }}'"
+          echo "  Using VERSION: '${VERSION}'"
+          echo "  Using RELEASE_TAG: '${RELEASE_TAG}'"
           echo "  Event name: '${{ github.event_name }}'"
           
           # Fix: Use the clean version without 'v' prefix for URL construction
-          CLEAN_VERSION="${VERSION#v}"
+          CLEAN_VERSION="${VERSION}"
           echo "  Clean version for URLs: '${CLEAN_VERSION}'"
           
           # Enhanced asset checking with build workflow status monitoring
