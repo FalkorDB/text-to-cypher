@@ -38,10 +38,10 @@ jobs:
             exit 0
           fi
           
-          # For release events, only run if it's a prerelease
-          if [ "${{ github.event_name }}" = "release" ] && [ "${{ github.event.release.prerelease }}" = "true" ]; then
+          # For release events, always run cleanup
+          if [ "${{ github.event_name }}" = "release" ]; then
             echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "reason=New prerelease published: ${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+            echo "reason=New release published: ${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
             exit 0
           fi
           
