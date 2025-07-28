@@ -23,8 +23,8 @@ The workflow is triggered when:
 For each release, the following Docker images are created:
 
 ### GitHub Container Registry (GHCR)
-- `ghcr.io/barakb/text-to-cypher:v1.0.0` (release tag)
-- `ghcr.io/barakb/text-to-cypher:latest`
+- `ghcr.io/falkordb/text-to-cypher:v1.0.0` (release tag)
+- `ghcr.io/falkordb/text-to-cypher:latest`
 
 ### Local/Docker Hub Compatible
 - `text-to-cypher:v1.0.0` (release tag)
@@ -52,7 +52,7 @@ The Dockerfile downloads pre-built binaries from the GitHub release:
 ```dockerfile
 ARG VERSION=v0.1.0-alpha.1
 wget -O /tmp/text-to-cypher.tar.gz \
-  "https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-${RUST_ARCH}.tar.gz"
+  "https://github.com/FalkorDB/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-${RUST_ARCH}.tar.gz"
 ```
 
 ### 3. Multi-Platform Build
@@ -61,7 +61,7 @@ Uses Docker Buildx with the enhanced `docker-build.sh` script:
 ./docker-build.sh \
   --version "v1.0.0" \
   --platforms "linux/amd64,linux/arm64" \
-  --registry "ghcr.io/barakb" \
+  --registry "ghcr.io/falkordb" \
   --push
 ```
 
@@ -114,7 +114,7 @@ If you get "image not found" errors:
 ### Platform Issues
 If you need a specific platform:
 ```bash
-docker pull --platform linux/amd64 ghcr.io/barakb/text-to-cypher:v1.0.0
+docker pull --platform linux/amd64 ghcr.io/falkordb/text-to-cypher:v1.0.0
 ```
 
 ### Build Failures
@@ -138,10 +138,10 @@ The Docker image includes both FalkorDB and text-to-cypher:
 # Run the latest release
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 
 # Run a specific version
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \
-  ghcr.io/barakb/text-to-cypher:v1.0.0
+  ghcr.io/falkordb/text-to-cypher:v1.0.0
 ```

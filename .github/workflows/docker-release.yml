@@ -159,8 +159,8 @@ jobs:
             fi
             
             # Check if both required assets exist (root level .tar.gz files with templates)
-            X86_URL="https://github.com/barakb/text-to-cypher/releases/download/v${CLEAN_VERSION}/text-to-cypher-linux-x86_64-musl.tar.gz"
-            ARM_URL="https://github.com/barakb/text-to-cypher/releases/download/v${CLEAN_VERSION}/text-to-cypher-linux-aarch64-musl.tar.gz"
+            X86_URL="https://github.com/FalkorDB/text-to-cypher/releases/download/v${CLEAN_VERSION}/text-to-cypher-linux-x86_64-musl.tar.gz"
+            ARM_URL="https://github.com/FalkorDB/text-to-cypher/releases/download/v${CLEAN_VERSION}/text-to-cypher-linux-aarch64-musl.tar.gz"
             
             echo "🔍 Debug: Checking asset URLs:"
             echo "  VERSION: ${VERSION}"
@@ -255,8 +255,8 @@ jobs:
               echo "3. GitHub release asset upload issues"
               echo ""
               echo "Next steps:"
-              echo "1. Check build workflow: https://github.com/barakb/text-to-cypher/actions"
-              echo "2. Check release assets: https://github.com/barakb/text-to-cypher/releases/tag/v$CLEAN_VERSION"
+              echo "1. Check build workflow: https://github.com/FalkorDB/text-to-cypher/actions"
+              echo "2. Check release assets: https://github.com/FalkorDB/text-to-cypher/releases/tag/v$CLEAN_VERSION"
               echo "3. Retry this workflow manually if builds completed"
               exit 1
             fi

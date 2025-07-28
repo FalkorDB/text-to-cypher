@@ -235,7 +235,7 @@ jobs:
           set -e
           
           # Text-to-Cypher Installation Script
-          REPO="barakb/text-to-cypher"
+          REPO="FalkorDB/text-to-cypher"
           BINARY_NAME="text-to-cypher"
           
           # Parse arguments

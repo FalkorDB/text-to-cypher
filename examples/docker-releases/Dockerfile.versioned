@@ -21,7 +21,7 @@ RUN case "${TARGETARCH}" in \
     esac && \
     echo "Downloading text-to-cypher version: $VERSION for ${TARGETOS}/${TARGETARCH}" && \
     echo "Rust target: ${RUST_ARCH}" && \
-    DOWNLOAD_URL="https://github.com/barakb/text-to-cypher/releases/download/$VERSION/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
+    DOWNLOAD_URL="https://github.com/FalkorDB/text-to-cypher/releases/download/$VERSION/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
     echo "Download URL: $DOWNLOAD_URL" && \
     wget "$DOWNLOAD_URL" -O /tmp/text-to-cypher.tar.gz && \
     cd /tmp && \
@@ -64,7 +64,7 @@ EXPOSE 8080 3001
 # Labels with version info
 LABEL org.opencontainers.image.title="Text-to-Cypher" \
       org.opencontainers.image.version="$VERSION" \
-      org.opencontainers.image.source="https://github.com/barakb/text-to-cypher"
+      org.opencontainers.image.source="https://github.com/FalkorDB/text-to-cypher"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

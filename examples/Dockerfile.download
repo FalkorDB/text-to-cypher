@@ -7,10 +7,10 @@ RUN apk add --no-cache wget jq tar
 # Download the latest text-to-cypher binary with templates
 ARG TEXT_TO_CYPHER_VERSION=latest
 RUN if [ "$TEXT_TO_CYPHER_VERSION" = "latest" ]; then \
-        TEXT_TO_CYPHER_VERSION=$(wget -qO- https://api.github.com/repos/barakb/text-to-cypher/releases/latest | jq -r '.tag_name'); \
+        TEXT_TO_CYPHER_VERSION=$(wget -qO- https://api.github.com/repos/FalkorDB/text-to-cypher/releases/latest | jq -r '.tag_name'); \
     fi && \
     echo "Downloading text-to-cypher version: $TEXT_TO_CYPHER_VERSION" && \
-    wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O /tmp/text-to-cypher.tar.gz && \
+    wget https://github.com/FalkorDB/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O /tmp/text-to-cypher.tar.gz && \
     cd /tmp && tar -xzf text-to-cypher.tar.gz && \
     chmod +x text-to-cypher-linux-x86_64-musl
 

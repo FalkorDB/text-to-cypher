@@ -21,7 +21,7 @@ RUN case "${TARGETARCH}" in \
     esac && \
     echo "Downloading text-to-cypher version: $TEXT_TO_CYPHER_VERSION" && \
     echo "Target: ${TARGETOS}/${TARGETARCH} -> rust target: ${RUST_ARCH}" && \
-    wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/text-to-cypher-linux-${RUST_ARCH}.tar.gz -O /tmp/text-to-cypher.tar.gz && \
+    wget https://github.com/FalkorDB/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/text-to-cypher-linux-${RUST_ARCH}.tar.gz -O /tmp/text-to-cypher.tar.gz && \
     cd /tmp && \
     tar -xzf text-to-cypher.tar.gz && \
     chmod +x text-to-cypher
@@ -64,7 +64,7 @@ EXPOSE 8080 3001
 LABEL org.opencontainers.image.title="Text-to-Cypher" \
       org.opencontainers.image.description="REST API for translating natural language to Cypher queries" \
       org.opencontainers.image.version="v0.1.0-alpha.1" \
-      org.opencontainers.image.source="https://github.com/barakb/text-to-cypher" \
+      org.opencontainers.image.source="https://github.com/FalkorDB/text-to-cypher" \
       org.opencontainers.image.licenses="MIT"
 
 # Health check

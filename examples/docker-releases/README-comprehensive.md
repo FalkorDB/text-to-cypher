@@ -230,7 +230,7 @@ For more detailed integration examples and production deployment guides, see:
 
 ## 🔗 Related Resources
 
-- [GitHub Releases](https://github.com/barakb/text-to-cypher/releases)
+- [GitHub Releases](https://github.com/FalkorDB/text-to-cypher/releases)
 - [Swagger API Documentation](http://localhost:8080/swagger-ui/) (when running)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 

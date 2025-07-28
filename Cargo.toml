@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "A REST API for translating natural language text to Cypher queries using AI models"
 license = "MIT"
-repository = "https://github.com/barakb/text-to-cypher"
+repository = "https://github.com/FalkorDB/text-to-cypher"
 keywords = ["cypher", "graph", "database", "ai", "nlp"]
 categories = ["database", "web-programming::http-server"]
 

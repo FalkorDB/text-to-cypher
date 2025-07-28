@@ -154,7 +154,7 @@ git tag "v$VERSION"
 git push origin "v$VERSION"
 
 echo "Release v$VERSION created successfully!"
-echo "Visit: https://github.com/barakb/text-to-cypher/releases"
+echo "Visit: https://github.com/FalkorDB/text-to-cypher/releases"
 ```
 
 Usage:

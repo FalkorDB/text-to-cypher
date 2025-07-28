@@ -1,6 +1,6 @@
 # Text to Cypher
 
-[![build](https://github.com/barakb/text-to-cypher/actions/workflows/build.yml/badge.svg)](https://github.com/barakb/text-to-cypher/actions/workflows/build.yml)
+[![build](https://github.com/FalkorDB/text-to-cypher/actions/workflows/build.yml/badge.svg)](https://github.com/FalkorDB/text-to-cypher/actions/workflows/build.yml)
 
 A high-performance Rust-based API service that translates natural language text to Cypher queries for graph databases, featuring integration with genai and FalkorDB. Complete all-in-one Docker solution with integrated FalkorDB database, web browser interface, text-to-cypher API, and Model Context Protocol (MCP) server support!
 
@@ -38,17 +38,17 @@ The easiest way to get started is using our all-in-one Docker image that include
 # Run the complete stack with all services
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 
 # Or using environment file
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   --env-file .env \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 
 # Or mounting .env file for full MCP server functionality
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -v $(pwd)/.env:/app/.env:ro \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 ```
 
 ### Available Services
@@ -73,7 +73,7 @@ docker run -d -p 6379:6379 falkordb/falkordb:latest
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and run the text-to-cypher service
-git clone https://github.com/barakb/text-to-cypher.git
+git clone https://github.com/FalkorDB/text-to-cypher.git
 cd text-to-cypher
 cp .env.example .env  # Edit with your configuration
 cargo run
@@ -144,7 +144,7 @@ The project provides an all-in-one Docker image that includes FalkorDB database,
 
 ```bash
 # Pull the latest image
-docker pull ghcr.io/barakb/text-to-cypher:latest
+docker pull ghcr.io/falkordb/text-to-cypher:latest
 
 # Option 1: Complete stack with all services (recommended)
 docker run -d \
@@ -156,7 +156,7 @@ docker run -d \
   -e DEFAULT_MODEL=gpt-4o-mini \
   -e DEFAULT_KEY=your-api-key \
   --restart unless-stopped \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 
 # Option 2: Using environment file
 docker run -d \
@@ -167,7 +167,7 @@ docker run -d \
   -p 3001:3001 \
   --env-file .env \
   --restart unless-stopped \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 
 # Option 3: Mount .env file for full MCP functionality
 docker run -d \
@@ -178,7 +178,7 @@ docker run -d \
   -p 3001:3001 \
   -v $(pwd)/.env:/app/.env:ro \
   --restart unless-stopped \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 
 # View logs from all services
 docker logs -f text-to-cypher-stack
@@ -231,7 +231,7 @@ To test and interact with the MCP server, you can use the MCP Inspector:
 ```bash
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 ```
 
 2. **Install MCP Inspector** (if not already installed):
@@ -309,7 +309,7 @@ The MCP server enables AI assistants to:
 # Run the complete integrated stack
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 ```
 
 #### Local Development
@@ -345,7 +345,7 @@ docker build -t text-to-cypher:latest .
 #### Using Pre-built Images
 ```bash
 # Pull from GitHub Container Registry
-docker pull ghcr.io/barakb/text-to-cypher:latest
+docker pull ghcr.io/falkordb/text-to-cypher:latest
 
 # Available tags: latest, v1.0.0, v0.1.0-beta.x, etc.
 ```
@@ -453,7 +453,7 @@ eventSource.onmessage = (event) => {
 # 1. Start the complete stack
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
-  ghcr.io/barakb/text-to-cypher:latest
+  ghcr.io/falkordb/text-to-cypher:latest
 
 # 2. Create a graph using FalkorDB web interface (http://localhost:3000)
 # Add some sample data: people, relationships, etc.
@@ -507,7 +507,7 @@ curl -X POST "http://localhost:8080/text_to_cypher" \
 - **API Documentation**: `http://localhost:8080/swagger-ui/`
 - **Web Interface**: `http://localhost:3000` for graph exploration
 - **Logs**: Use `docker logs -f <container-name>` to view all service logs
-- **Issues**: Report problems at [GitHub Issues](https://github.com/barakb/text-to-cypher/issues)
+- **Issues**: Report problems at [GitHub Issues](https://github.com/FalkorDB/text-to-cypher/issues)
 
 ## License
 

@@ -17,7 +17,7 @@ RUN echo "Downloading text-to-cypher ${VERSION} for ${TARGETPLATFORM} (${TARGETO
       "arm64") export RUST_ARCH="aarch64-musl" ;; \
       *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac && \
-    DOWNLOAD_URL="https://github.com/barakb/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
+    DOWNLOAD_URL="https://github.com/FalkorDB/text-to-cypher/releases/download/${VERSION}/text-to-cypher-linux-${RUST_ARCH}.tar.gz" && \
     echo "Download URL: ${DOWNLOAD_URL}" && \
     for i in 1 2 3 4 5; do \
       echo "Download attempt $i/5..." && \

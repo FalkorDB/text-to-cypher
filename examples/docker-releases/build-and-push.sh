@@ -16,7 +16,7 @@ PLATFORMS=${3:-"linux/amd64,linux/arm64"}
 
 if [ -z "$REGISTRY" ]; then
     echo -e "${RED}Usage: $0 <version> <registry> [platforms]${NC}"
-    echo -e "${YELLOW}Example: $0 v1.0.0 ghcr.io/barakb/text-to-cypher${NC}"
+    echo -e "${YELLOW}Example: $0 v1.0.0 ghcr.io/falkordb/text-to-cypher${NC}"
     echo -e "${YELLOW}Example: $0 v1.0.0 docker.io/myuser/text-to-cypher linux/amd64,linux/arm64${NC}"
     exit 1
 fi

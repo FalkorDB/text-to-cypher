@@ -6,12 +6,12 @@ This guide shows you how to integrate `text-to-cypher` into your projects and Do
 
 ### One-line Install
 ```bash
-curl -sSL https://github.com/barakb/text-to-cypher/releases/latest/download/install.sh | bash
+curl -sSL https://github.com/FalkorDB/text-to-cypher/releases/latest/download/install.sh | bash
 ```
 
 ### Install System-wide
 ```bash
-curl -sSL https://github.com/barakb/text-to-cypher/releases/latest/download/install.sh | bash -s -- --install
+curl -sSL https://github.com/FalkorDB/text-to-cypher/releases/latest/download/install.sh | bash -s -- --install
 ```
 
 ## 🐳 Docker Integration
@@ -24,9 +24,9 @@ FROM alpine:latest
 ARG TEXT_TO_CYPHER_VERSION=latest
 RUN apk add --no-cache ca-certificates wget tar && \
     if [ "$TEXT_TO_CYPHER_VERSION" = "latest" ]; then \
-        TEXT_TO_CYPHER_VERSION=$(wget -qO- https://api.github.com/repos/barakb/text-to-cypher/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); \
+        TEXT_TO_CYPHER_VERSION=$(wget -qO- https://api.github.com/repos/FalkorDB/text-to-cypher/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); \
     fi && \
-    wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O text-to-cypher.tar.gz && \
+    wget https://github.com/FalkorDB/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O text-to-cypher.tar.gz && \
     tar -xzf text-to-cypher.tar.gz && \
     mv text-to-cypher-linux-x86_64-musl /usr/local/bin/text-to-cypher && \
     mv templates /usr/local/share/text-to-cypher-templates && \
@@ -44,9 +44,9 @@ FROM alpine:latest AS downloader
 RUN apk add --no-cache wget jq tar
 ARG TEXT_TO_CYPHER_VERSION=latest
 RUN if [ "$TEXT_TO_CYPHER_VERSION" = "latest" ]; then \
-        TEXT_TO_CYPHER_VERSION=$(wget -qO- https://api.github.com/repos/barakb/text-to-cypher/releases/latest | jq -r '.tag_name'); \
+        TEXT_TO_CYPHER_VERSION=$(wget -qO- https://api.github.com/repos/FalkorDB/text-to-cypher/releases/latest | jq -r '.tag_name'); \
     fi && \
-    wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O /tmp/text-to-cypher.tar.gz && \
+    wget https://github.com/FalkorDB/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz -O /tmp/text-to-cypher.tar.gz && \
     cd /tmp && tar -xzf text-to-cypher.tar.gz
 
 # Runtime stage
@@ -91,7 +91,7 @@ jobs:
     steps:
       - name: Download text-to-cypher
         run: |
-          curl -sSL https://github.com/barakb/text-to-cypher/releases/latest/download/install.sh | bash
+          curl -sSL https://github.com/FalkorDB/text-to-cypher/releases/latest/download/install.sh | bash
           
       - name: Use text-to-cypher
         run: |
@@ -113,7 +113,7 @@ jobs:
       - name: Build and run text-to-cypher
         run: |
           # Download binary with templates
-          curl -sSL https://github.com/barakb/text-to-cypher/releases/latest/download/install.sh | bash
+          curl -sSL https://github.com/FalkorDB/text-to-cypher/releases/latest/download/install.sh | bash
           ./text-to-cypher --help
 ```
 
@@ -129,7 +129,7 @@ FROM rust:1.85-alpine AS builder
 RUN apk add --no-cache musl-dev git
 
 # Clone and build text-to-cypher
-RUN git clone https://github.com/barakb/text-to-cypher.git /src
+RUN git clone https://github.com/FalkorDB/text-to-cypher.git /src
 WORKDIR /src
 RUN cargo build --release
 
@@ -149,14 +149,14 @@ CMD ["text-to-cypher"]
 ```bash
 # Download specific version with templates
 VERSION="v2025.01.15-abc1234"
-wget https://github.com/barakb/text-to-cypher/releases/download/$VERSION/packages/text-to-cypher-linux-x86_64.tar.gz
+wget https://github.com/FalkorDB/text-to-cypher/releases/download/$VERSION/packages/text-to-cypher-linux-x86_64.tar.gz
 tar -xzf text-to-cypher-linux-x86_64.tar.gz
 ```
 
 ### In Dockerfile
 ```dockerfile
 ARG TEXT_TO_CYPHER_VERSION=v2025.01.15-abc1234
-RUN wget https://github.com/barakb/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz && \
+RUN wget https://github.com/FalkorDB/text-to-cypher/releases/download/$TEXT_TO_CYPHER_VERSION/packages/text-to-cypher-linux-x86_64-musl.tar.gz && \
     tar -xzf text-to-cypher-linux-x86_64-musl.tar.gz && \
     mv text-to-cypher-linux-x86_64-musl /usr/local/bin/text-to-cypher && \
     mv templates /usr/local/share/text-to-cypher-templates
@@ -180,8 +180,8 @@ Each release includes complete packages with templates:
 
 ```bash
 # Download and verify checksums
-wget https://github.com/barakb/text-to-cypher/releases/latest/download/packages/text-to-cypher-linux-x86_64.tar.gz
-wget https://github.com/barakb/text-to-cypher/releases/latest/download/checksums.txt
+wget https://github.com/FalkorDB/text-to-cypher/releases/latest/download/packages/text-to-cypher-linux-x86_64.tar.gz
+wget https://github.com/FalkorDB/text-to-cypher/releases/latest/download/checksums.txt
 sha256sum -c checksums.txt --ignore-missing
 ```
 
@@ -192,5 +192,5 @@ See the [examples](examples/) directory for complete integration examples.
 ## 🆘 Support
 
 - 📖 Documentation: [README.md](README.md)
-- 🐛 Issues: [GitHub Issues](https://github.com/barakb/text-to-cypher/issues)
-- 💬 Discussions: [GitHub Discussions](https://github.com/barakb/text-to-cypher/discussions)
+- 🐛 Issues: [GitHub Issues](https://github.com/FalkorDB/text-to-cypher/issues)
+- 💬 Discussions: [GitHub Discussions](https://github.com/FalkorDB/text-to-cypher/discussions)
