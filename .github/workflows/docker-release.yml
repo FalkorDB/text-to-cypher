@@ -319,6 +319,7 @@ jobs:
               --version "${{ steps.extract_version.outputs.release_tag }}" \
               --platforms "linux/amd64,linux/arm64" \
               --image-name "text-to-cypher" \
+              --registry "${{ github.repository_owner }}" \
               --push
             DOCKERHUB_EXIT_CODE=$?
             set -e  # Re-enable exit on error
