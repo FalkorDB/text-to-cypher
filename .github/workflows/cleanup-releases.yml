@@ -4,7 +4,7 @@ on:
   release:
     types: [published]
   workflow_run:
-    workflows: ["build"]
+    workflows: ["docker-release"]
     types:
       - completed
     branches: [master]
@@ -45,44 +45,26 @@ jobs:
             exit 0
           fi
           
-          # For workflow_run, check if it was triggered by a successful release build
+          # For workflow_run, check if it was triggered by a successful docker release
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
             # Only proceed if the workflow run was successful
             if [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
-              echo "Workflow run was not successful, skipping cleanup"
+              echo "Docker release workflow was not successful, skipping cleanup"
               echo "should_run=false" >> $GITHUB_OUTPUT
-              echo "reason=Build workflow failed, skipping cleanup" >> $GITHUB_OUTPUT
+              echo "reason=Docker release workflow failed, skipping cleanup" >> $GITHUB_OUTPUT
               exit 0
             fi
-            # Get the tag from GitHub API using the head SHA
-            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
-            echo "Workflow run triggered by SHA: $HEAD_SHA"
             
-            # Use GitHub API to find tags pointing to this SHA
-            TAG_RESPONSE=$(curl -s -H "Authorization: token ${{ github.token }}" \
-              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags")
-            
-            # Find tag that points to our SHA
-            RELEASE_TAG=$(echo "$TAG_RESPONSE" | jq -r --arg sha "$HEAD_SHA" \
-              '.[] | select(.object.sha == $sha) | .ref | sub("refs/tags/"; "")')
-            
-            if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "null" ] && [ "$RELEASE_TAG" != "" ]; then
-              echo "Found tag for SHA: $RELEASE_TAG"
-              # Check if it's a prerelease tag (alpha, beta, rc)
-              if [[ "$RELEASE_TAG" == v*-alpha* ]] || [[ "$RELEASE_TAG" == v*-beta* ]] || [[ "$RELEASE_TAG" == v*-rc* ]]; then
-                echo "should_run=true" >> $GITHUB_OUTPUT
-                echo "reason=Prerelease build completed: $RELEASE_TAG" >> $GITHUB_OUTPUT
-                exit 0
-              else
-                echo "Tag $RELEASE_TAG is not a prerelease, skipping cleanup"
-              fi
-            else
-              echo "No tag found for SHA $HEAD_SHA"
-            fi
+            # For docker-release workflow, we can get the tag from the workflow name or triggering event
+            # The docker-release workflow should have been triggered by a release event
+            echo "Docker release workflow completed successfully"
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            echo "reason=Docker release workflow completed successfully" >> $GITHUB_OUTPUT
+            exit 0
           fi
           
           echo "should_run=false" >> $GITHUB_OUTPUT
-          echo "reason=Not a prerelease event, skipping cleanup" >> $GITHUB_OUTPUT
+          echo "reason=Not a release event or manual trigger, skipping cleanup" >> $GITHUB_OUTPUT
 
       - name: Cleanup old releases
         if: steps.should_run.outputs.should_run == 'true'
