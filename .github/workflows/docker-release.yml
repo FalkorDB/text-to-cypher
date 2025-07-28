@@ -4,9 +4,10 @@ on:
   release:
     types: [published]
   workflow_run:
-    workflows: ["build"]
+    workflows: ["Release on Tag"]
     types:
       - completed
+    branches: ['refs/tags/*']
     # Only trigger for tag-based builds, not regular pushes to master
   workflow_dispatch:
     inputs:
