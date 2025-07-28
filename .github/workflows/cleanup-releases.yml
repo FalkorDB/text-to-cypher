@@ -1,9 +1,6 @@
 name: Cleanup Old Releases
 
 on:
-  schedule:
-    # Run weekly on Sundays at 2 AM UTC
-    - cron: '0 2 * * 0'
   release:
     types: [published]
   workflow_run:
@@ -34,10 +31,10 @@ jobs:
       - name: Check if cleanup should run
         id: should_run
         run: |
-          # For manual/scheduled runs, always run
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+          # For manual runs, always run
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "reason=Manual or scheduled cleanup" >> $GITHUB_OUTPUT
+            echo "reason=Manual cleanup" >> $GITHUB_OUTPUT
             exit 0
           fi
           
@@ -48,14 +45,39 @@ jobs:
             exit 0
           fi
           
-          # For workflow_run, check if it was triggered by a prerelease tag
+          # For workflow_run, check if it was triggered by a successful release build
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            TAG="${{ github.event.workflow_run.head_branch }}"
-            echo "Workflow run triggered by: $TAG"
-            if [[ "$TAG" == v*-alpha* ]] || [[ "$TAG" == v*-beta* ]] || [[ "$TAG" == v*-rc* ]]; then
-              echo "should_run=true" >> $GITHUB_OUTPUT
-              echo "reason=Prerelease build completed: $TAG" >> $GITHUB_OUTPUT
+            # Only proceed if the workflow run was successful
+            if [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
+              echo "Workflow run was not successful, skipping cleanup"
+              echo "should_run=false" >> $GITHUB_OUTPUT
+              echo "reason=Build workflow failed, skipping cleanup" >> $GITHUB_OUTPUT
               exit 0
+            fi
+            # Get the tag from GitHub API using the head SHA
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            echo "Workflow run triggered by SHA: $HEAD_SHA"
+            
+            # Use GitHub API to find tags pointing to this SHA
+            TAG_RESPONSE=$(curl -s -H "Authorization: token ${{ github.token }}" \
+              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags")
+            
+            # Find tag that points to our SHA
+            RELEASE_TAG=$(echo "$TAG_RESPONSE" | jq -r --arg sha "$HEAD_SHA" \
+              '.[] | select(.object.sha == $sha) | .ref | sub("refs/tags/"; "")')
+            
+            if [ -n "$RELEASE_TAG" ] && [ "$RELEASE_TAG" != "null" ] && [ "$RELEASE_TAG" != "" ]; then
+              echo "Found tag for SHA: $RELEASE_TAG"
+              # Check if it's a prerelease tag (alpha, beta, rc)
+              if [[ "$RELEASE_TAG" == v*-alpha* ]] || [[ "$RELEASE_TAG" == v*-beta* ]] || [[ "$RELEASE_TAG" == v*-rc* ]]; then
+                echo "should_run=true" >> $GITHUB_OUTPUT
+                echo "reason=Prerelease build completed: $RELEASE_TAG" >> $GITHUB_OUTPUT
+                exit 0
+              else
+                echo "Tag $RELEASE_TAG is not a prerelease, skipping cleanup"
+              fi
+            else
+              echo "No tag found for SHA $HEAD_SHA"
             fi
           fi
           
@@ -73,7 +95,7 @@ jobs:
             const keepReleases = ${{ github.event.inputs.keep_releases || 10 }};
             const keepPrereleases = ${{ github.event.inputs.keep_prereleases || 1 }};
             
-            console.log(`Configuration: Keep ${keepReleases} stable releases, ${keepPrereleases} prereleases`);
+            console.log(`Configuration: Keep ${keepReleases} stable releases, ${keepPrereleases} prereleases per type (alpha/beta/rc)`);
             
             const { data: releases } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
@@ -86,17 +108,45 @@ jobs:
             
             // Separate stable releases from prereleases
             const stableReleases = sortedReleases.filter(release => !release.prerelease);
-            const prereleases = sortedReleases.filter(release => release.prerelease);
+            const allPrereleases = sortedReleases.filter(release => release.prerelease);
+            
+            // Further categorize prereleases by type
+            const alphaReleases = allPrereleases.filter(r => r.tag_name.includes('-alpha'));
+            const betaReleases = allPrereleases.filter(r => r.tag_name.includes('-beta'));
+            const rcReleases = allPrereleases.filter(r => r.tag_name.includes('-rc'));
+            const otherPrereleases = allPrereleases.filter(r => 
+              !r.tag_name.includes('-alpha') && 
+              !r.tag_name.includes('-beta') && 
+              !r.tag_name.includes('-rc')
+            );
             
             // Determine which releases to delete
             const stableToDelete = stableReleases.slice(keepReleases);
-            const prereleasesToDelete = prereleases.slice(keepPrereleases);
-            const releasesToDelete = [...stableToDelete, ...prereleasesToDelete];
+            const alphaToDelete = alphaReleases.slice(keepPrereleases);
+            const betaToDelete = betaReleases.slice(keepPrereleases);
+            const rcToDelete = rcReleases.slice(keepPrereleases);
+            const otherPrereleasesToDelete = otherPrereleases.slice(keepPrereleases);
+            
+            const releasesToDelete = [
+              ...stableToDelete, 
+              ...alphaToDelete, 
+              ...betaToDelete, 
+              ...rcToDelete, 
+              ...otherPrereleasesToDelete
+            ];
             
             console.log(`Found ${releases.length} total releases:`);
             console.log(`  - ${stableReleases.length} stable releases (keeping latest ${keepReleases})`);
-            console.log(`  - ${prereleases.length} prereleases (keeping latest ${keepPrereleases})`);
-            console.log(`Deleting ${releasesToDelete.length} old releases (${stableToDelete.length} stable + ${prereleasesToDelete.length} prereleases)`);
+            console.log(`  - ${alphaReleases.length} alpha releases (keeping latest ${keepPrereleases})`);
+            console.log(`  - ${betaReleases.length} beta releases (keeping latest ${keepPrereleases})`);
+            console.log(`  - ${rcReleases.length} RC releases (keeping latest ${keepPrereleases})`);
+            console.log(`  - ${otherPrereleases.length} other prereleases (keeping latest ${keepPrereleases})`);
+            console.log(`Deleting ${releasesToDelete.length} old releases`);
+            console.log(`  - ${stableToDelete.length} stable releases`);
+            console.log(`  - ${alphaToDelete.length} alpha releases`);
+            console.log(`  - ${betaToDelete.length} beta releases`);
+            console.log(`  - ${rcToDelete.length} RC releases`);
+            console.log(`  - ${otherPrereleasesToDelete.length} other prereleases`);
             
             if (releasesToDelete.length === 0) {
               console.log('No releases to delete');
@@ -116,19 +166,8 @@ jobs:
                   release_id: release.id
                 });
                 
-                // Also delete the associated tag
-                try {
-                  await github.rest.git.deleteRef({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    ref: `tags/${release.tag_name}`
-                  });
-                  console.log(`✅ Deleted ${releaseType} and tag: ${release.tag_name}`);
-                  deletedCount++;
-                } catch (tagError) {
-                  console.log(`⚠️  Deleted ${releaseType} but failed to delete tag ${release.tag_name}: ${tagError.message}`);
-                  deletedCount++;
-                }
+                console.log(`✅ Deleted ${releaseType}: ${release.tag_name}`);
+                deletedCount++;
               } catch (error) {
                 console.log(`❌ Failed to delete release ${release.tag_name}: ${error.message}`);
                 failedCount++;
@@ -139,5 +178,8 @@ jobs:
             console.log(`✅ Successfully deleted: ${deletedCount} releases`);
             console.log(`❌ Failed to delete: ${failedCount} releases`);
             console.log(`🎯 Stable releases remaining: ${stableReleases.length - stableToDelete.length}`);
-            console.log(`🎯 Prereleases remaining: ${prereleases.length - prereleasesToDelete.length}`);
+            console.log(`🎯 Alpha releases remaining: ${alphaReleases.length - alphaToDelete.length}`);
+            console.log(`🎯 Beta releases remaining: ${betaReleases.length - betaToDelete.length}`);
+            console.log(`🎯 RC releases remaining: ${rcReleases.length - rcToDelete.length}`);
+            console.log(`🎯 Other prereleases remaining: ${otherPrereleases.length - otherPrereleasesToDelete.length}`);
             console.log(`🎯 Total releases remaining: ${releases.length - deletedCount}`);
