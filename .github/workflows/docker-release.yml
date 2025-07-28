@@ -22,6 +22,7 @@ permissions:
 
 env:
   REGISTRY: docker.io
+  OWNER_LOWER: $(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
 jobs:
   docker-build:
@@ -301,7 +302,7 @@ jobs:
               --version "${{ steps.extract_version.outputs.release_tag }}" \
               --platforms "linux/amd64,linux/arm64" \
               --image-name "text-to-cypher" \
-              --registry "${{ env.REGISTRY }}/${{ github.repository_owner }}" \
+              --registry "${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}" \
               --push
             GHCR_EXIT_CODE=$?
             set -e  # Re-enable exit on error
@@ -320,7 +321,7 @@ jobs:
               --version "${{ steps.extract_version.outputs.release_tag }}" \
               --platforms "linux/amd64,linux/arm64" \
               --image-name "text-to-cypher" \
-              --registry "${{ github.repository_owner }}" \
+              --registry "${{ env.OWNER_LOWER }}" \
               --push
             DOCKERHUB_EXIT_CODE=$?
             set -e  # Re-enable exit on error
@@ -393,8 +394,8 @@ jobs:
         run: |
           # Try to verify images from different sources
           PLATFORM="${{ matrix.platform }}"
-          GHCR_IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
-          DOCKERHUB_IMAGE="${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          GHCR_IMAGE="${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          DOCKERHUB_IMAGE="${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
           
           echo "Verifying images for platform: ${PLATFORM}"
           
@@ -486,15 +487,15 @@ jobs:
           echo "🚀 Docker images built and verified for release: ${{ steps.extract_version.outputs.release_tag }}"
           echo ""
           echo "📦 Available images:"
-          echo "  - ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
-          echo "  - ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:latest"
-          echo "  - ${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
-          echo "  - ${{ github.repository_owner }}/text-to-cypher:latest"
+          echo "  - ${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "  - ${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:latest"
+          echo "  - ${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "  - ${{ env.OWNER_LOWER }}/text-to-cypher:latest"
           echo ""
           echo "🏃 To run the latest release:"
           echo "  docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \\"
           echo "    -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \\"
-          echo "    ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "    ${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
           echo ""
           echo "📋 Available platforms: linux/amd64, linux/arm64"
 
@@ -509,16 +510,16 @@ jobs:
           - **Platforms**: linux/amd64, linux/arm64
           
           ## Available Images
-          - \`${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
-          - \`${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:latest\`
-          - \`${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
-          - \`${{ github.repository_owner }}/text-to-cypher:latest\`
+          - \`${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
+          - \`${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:latest\`
+          - \`${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
+          - \`${{ env.OWNER_LOWER }}/text-to-cypher:latest\`
           
           ## Quick Start
           \`\`\`bash
           docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \\
             -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \\
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}
+            ${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}
           \`\`\`
           
           ## Services
