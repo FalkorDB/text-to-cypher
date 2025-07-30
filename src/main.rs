@@ -369,16 +369,10 @@ async fn process_text_to_cypher_request(
     send_processing_status(&request, &service_target, &tx).await;
 
     // Step 2: Discover schema
-    let cache = AppConfig::get().schema_cache.clone();
-    let schema = match cache.get(&request.graph_name) {
-        Some(schema) => schema,
-        None => match discover_and_send_schema(&request.graph_name, &tx).await {
-            Ok(schema) => schema,
-            Err(()) => return,
-        },
+    let Some(schema) = get_or_discover_schema(&request.graph_name, &tx).await else {
+        send!(tx, Progress::Error("Failed to discover schema".to_string()));
+        return;
     };
-    send!(tx, Progress::Schema(schema.clone()));
-    cache.insert(request.graph_name.clone(), schema.clone());
 
     // Step 3: Generate and execute cypher query
     let Some(query) = generate_cypher_query(&request, &schema, &client, model, &tx).await else {
@@ -392,6 +386,23 @@ async fn process_text_to_cypher_request(
 
     // Step 5: Generate final answer using AI
     generate_final_answer(&request, &query, &query_result, &client, model, &tx).await;
+}
+
+async fn get_or_discover_schema(
+    graph_name: &str,
+    tx: &mpsc::Sender<sse::Event>,
+) -> Option<String> {
+    let cache = AppConfig::get().schema_cache.clone();
+    let schema = match cache.get(graph_name) {
+        Some(schema) => schema,
+        None => match discover_and_send_schema(graph_name, tx).await {
+            Ok(schema) => schema,
+            Err(()) => return None,
+        },
+    };
+    send_option!(tx, Progress::Schema(schema.clone()));
+    cache.insert(graph_name.to_string(), schema.clone());
+    Some(schema.clone())
 }
 
 #[allow(clippy::cognitive_complexity)]
