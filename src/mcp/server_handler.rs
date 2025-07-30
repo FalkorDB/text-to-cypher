@@ -77,15 +77,13 @@ impl ServerHandler for MyServerHandler {
 async fn forward_to_http_endpoint(
     tool_args: TextToCypherTool
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let http_request = create_http_request_payload(tool_args)?;
+    let http_request = create_http_request_payload(tool_args);
     let response = send_http_request(&http_request).await?;
     process_sse_response(response).await
 }
 
 // Create HTTP request payload for the text-to-cypher endpoint
-fn create_http_request_payload(
-    tool_args: TextToCypherTool
-) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
+fn create_http_request_payload(tool_args: TextToCypherTool) -> serde_json::Value {
     let chat_request = ChatRequest {
         messages: vec![ChatMessage {
             role: ChatRole::User,
@@ -93,19 +91,12 @@ fn create_http_request_payload(
         }],
     };
 
-    let http_request = serde_json::json!({
+    serde_json::json!({
         "graph_name": tool_args.graph_name,
         "chat_request": chat_request,
-        "model": null,  // Will use defaults from .env
-        "key": null     // Will use defaults from .env
-    });
-
-    tracing::info!(
-        "Forwarding request to HTTP endpoint: {}",
-        serde_json::to_string_pretty(&http_request)?
-    );
-
-    Ok(http_request)
+        "model": null,
+        "key": null
+    })
 }
 
 // Send HTTP request to the text-to-cypher endpoint

@@ -6,6 +6,7 @@ use futures_util::StreamExt;
 use genai::ModelIden;
 use genai::resolver::AuthData;
 use genai::resolver::AuthResolver;
+use moka::sync::Cache;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
@@ -145,8 +146,10 @@ use crate::schema::discovery::Schema;
 // Configuration structure for default values from .env file
 #[derive(Debug, Clone)]
 struct AppConfig {
+    falkordb_connection: String,
     default_model: Option<String>,
     default_key: Option<String>,
+    schema_cache: Cache<String, String>,
 }
 
 static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
@@ -155,9 +158,11 @@ impl AppConfig {
     fn load() -> Self {
         // Load .env file if it exists, but don't fail if it doesn't
         let env_loaded = dotenvy::dotenv().is_ok();
-
+        let falkordb_connection =
+            std::env::var("FALKORDB_CONNECTION").unwrap_or_else(|_| "falkor://127.0.0.1:6379".to_string());
         let default_model = std::env::var("DEFAULT_MODEL").ok();
         let default_key = std::env::var("DEFAULT_KEY").ok();
+        let schema_cache = Cache::new(100);
 
         tracing::info!(
             "Loaded configuration - env_file_loaded: {}, default_model: {:?}",
@@ -166,8 +171,10 @@ impl AppConfig {
         );
 
         Self {
+            falkordb_connection,
             default_model,
             default_key,
+            schema_cache,
         }
     }
 
@@ -336,9 +343,16 @@ async fn process_text_to_cypher_request(
     send_processing_status(&request, &service_target, &tx).await;
 
     // Step 2: Discover schema
-    let Ok(schema) = discover_and_send_schema(&request.graph_name, &tx).await else {
-        return;
+    let cache = AppConfig::get().schema_cache.clone();
+    let schema = match cache.get(&request.graph_name) {
+        Some(schema) => schema,
+        None => match discover_and_send_schema(&request.graph_name, &tx).await {
+            Ok(schema) => schema,
+            Err(()) => return,
+        },
     };
+    send!(tx, Progress::Schema(schema.clone()));
+    cache.insert(request.graph_name.clone(), schema.clone());
 
     // Step 3: Generate and execute cypher query
     let Some(query) = generate_cypher_query(&request, &schema, &client, model, &tx).await else {
@@ -428,7 +442,9 @@ async fn execute_query(
     graph_name: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let connection_info: FalkorConnectionInfo = "falkor://127.0.0.1:6379"
+    let connection_info: FalkorConnectionInfo = AppConfig::get()
+        .falkordb_connection
+        .as_str()
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
@@ -640,7 +656,11 @@ async fn main() -> std::io::Result<()> {
 }
 
 async fn discover_graph_schema(graph_name: &str) -> Schema {
-    let connection_info: FalkorConnectionInfo = "falkor://127.0.0.1:6379".try_into().expect("Invalid connection info");
+    let connection_info: FalkorConnectionInfo = AppConfig::get()
+        .falkordb_connection
+        .as_str()
+        .try_into()
+        .expect("Invalid connection info");
 
     let client = FalkorClientBuilder::new_async()
         .with_connection_info(connection_info)
@@ -686,7 +706,6 @@ async fn discover_and_send_schema(
     };
 
     tracing::info!("Discovered schema: {}", json_schema);
-    try_send!(tx, Progress::Schema(json_schema.clone()));
     Ok(json_schema)
 }
 

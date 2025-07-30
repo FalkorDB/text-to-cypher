@@ -236,7 +236,7 @@ docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
 
 2. **Install MCP Inspector** (if not already installed):
 ```bash
-npx @modelcontextprotocol/inspector
+npx -y @modelcontextprotocol/inspector
 ```
 
 3. **Connect MCP Inspector to the server**:
