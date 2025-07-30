@@ -1,3 +1,5 @@
+use actix_web::HttpResponse;
+use actix_web::http::StatusCode;
 use actix_web::{App, HttpServer, Responder, Result, post};
 use actix_web_lab::sse::{self, Sse};
 use falkordb::FalkorClientBuilder;
@@ -239,6 +241,30 @@ enum Progress {
     ModelOutputChunk(String),
     Result(String),
     Error(String),
+}
+
+fn process_clear_schema_cache(graph_name: &str) {
+    tracing::info!("Clearing schema cache for graph: {graph_name}");
+    let cache = AppConfig::get().schema_cache.clone();
+    cache.invalidate(graph_name);
+}
+
+#[utoipa::path(
+    post,
+    path = "/clear_schema_cache/{graph_name}",
+    params(
+        ("graph_name" = String, Path, description = "Name of the graph to clear from cache")
+    ),
+    responses(
+        (status = 200, description = "Schema cache cleared successfully")
+    )
+)]
+#[post("/clear_schema_cache/{graph_name}")]
+async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Responder {
+    let graph_name = graph_name.into_inner();
+    tracing::info!("Clearing schema cache for graph: {}", graph_name);
+    process_clear_schema_cache(&graph_name);
+    HttpResponse::new(StatusCode::OK)
 }
 
 #[utoipa::path(
@@ -585,7 +611,7 @@ fn process_last_request_prompt(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(text_to_cypher),
+    paths(text_to_cypher, clear_schema_cache),
     components(schemas(
         TextToCypherRequest,
         Progress,
@@ -628,6 +654,7 @@ async fn main() -> std::io::Result<()> {
     let http_server = HttpServer::new(|| {
         App::new()
             .service(text_to_cypher)
+            .service(clear_schema_cache)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
     .bind(("0.0.0.0", 8080))?
