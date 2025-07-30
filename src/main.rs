@@ -352,6 +352,7 @@ async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resul
     Ok(Sse::from_stream(stream))
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn process_text_to_cypher_request(
     request: TextToCypherRequest,
     client: genai::Client,
