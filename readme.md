@@ -7,6 +7,7 @@ A high-performance Rust-based API service that translates natural language text 
 ## ✨ What's New
 
 **All-in-One Docker Solution**: Our latest Docker image now includes everything you need in a single container:
+
 - 🗄️ **FalkorDB Database** (port 6379) - Full graph database with Redis protocol
 - 🌐 **FalkorDB Web Interface** (port 3000) - Interactive graph browser and query builder  
 - 🚀 **Text-to-Cypher API** (port 8080) - Natural language to Cypher conversion
@@ -38,22 +39,23 @@ The easiest way to get started is using our all-in-one Docker image that include
 # Run the complete stack with all services
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
-  ghcr.io/falkordb/text-to-cypher:latest
+  falkordb/text-to-cypher:latest
 
 # Or using environment file
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   --env-file .env \
-  ghcr.io/falkordb/text-to-cypher:latest
+  falkordb/text-to-cypher:latest
 
 # Or mounting .env file for full MCP server functionality
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -v $(pwd)/.env:/app/.env:ro \
-  ghcr.io/falkordb/text-to-cypher:latest
+  falkordb/text-to-cypher:latest
 ```
 
 ### Available Services
 
 Once running, access the services at:
+
 - **FalkorDB Database**: `localhost:6379` (Redis protocol)
 - **FalkorDB Web Interface**: `http://localhost:3000` (Interactive graph database browser)
 - **Text-to-Cypher API**: `http://localhost:8080` (REST API)
@@ -80,6 +82,7 @@ cargo run
 ```
 
 The local development setup requires:
+
 - **FalkorDB instance**: Running on port 6379 (can be Docker or native)
 - **Rust environment**: For building and running the text-to-cypher service
 
@@ -95,6 +98,7 @@ The application supports flexible configuration via environment variables or `.e
 - `DEFAULT_KEY`: Default API key for the AI service
 
 Create a `.env` file from the provided example:
+
 ```bash
 cp .env.example .env
 # Edit .env with your preferred default model and API key
@@ -103,10 +107,12 @@ cp .env.example .env
 ### MCP Server Configuration
 
 **Important**: The MCP server will only start if:
+
 1. Both `DEFAULT_MODEL` and `DEFAULT_KEY` are configured
 2. The `.env` file physically exists (not just environment variables)
 
 For Docker deployments:
+
 - Use `--env-file .env` or `-e` flags for HTTP server only (MCP server also starts if both MODEL and KEY are provided)
 - Use `-v $(pwd)/.env:/app/.env:ro` to ensure MCP server starts with mounted `.env` file
 
@@ -115,23 +121,27 @@ For Docker deployments:
 The integrated Docker solution runs four concurrent services:
 
 ### FalkorDB Database (Port 6379)
+
 - Graph database server with Redis protocol compatibility
 - Stores and manages graph data structures
 - Accessible via Redis clients and graph query languages
 
 ### FalkorDB Web Interface (Port 3000)
+
 - Interactive web-based graph database browser
 - Visual query builder and result visualization
 - Database administration and monitoring tools
 - Graph data exploration interface
 
 ### Text-to-Cypher HTTP API (Port 8080)
+
 - Main REST API for text-to-cypher conversion
 - Swagger UI documentation at `http://localhost:8080/swagger-ui/`
 - OpenAPI specification at `http://localhost:8080/api-doc/openapi.json`
 - Supports both streaming (SSE) and non-streaming responses
 
 ### MCP Server (Port 3001) - Conditional
+
 - Model Context Protocol server for AI assistant integrations
 - Provides `text_to_cypher` tool for natural language to Cypher conversion
 - **Note**: MCP server only starts if both `DEFAULT_MODEL` and `DEFAULT_KEY` are configured
@@ -228,6 +238,7 @@ The MCP server provides a standardized interface for AI assistants to convert na
 To test and interact with the MCP server, you can use the MCP Inspector:
 
 1. **Start the text-to-cypher stack**:
+
 ```bash
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
@@ -235,6 +246,7 @@ docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
 ```
 
 2. **Install MCP Inspector** (if not already installed):
+
 ```bash
 npx -y @modelcontextprotocol/inspector
 ```
@@ -245,7 +257,7 @@ npx -y @modelcontextprotocol/inspector
      - **Transport**: `stdio`
      - **Command**: `nc`
      - **Arguments**: `["localhost", "3001"]`
-   
+
    Or if using a direct connection:
    - **Transport**: `sse`
    - **URL**: `http://localhost:3001/sse`
@@ -254,13 +266,15 @@ npx -y @modelcontextprotocol/inspector
    The MCP server exposes the following tool:
 
    #### `text_to_cypher`
+
    Converts natural language questions into Cypher queries for graph databases.
-   
+
    **Parameters**:
    - `graph_name` (required): Name of the graph database to query
    - `question` (required): Natural language question to convert to Cypher
-   
+
    **Example Usage in MCP Inspector**:
+
    ```json
    {
      "graph_name": "movies",
@@ -281,6 +295,7 @@ npx -y @modelcontextprotocol/inspector
 ### Integration with AI Assistants
 
 The MCP server enables AI assistants to:
+
 - Convert natural language to Cypher queries
 - Execute queries against FalkorDB graphs
 - Provide structured responses with query results
@@ -305,6 +320,7 @@ The MCP server enables AI assistants to:
 ### Running the Complete Stack
 
 #### Using Docker (Recommended)
+
 ```bash
 # Run the complete integrated stack
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
@@ -313,6 +329,7 @@ docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
 ```
 
 #### Local Development
+
 ```bash
 # Start FalkorDB separately
 docker run -d -p 6379:6379 falkordb/falkordb:latest
@@ -324,6 +341,7 @@ cargo run
 ### Access the Services
 
 Once running, access the services at:
+
 - **FalkorDB Web Interface**: `http://localhost:3000` (Interactive graph browser)
 - **Text-to-Cypher API**: `http://localhost:8080`
 - **Swagger UI**: `http://localhost:8080/swagger-ui/`
@@ -334,6 +352,7 @@ Once running, access the services at:
 ### Building for Production
 
 #### Docker Build (Local)
+
 ```bash
 # Build locally using the build script
 ./docker-build.sh
@@ -343,6 +362,7 @@ docker build -t text-to-cypher:latest .
 ```
 
 #### Using Pre-built Images
+
 ```bash
 # Pull from GitHub Container Registry
 docker pull ghcr.io/falkordb/text-to-cypher:latest
@@ -351,6 +371,7 @@ docker pull ghcr.io/falkordb/text-to-cypher:latest
 ```
 
 #### Native Build
+
 ```bash
 cargo build --release
 ```
@@ -483,21 +504,25 @@ curl -X POST "http://localhost:8080/text_to_cypher" \
 
 ### Common Issues
 
-**Services not starting**: 
+**Services not starting**:
+
 - Ensure all required ports (6379, 3000, 8080, 3001) are available
 - Check that `DEFAULT_MODEL` and `DEFAULT_KEY` are properly configured
 - View logs: `docker logs -f <container-name>`
 
 **MCP Server not starting**:
+
 - Verify both `DEFAULT_MODEL` and `DEFAULT_KEY` environment variables are set
 - For local builds, ensure `.env` file exists in the working directory
 
 **FalkorDB connection issues**:
+
 - The integrated FalkorDB automatically starts with the container
 - No external FalkorDB instance needed when using the Docker image
 - Database is accessible at `localhost:6379` (Redis protocol)
 
 **Web interface not accessible**:
+
 - Ensure port 3000 is properly mapped: `-p 3000:3000`
 - Try accessing `http://localhost:3000` directly
 - Check firewall settings if running on a remote server
