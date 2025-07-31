@@ -5,6 +5,8 @@ use utoipa::ToSchema;
 pub enum AttributeType {
     String,
     Number,
+	Integer,
+	Float,
     Boolean,
     DateTime,
     List,

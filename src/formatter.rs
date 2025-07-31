@@ -60,6 +60,7 @@ fn format_falkor_value(value: &FalkorValue) -> String {
         FalkorValue::Bool(b) => b.to_string(),
         FalkorValue::I64(i) => i.to_string(),
         FalkorValue::F64(f) => f.to_string(),
+		FalkorValue::String(s) => format!("\"{s}\""),
         FalkorValue::Node(node) => {
             let labels = if node.labels.is_empty() {
                 String::new()
@@ -134,6 +135,12 @@ mod tests {
     use super::*;
     use falkordb::{Edge, Node};
     use std::collections::HashMap;
+
+	#[test]
+	fn test_string_formatting() {
+		let value = FalkorValue::String("Hello, World!".to_string());
+		assert_eq!(format_falkor_value(&value), "\"Hello, World!\"");
+	}
 
     #[test]
     fn test_empty_records() {
