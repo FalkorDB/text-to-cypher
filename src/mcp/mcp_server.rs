@@ -55,7 +55,8 @@ RECOMMENDED WORKFLOW:
 TOOLS:
 - talk_with_a_graph: Converts natural language questions to Cypher queries and executes them
 
-Example: First check resources, then ask 'Who are all the people?' for a social graph with Person entities.".to_string(),
+Example: First check resources, then ask 'Who are all the people?' for a social graph with Person entities."
+                .to_string(),
         ),
         protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
     };
