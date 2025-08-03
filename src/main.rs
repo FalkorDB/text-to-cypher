@@ -250,6 +250,26 @@ fn process_clear_schema_cache(graph_name: &str) {
 }
 
 #[utoipa::path(
+    get,
+    path = "/list_graphs",
+    responses(
+        (status = 200, description = "List of available graphs", body = Vec<String>)
+    )
+)]
+#[actix_web::get("/list_graphs")]
+async fn list_graphs_endpoint() -> Result<impl Responder, actix_web::Error> {
+    match get_graphs_list().await {
+        Ok(graphs) => Ok(HttpResponse::Ok().json(graphs)),
+        Err(e) => {
+            tracing::error!("Failed to list graphs: {}", e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to list graphs: {}", e)
+            })))
+        }
+    }
+}
+
+#[utoipa::path(
     post,
     path = "/clear_schema_cache/{graph_name}",
     params(
@@ -512,6 +532,24 @@ async fn execute_query(
     Ok(formatted_result)
 }
 
+async fn get_graphs_list() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let connection_info: FalkorConnectionInfo = AppConfig::get()
+        .falkordb_connection
+        .as_str()
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
+
+    let client = FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .build()
+        .await
+        .map_err(|e| format!("Failed to build client: {e}"))?;
+
+    // Call the async version directly
+    let graphs = client.list_graphs().await.map_err(|e| format!("Failed to list graphs: {e}"))?;
+    Ok(graphs)
+}
+
 fn execute_query_blocking(
     client: &falkordb::FalkorAsyncClient,
     graph_name: &str,
@@ -623,7 +661,7 @@ fn process_last_request_prompt(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(text_to_cypher, clear_schema_cache),
+    paths(text_to_cypher, clear_schema_cache, list_graphs_endpoint),
     components(schemas(
         TextToCypherRequest,
         Progress,
@@ -646,15 +684,12 @@ async fn main() -> std::io::Result<()> {
 
     // Conditionally start MCP server based on configuration
     let mcp_handle = if config.should_start_mcp_server() {
-        tracing::info!("Starting MCP server at http://localhost:8081/sse");
         Some(tokio::spawn(async {
-            tracing::info!("MCP server started");
             if let Err(e) = run_mcp_server().await {
                 tracing::error!("MCP server error: {}", e);
             }
         }))
     } else {
-        tracing::info!("MCP server not started - check .env file configuration");
         None
     };
 
@@ -667,6 +702,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .service(text_to_cypher)
             .service(clear_schema_cache)
+            .service(list_graphs_endpoint)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
     .bind(("0.0.0.0", 8080))?

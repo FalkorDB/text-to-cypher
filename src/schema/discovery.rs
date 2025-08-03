@@ -1,6 +1,7 @@
-use std::vec;
+use std::{time::Instant, vec};
 
 use falkordb::{AsyncGraph, FalkorDBError, FalkorValue};
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -202,32 +203,64 @@ impl Schema {
             Self::get_relationship_attributes(graph, &relationship_labels, sample_size).await?;
 
         let entities = schema.entities.clone();
-        for (label, attributes) in &relationship_attributes {
-            for source_entity in &entities {
-                for target_entity in &entities {
-                    tracing::info!(
-                        "Processing relationships from {} to {}",
-                        source_entity.label,
-                        target_entity.label
-                    );
-                    let query = format!(
-                        "MATCH (s:{})-[a:{label}]->(t:{}) return a limit 1",
-                        source_entity.label, target_entity.label
-                    );
-                    let query_result = graph.ro_query(&query).execute().await?;
-                    if !query_result.data.is_empty() {
-                        let relation = Relation::new(
-                            label.to_owned(),
-                            source_entity.label.clone(),
-                            target_entity.label.clone(),
-                            attributes.to_owned(),
-                        );
-                        schema.add_relation(relation);
-                    }
-                }
-            }
-        }
+
+        let start = Instant::now();
+        process_relationships(graph, &mut schema, relationship_attributes, entities).await?;
+        let duration = start.elapsed();
+        tracing::info!("Processed relationships in {:?}", duration);
 
         Ok(schema)
     }
+}
+
+async fn process_relationships(
+    graph: &AsyncGraph,
+    schema: &mut Schema,
+    relationship_attributes: Vec<(String, Vec<Attribute>)>,
+    entities: Vec<Entity>,
+) -> Result<(), FalkorDBError> {
+    // Create all combinations first to avoid borrowing issues
+    let mut queries = Vec::new();
+    for (label, attributes) in &relationship_attributes {
+        for source_entity in &entities {
+            for target_entity in &entities {
+                queries.push((
+                    label.clone(),
+                    source_entity.label.clone(),
+                    target_entity.label.clone(),
+                    attributes.clone(),
+                ));
+            }
+        }
+    }
+
+    // Convert to stream and process with limited concurrency
+    let relations: Vec<Relation> = stream::iter(queries)
+        .map(|(label, source_label, target_label, attributes)| {
+            let mut graph = graph.clone();
+            async move {
+                let query = format!("MATCH (s:{source_label})-[a:{label}]->(t:{target_label}) return a limit 1");
+                match graph.ro_query(&query).execute().await {
+                    Ok(query_result) if !query_result.data.is_empty() => {
+                        Some(Relation::new(label, source_label, target_label, attributes))
+                    }
+                    Ok(_) => None,
+                    Err(e) => {
+                        tracing::warn!("Query failed but ignored: {:?}", e);
+                        None
+                    }
+                }
+            }
+        })
+        .buffer_unordered(500)
+        .filter_map(|result| async move { result })
+        .collect()
+        .await;
+
+    // Add all relations to schema
+    for relation in relations {
+        schema.add_relation(relation);
+    }
+
+    Ok(())
 }

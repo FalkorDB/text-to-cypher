@@ -4,7 +4,8 @@ use rust_mcp_sdk::mcp_server::{HyperServerOptions, hyper_server};
 
 use crate::mcp::server_handler::MyServerHandler;
 use rust_mcp_sdk::schema::{
-    Implementation, InitializeResult, LATEST_PROTOCOL_VERSION, ServerCapabilities, ServerCapabilitiesTools,
+    Implementation, InitializeResult, LATEST_PROTOCOL_VERSION, ServerCapabilities, ServerCapabilitiesResources,
+    ServerCapabilitiesTools,
 };
 
 use rust_mcp_sdk::error::SdkResult;
@@ -21,17 +22,24 @@ pub async fn run_mcp_server() -> SdkResult<()> {
     let server_details = InitializeResult {
         // server name and version
         server_info: Implementation {
-            name: "Hello World MCP Server SSE".to_string(),
+            name: "FalkorDB Text-to-Cypher MCP Server".to_string(),
             version: "0.1.0".to_string(),
-            title: Some("Hello World MCP Server SSE".to_string()),
+            title: Some("FalkorDB Text-to-Cypher MCP Server".to_string()),
         },
         capabilities: ServerCapabilities {
             // indicates that server support mcp tools
             tools: Some(ServerCapabilitiesTools { list_changed: None }),
+            // indicates that server supports resources (graphs)
+            resources: Some(ServerCapabilitiesResources {
+                subscribe: None,
+                list_changed: None,
+            }),
             ..Default::default() // Using default values for other fields
         },
         meta: None,
-        instructions: Some("server instructions...".to_string()),
+        instructions: Some(
+            "FalkorDB Text-to-Cypher server providing graph resources and natural language query tools".to_string(),
+        ),
         protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
     };
 

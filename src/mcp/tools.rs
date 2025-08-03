@@ -2,7 +2,7 @@ use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
 use serde::{Deserialize, Serialize};
 
 #[mcp_tool(
-    name = "Text to Cypher",
+    name = "talk_with_a_graph",
     description = "Answer user questions based on the data in the given graph"
 )]
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -17,7 +17,7 @@ pub struct TextToCypherTool {
     /// Type: String
     /// Min length: 1
     /// Max length: 100
-    #[serde(rename = "graphName")]
+    #[serde(rename = "graph_name")]
     pub graph_name: String,
 
     /// Natural language question to be converted to Cypher and answered using the graph data

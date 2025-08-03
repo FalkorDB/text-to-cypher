@@ -1,10 +1,12 @@
 use crate::chat::{ChatMessage, ChatRequest, ChatRole};
 use crate::mcp::tools::TextToCypherTool;
 use async_trait::async_trait;
+use falkordb::{FalkorClientBuilder, FalkorConnectionInfo};
 use futures_util::StreamExt;
 use rust_mcp_sdk::schema::TextContent;
 use rust_mcp_sdk::schema::{
-    CallToolRequest, CallToolResult, ListToolsRequest, ListToolsResult, RpcError, schema_utils::CallToolError,
+    CallToolRequest, CallToolResult, ListResourcesRequest, ListResourcesResult, ListToolsRequest, ListToolsResult,
+    ReadResourceRequest, ReadResourceResult, Resource, RpcError, TextResourceContents, schema_utils::CallToolError,
 };
 use rust_mcp_sdk::{McpServer, mcp_server::ServerHandler};
 use std::fmt::Write;
@@ -25,6 +27,74 @@ impl ServerHandler for MyServerHandler {
             next_cursor: None,
             tools: vec![TextToCypherTool::tool()],
         })
+    }
+
+    async fn handle_list_resources_request(
+        &self,
+        _request: ListResourcesRequest,
+        _runtime: &dyn McpServer,
+    ) -> std::result::Result<ListResourcesResult, RpcError> {
+        tracing::info!("Handling List Resources Request");
+
+        match get_falkordb_graphs().await {
+            Ok(graphs) => {
+                let resources: Vec<Resource> = graphs
+                    .into_iter()
+                    .map(|graph_name| Resource {
+                        uri: format!("falkordb://graph/{graph_name}"),
+                        name: format!("Graph: {graph_name}"),
+                        description: Some(format!("FalkorDB graph database: {graph_name}")),
+                        mime_type: Some("application/json".to_string()),
+                        annotations: None,
+                        meta: None,
+                        size: None,
+                        title: None,
+                    })
+                    .collect();
+
+                Ok(ListResourcesResult {
+                    meta: None,
+                    next_cursor: None,
+                    resources,
+                })
+            }
+            Err(e) => {
+                tracing::error!("Failed to list FalkorDB graphs: {}", e);
+                Err(RpcError::internal_error())
+            }
+        }
+    }
+
+    async fn handle_read_resource_request(
+        &self,
+        request: ReadResourceRequest,
+        _runtime: &dyn McpServer,
+    ) -> std::result::Result<ReadResourceResult, RpcError> {
+        tracing::info!("Handling Read Resource Request for URI: {}", request.params.uri);
+
+        // Parse the URI to extract graph name
+        if let Some(graph_name) = request.params.uri.strip_prefix("falkordb://graph/") {
+            match get_graph_schema(graph_name).await {
+                Ok(schema_info) => {
+                    let text_content = TextResourceContents {
+                        uri: request.params.uri,
+                        mime_type: Some("application/json".to_string()),
+                        text: schema_info,
+                        meta: None,
+                    };
+                    Ok(ReadResourceResult {
+                        meta: None,
+                        contents: vec![text_content.into()],
+                    })
+                }
+                Err(e) => {
+                    tracing::error!("Failed to read graph schema for {}: {}", graph_name, e);
+                    Err(RpcError::invalid_params())
+                }
+            }
+        } else {
+            Err(RpcError::invalid_params())
+        }
     }
 
     async fn handle_call_tool_request(
@@ -234,4 +304,45 @@ fn build_complete_response(
     } else {
         format!("{}\n\nFinal Answer:\n{}", result_buffer.trim(), final_result)
     }
+}
+
+// Helper function to get list of graphs from FalkorDB via REST API
+async fn get_falkordb_graphs() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    // Call the local REST API endpoint
+    let client = reqwest::Client::new();
+    let response = client
+        .get("http://localhost:8080/list_graphs")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to call list_graphs API: {e}"))?;
+
+    if response.status().is_success() {
+        let graphs: Vec<String> = response.json().await.map_err(|e| format!("Failed to parse response: {e}"))?;
+        Ok(graphs)
+    } else {
+        Err(format!("API returned error status: {}", response.status()).into())
+    }
+}
+
+// Helper function to get schema information for a specific graph
+async fn get_graph_schema(graph_name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    use crate::schema::discovery::Schema;
+
+    let connection_info: FalkorConnectionInfo = "redis://localhost:6379"
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
+
+    let client = FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .build()
+        .await
+        .map_err(|e| format!("Failed to build client: {e}"))?;
+
+    let mut graph = client.select_graph(graph_name);
+    let schema = Schema::discover_from_graph(&mut graph, 100)
+        .await
+        .map_err(|e| format!("Failed to discover schema: {e}"))?;
+
+    // Return the schema as a JSON string
+    serde_json::to_string_pretty(&schema).map_err(|e| format!("Failed to serialize schema: {e}").into())
 }
