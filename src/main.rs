@@ -251,6 +251,32 @@ fn process_clear_schema_cache(graph_name: &str) {
 
 #[utoipa::path(
     get,
+    path = "/get_schema/{graph_name}",
+    params(
+        ("graph_name" = String, Path, description = "Name of the graph to get schema for")
+    ),
+    responses(
+        (status = 200, description = "Graph schema as JSON string", body = String)
+    )
+)]
+#[actix_web::get("/get_schema/{graph_name}")]
+async fn get_schema_endpoint(graph_name: actix_web::web::Path<String>) -> Result<impl Responder, actix_web::Error> {
+    let graph_name = graph_name.into_inner();
+    tracing::info!("Getting schema for graph: {}", graph_name);
+
+    match get_graph_schema_string(&graph_name).await {
+        Ok(schema) => Ok(HttpResponse::Ok().json(schema)),
+        Err(e) => {
+            tracing::error!("Failed to get schema for graph {}: {}", graph_name, e);
+            Ok(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to get schema: {}", e)
+            })))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
     path = "/list_graphs",
     responses(
         (status = 200, description = "List of available graphs", body = Vec<String>)
@@ -532,6 +558,24 @@ async fn execute_query(
     Ok(formatted_result)
 }
 
+async fn get_graph_schema_string(graph_name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let cache = AppConfig::get().schema_cache.clone();
+
+    // Check cache first
+    if let Some(cached_schema) = cache.get(graph_name) {
+        return Ok(cached_schema);
+    }
+
+    // If not in cache, discover it
+    let schema = discover_graph_schema(graph_name).await;
+    let schema_json = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))?;
+
+    // Cache the result
+    cache.insert(graph_name.to_string(), schema_json.clone());
+
+    Ok(schema_json)
+}
+
 async fn get_graphs_list() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     let connection_info: FalkorConnectionInfo = AppConfig::get()
         .falkordb_connection
@@ -661,7 +705,7 @@ fn process_last_request_prompt(
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(text_to_cypher, clear_schema_cache, list_graphs_endpoint),
+    paths(text_to_cypher, clear_schema_cache, list_graphs_endpoint, get_schema_endpoint),
     components(schemas(
         TextToCypherRequest,
         Progress,
@@ -703,6 +747,7 @@ async fn main() -> std::io::Result<()> {
             .service(text_to_cypher)
             .service(clear_schema_cache)
             .service(list_graphs_endpoint)
+            .service(get_schema_endpoint)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
     .bind(("0.0.0.0", 8080))?

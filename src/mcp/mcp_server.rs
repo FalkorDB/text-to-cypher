@@ -38,7 +38,24 @@ pub async fn run_mcp_server() -> SdkResult<()> {
         },
         meta: None,
         instructions: Some(
-            "FalkorDB Text-to-Cypher server providing graph resources and natural language query tools".to_string(),
+            "FalkorDB Text-to-Cypher MCP Server
+
+This server provides access to FalkorDB graph databases through MCP resources and tools.
+
+RESOURCES:
+- Each graph is exposed as a resource with URI: falkordb://graph/{graph_name}
+- Resource content contains the complete graph schema in JSON format
+- Schema includes entity types (nodes), relationship types (edges), and attributes
+
+RECOMMENDED WORKFLOW:
+1. List available resources to discover graphs
+2. Read resource content to understand each graph's schema
+3. Use the 'talk_with_a_graph' tool with appropriate graph_name and schema-informed questions
+
+TOOLS:
+- talk_with_a_graph: Converts natural language questions to Cypher queries and executes them
+
+Example: First check resources, then ask 'Who are all the people?' for a social graph with Person entities.".to_string(),
         ),
         protocol_version: LATEST_PROTOCOL_VERSION.to_string(),
     };

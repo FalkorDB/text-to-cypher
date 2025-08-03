@@ -1,7 +1,6 @@
 use crate::chat::{ChatMessage, ChatRequest, ChatRole};
 use crate::mcp::tools::TextToCypherTool;
 use async_trait::async_trait;
-use falkordb::{FalkorClientBuilder, FalkorConnectionInfo};
 use futures_util::StreamExt;
 use rust_mcp_sdk::schema::TextContent;
 use rust_mcp_sdk::schema::{
@@ -74,7 +73,7 @@ impl ServerHandler for MyServerHandler {
 
         // Parse the URI to extract graph name
         if let Some(graph_name) = request.params.uri.strip_prefix("falkordb://graph/") {
-            match get_graph_schema(graph_name).await {
+            match get_graph_schema_via_api(graph_name).await {
                 Ok(schema_info) => {
                     let text_content = TextResourceContents {
                         uri: request.params.uri,
@@ -324,25 +323,20 @@ async fn get_falkordb_graphs() -> Result<Vec<String>, Box<dyn std::error::Error 
     }
 }
 
-// Helper function to get schema information for a specific graph
-async fn get_graph_schema(graph_name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    use crate::schema::discovery::Schema;
-
-    let connection_info: FalkorConnectionInfo = "redis://localhost:6379"
-        .try_into()
-        .map_err(|e| format!("Invalid connection info: {e}"))?;
-
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+// Helper function to get schema information for a specific graph via REST API
+async fn get_graph_schema_via_api(graph_name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    // Call the local REST API endpoint
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://localhost:8080/get_schema/{graph_name}"))
+        .send()
         .await
-        .map_err(|e| format!("Failed to build client: {e}"))?;
+        .map_err(|e| format!("Failed to call get_schema API: {e}"))?;
 
-    let mut graph = client.select_graph(graph_name);
-    let schema = Schema::discover_from_graph(&mut graph, 100)
-        .await
-        .map_err(|e| format!("Failed to discover schema: {e}"))?;
-
-    // Return the schema as a JSON string
-    serde_json::to_string_pretty(&schema).map_err(|e| format!("Failed to serialize schema: {e}").into())
+    if response.status().is_success() {
+        let schema: String = response.json().await.map_err(|e| format!("Failed to parse response: {e}"))?;
+        Ok(schema)
+    } else {
+        Err(format!("API returned error status: {}", response.status()).into())
+    }
 }
