@@ -1,4 +1,4 @@
-use std::{time::Instant, vec};
+use std::time::Instant;
 
 use falkordb::{AsyncGraph, FalkorDBError, FalkorValue};
 use futures::stream::{self, StreamExt};
@@ -164,18 +164,49 @@ impl Schema {
     }
 
     async fn get_relationship_attributes(
-        graph: &mut AsyncGraph,
+        graph: &AsyncGraph,
         relationship_labels: &[String],
         sample_size: usize,
     ) -> Result<Vec<(String, Vec<Attribute>)>, FalkorDBError> {
-        let mut relationship_attributes = vec![];
-
-        for relationship_label in relationship_labels {
-            let attributes = Self::collect_relationship_attributes(graph, relationship_label, sample_size).await?;
-            relationship_attributes.push((relationship_label.to_owned(), attributes));
-        }
+        // Use common parallel collection pattern
+        let relationship_attributes = Self::collect_attributes_parallel(
+            graph,
+            relationship_labels.to_vec(),
+            sample_size,
+            |mut graph, relationship_label, sample_size| async move {
+                Self::collect_relationship_attributes(&mut graph, &relationship_label, sample_size)
+                    .await
+                    .map(|attributes| (relationship_label, attributes))
+                    .ok()
+            },
+        )
+        .await;
 
         Ok(relationship_attributes)
+    }
+
+    /// Collect attributes for either entities or relationships in parallel
+    async fn collect_attributes_parallel<T, F, Fut>(
+        graph: &AsyncGraph,
+        labels: Vec<String>,
+        sample_size: usize,
+        collector: F,
+    ) -> Vec<T>
+    where
+        F: Fn(AsyncGraph, String, usize) -> Fut + Send + Sync + Clone + 'static,
+        Fut: std::future::Future<Output = Option<T>> + Send + 'static,
+        T: Send + 'static,
+    {
+        stream::iter(labels)
+            .map(move |label| {
+                let graph = graph.clone();
+                let collector = collector.clone();
+                async move { collector(graph, label, sample_size).await }
+            })
+            .buffer_unordered(usize::MAX)
+            .filter_map(|result| async move { result })
+            .collect()
+            .await
     }
 
     /// Discover the schema from a graph database.
@@ -191,9 +222,22 @@ impl Schema {
 
         let entity_labels = Self::get_entity_labels(graph).await?;
 
-        for entity_label in &entity_labels {
-            let attributes = Self::collect_entity_attributes(graph, entity_label, sample_size).await?;
-            schema.add_entity(Entity::new(entity_label.to_owned(), attributes, None));
+        // Parallel entity collection using common pattern
+        let entities = Self::collect_attributes_parallel(
+            graph,
+            entity_labels,
+            sample_size,
+            |mut graph, label, sample_size| async move {
+                Self::collect_entity_attributes(&mut graph, &label, sample_size)
+                    .await
+                    .map(|attributes| Entity::new(label, attributes, None))
+                    .ok()
+            },
+        )
+        .await;
+
+        for entity in entities {
+            schema.add_entity(entity);
         }
 
         // Get relationship types
@@ -205,9 +249,9 @@ impl Schema {
         let entities = schema.entities.clone();
 
         let start = Instant::now();
-        process_relationships(graph, &mut schema, relationship_attributes, entities).await?;
+        let queries = process_relationships(graph, &mut schema, relationship_attributes, entities).await?;
         let duration = start.elapsed();
-        tracing::info!("Processed relationships in {:?}", duration);
+        tracing::info!("Processed relationships ({} queries)  in {:?}", queries, duration);
 
         Ok(schema)
     }
@@ -218,7 +262,7 @@ async fn process_relationships(
     schema: &mut Schema,
     relationship_attributes: Vec<(String, Vec<Attribute>)>,
     entities: Vec<Entity>,
-) -> Result<(), FalkorDBError> {
+) -> Result<usize, FalkorDBError> {
     // Create all combinations first to avoid borrowing issues
     let mut queries = Vec::new();
     for (label, attributes) in &relationship_attributes {
@@ -233,7 +277,7 @@ async fn process_relationships(
             }
         }
     }
-
+    let ret = queries.len();
     // Convert to stream and process with limited concurrency
     let relations: Vec<Relation> = stream::iter(queries)
         .map(|(label, source_label, target_label, attributes)| {
@@ -252,7 +296,7 @@ async fn process_relationships(
                 }
             }
         })
-        .buffer_unordered(500)
+        .buffer_unordered(1000)
         .filter_map(|result| async move { result })
         .collect()
         .await;
@@ -262,5 +306,5 @@ async fn process_relationships(
         schema.add_relation(relation);
     }
 
-    Ok(())
+    Ok(ret)
 }

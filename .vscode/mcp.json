@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "talk_with_a_graph": {
+      "type": "sse",
+      "url": "http://localhost:3001/sse"
+    }
+  }
+}
