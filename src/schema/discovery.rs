@@ -114,20 +114,19 @@ impl Schema {
             if let (Some(FalkorValue::Array(kt_array)), Some(FalkorValue::I64(count))) = (record.first(), record.get(1))
             {
                 // kt_array should contain [key_name, type_name]
-                if kt_array.len() >= 2 {
-                    if let (Some(FalkorValue::String(key_name)), Some(FalkorValue::String(type_name))) =
+                if kt_array.len() >= 2
+                    && let (Some(FalkorValue::String(key_name)), Some(FalkorValue::String(type_name))) =
                         (kt_array.first(), kt_array.get(1))
-                    {
-                        tracing::info!("Found attribute: key={}, type={}, count={}", key_name, type_name, count);
+                {
+                    tracing::info!("Found attribute: key={}, type={}, count={}", key_name, type_name, count);
 
-                        // Parse the type_name to AttributeType
-                        let attr_type = type_name.parse::<AttributeType>().unwrap_or_else(|_| {
-                            tracing::warn!("Unknown attribute type '{}', defaulting to String", type_name);
-                            AttributeType::String
-                        });
+                    // Parse the type_name to AttributeType
+                    let attr_type = type_name.parse::<AttributeType>().unwrap_or_else(|_| {
+                        tracing::warn!("Unknown attribute type '{}', defaulting to String", type_name);
+                        AttributeType::String
+                    });
 
-                        attributes.push(Attribute::new(key_name.clone(), attr_type, *count, false, false));
-                    }
+                    attributes.push(Attribute::new(key_name.clone(), attr_type, *count, false, false));
                 }
             }
         }

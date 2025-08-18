@@ -1,3 +1,5 @@
+#![allow(clippy::needless_for_each)]
+
 use actix_web::HttpResponse;
 use actix_web::http::StatusCode;
 use actix_web::{App, HttpServer, Responder, Result, post};
@@ -211,6 +213,7 @@ struct TextToCypherRequest {
     chat_request: ChatRequest,
     model: Option<String>,
     key: Option<String>,
+    falkordb_connection: Option<String>,
 }
 
 impl std::fmt::Debug for TextToCypherRequest {
@@ -226,6 +229,9 @@ impl std::fmt::Debug for TextToCypherRequest {
 
         if self.key.is_some() {
             debug_struct.field("key", &"***");
+        }
+        if self.falkordb_connection.is_some() {
+            debug_struct.field("falkordb_connection", &"***");
         }
 
         debug_struct.finish()
@@ -253,18 +259,27 @@ fn process_clear_schema_cache(graph_name: &str) {
     get,
     path = "/get_schema/{graph_name}",
     params(
-        ("graph_name" = String, Path, description = "Name of the graph to get schema for")
+        ("graph_name" = String, Path, description = "Name of the graph to get schema for"),
+        ("falkordb_connection" = Option<String>, Query, description = "Optional FalkorDB connection string to override default")
     ),
     responses(
         (status = 200, description = "Graph schema as JSON string", body = String)
     )
 )]
 #[actix_web::get("/get_schema/{graph_name}")]
-async fn get_schema_endpoint(graph_name: actix_web::web::Path<String>) -> Result<impl Responder, actix_web::Error> {
+async fn get_schema_endpoint(
+    graph_name: actix_web::web::Path<String>,
+    query: actix_web::web::Query<GetSchemaQuery>,
+) -> Result<impl Responder, actix_web::Error> {
     let graph_name = graph_name.into_inner();
+    let falkordb_connection = query
+        .falkordb_connection
+        .as_ref()
+        .unwrap_or_else(|| &AppConfig::get().falkordb_connection);
+
     tracing::info!("Getting schema for graph: {}", graph_name);
 
-    match get_graph_schema_string(&graph_name).await {
+    match get_graph_schema_string(falkordb_connection, &graph_name).await {
         Ok(schema) => Ok(HttpResponse::Ok().json(schema)),
         Err(e) => {
             tracing::error!("Failed to get schema for graph {}: {}", graph_name, e);
@@ -412,11 +427,16 @@ async fn process_text_to_cypher_request(
         .as_ref()
         .expect("Model should be available after applying defaults");
 
+    let falkordb_connection = request
+        .clone()
+        .falkordb_connection
+        .unwrap_or_else(|| AppConfig::get().falkordb_connection.clone());
+
     // Step 1: Send processing status
     send_processing_status(&request, &service_target, &tx).await;
 
     // Step 2: Discover schema
-    let Some(schema) = get_or_discover_schema(&request.graph_name, &tx).await else {
+    let Some(schema) = get_or_discover_schema(&falkordb_connection, &request.graph_name, &tx).await else {
         send!(tx, Progress::Error("Failed to discover schema".to_string()));
         return;
     };
@@ -436,13 +456,14 @@ async fn process_text_to_cypher_request(
 }
 
 async fn get_or_discover_schema(
+    falkordb_connection: &str,
     graph_name: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Option<String> {
     let cache = AppConfig::get().schema_cache.clone();
     let schema = match cache.get(graph_name) {
         Some(schema) => schema,
-        None => match discover_and_send_schema(graph_name, tx).await {
+        None => match discover_and_send_schema(falkordb_connection, graph_name, tx).await {
             Ok(schema) => schema,
             Err(()) => return None,
         },
@@ -558,7 +579,10 @@ async fn execute_query(
     Ok(formatted_result)
 }
 
-async fn get_graph_schema_string(graph_name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+async fn get_graph_schema_string(
+    falkordb_connection: &str,
+    graph_name: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let cache = AppConfig::get().schema_cache.clone();
 
     // Check cache first
@@ -567,7 +591,7 @@ async fn get_graph_schema_string(graph_name: &str) -> Result<String, Box<dyn std
     }
 
     // If not in cache, discover it
-    let schema = discover_graph_schema(graph_name).await;
+    let schema = discover_graph_schema(falkordb_connection, graph_name).await;
     let schema_json = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))?;
 
     // Cache the result
@@ -703,6 +727,7 @@ fn process_last_request_prompt(
     })
 }
 
+#[allow(clippy::pedantic)]
 #[derive(OpenApi)]
 #[openapi(
     paths(text_to_cypher, clear_schema_cache, list_graphs_endpoint, get_schema_endpoint),
@@ -775,12 +800,16 @@ async fn main() -> std::io::Result<()> {
     }
 }
 
-async fn discover_graph_schema(graph_name: &str) -> Schema {
-    let connection_info: FalkorConnectionInfo = AppConfig::get()
-        .falkordb_connection
-        .as_str()
-        .try_into()
-        .expect("Invalid connection info");
+#[derive(Deserialize)]
+struct GetSchemaQuery {
+    falkordb_connection: Option<String>,
+}
+
+async fn discover_graph_schema(
+    falkordb_connection: &str,
+    graph_name: &str,
+) -> Schema {
+    let connection_info: FalkorConnectionInfo = falkordb_connection.try_into().expect("Invalid connection info");
 
     let client = FalkorClientBuilder::new_async()
         .with_connection_info(connection_info)
@@ -808,6 +837,7 @@ fn process_last_user_message(question: &str) -> String {
 
 #[allow(clippy::cognitive_complexity)]
 async fn discover_and_send_schema(
+    falkordb_connection: &str,
     graph_name: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, ()> {
@@ -816,7 +846,7 @@ async fn discover_and_send_schema(
         Progress::Status(format!("Discovering schema for graph: {graph_name}"))
     );
 
-    let schema = discover_graph_schema(graph_name).await;
+    let schema = discover_graph_schema(falkordb_connection, graph_name).await;
 
     // Serialize and handle errors inline
     let Ok(json_schema) = serde_json::to_string(&schema) else {

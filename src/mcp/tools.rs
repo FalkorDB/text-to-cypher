@@ -27,15 +27,15 @@ Example workflow:
 pub struct TextToCypherTool {
     /// The name of the graph database to query
     ///
-    /// This should be the exact name of the graph as it exists in your FalkorDB instance.
+    /// This should be the exact name of the graph as it exists in your `FalkorDB` instance.
     /// You can discover available graphs by exploring the MCP resources first.
     ///
     /// How to find available graphs:
     /// 1. Check the available resources in the MCP system
-    /// 2. Look for resources with URIs like 'falkordb://graph/{graph_name}'
-    /// 3. The {graph_name} part is what you should use here
+    /// 2. Look for resources with URIs like `<falkordb://graph/{graph_name}>`
+    /// 3. The {`graph_name`} part is what you should use here
     ///
-    /// Examples: "social", "knowledge_base", "customer_data", "product_catalog"
+    /// Examples: "social", "`knowledge_base`", "`customer_data`", "`product_catalog`"
     ///
     /// IMPORTANT: Always check available resources first to see what graphs exist!
     ///
