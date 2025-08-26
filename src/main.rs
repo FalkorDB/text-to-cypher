@@ -305,7 +305,7 @@ async fn get_schema_endpoint(
     path = "/configured-model",
     responses(
         (status = 200, description = "Configured default model", body = ConfiguredModelResponse),
-        (status = 404, description = "DEFAULT_MODEL is not set", body = ErrorResponse)
+        (status = 200, description = "DEFAULT_MODEL is not set", body = ErrorResponse)
     )
 )]
 #[actix_web::get("/configured-model")]
@@ -314,7 +314,7 @@ async fn configured_model_endpoint() -> Result<impl Responder, actix_web::Error>
 
     config.default_model.as_ref().map_or_else(
         || {
-            Ok(HttpResponse::NotFound().json(ErrorResponse {
+            Ok(HttpResponse::Ok().json(ErrorResponse {
                 error: "DEFAULT_MODEL is not set".to_string(),
             }))
         },
