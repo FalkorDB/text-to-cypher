@@ -16,25 +16,25 @@ multiple-crate-versions = "allow"
 
 [dependencies]
 actix-web = "4"
-actix-web-lab = "0.24.1"
+actix-web-lab = "0.24.3"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.141"
+serde_json = "1.0.143"
 utoipa = "5.4.0"
 utoipa-swagger-ui = {version = "9.0.2", features = ["actix-web"]}
 tracing = { version = "0.1", features = ["default"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-tokio = { version = "1.0", features = ["full"] }
-uuid = { version = "1.0", features = ["v4"] }
+tokio = { version = "1.47.1", features = ["full"] }
+uuid = { version = "1.18.0", features = ["v4"] }
 dashmap = "6.1.0"
 tokio-stream = "0.1"
 futures-util = "0.3"
 genai = "0.3.5"
 falkordb = { version = "0.1.11", features = ["tokio"] }
 strum = { version = "0.27.2", features = ["derive"] }
-async-trait = "0.1.88"
+async-trait = "0.1.89"
 futures = "0.3.31"
 rust-mcp-sdk = { version = "0.5.0", default-features = false, features = ["server", "macros", "hyper-server", "2025_06_18"] }
 dotenvy = "0.15"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "rustls-tls"] }
 moka = { version = "0.12.10", features = ["sync"] }
 

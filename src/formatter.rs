@@ -156,8 +156,8 @@ mod tests {
 
     #[test]
     fn test_single_record_multiple_fields() {
-        let records = vec![vec![FalkorValue::I64(42), FalkorValue::Bool(true), FalkorValue::F64(3.14)]];
-        assert_eq!(format_query_records(&records), "[42, true, 3.14]");
+        let records = vec![vec![FalkorValue::I64(42), FalkorValue::Bool(true), FalkorValue::F64(3.12)]];
+        assert_eq!(format_query_records(&records), "[42, true, 3.12]");
     }
 
     #[test]
