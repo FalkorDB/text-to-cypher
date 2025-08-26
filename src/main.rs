@@ -249,6 +249,16 @@ enum Progress {
     Error(String),
 }
 
+#[derive(Serialize, Deserialize, ToSchema)]
+struct ConfiguredModelResponse {
+    model: String,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+struct ErrorResponse {
+    error: String,
+}
+
 fn process_clear_schema_cache(graph_name: &str) {
     tracing::info!("Clearing schema cache for graph: {graph_name}");
     let cache = AppConfig::get().schema_cache.clone();
@@ -288,6 +298,28 @@ async fn get_schema_endpoint(
             })))
         }
     }
+}
+
+#[utoipa::path(
+    get,
+    path = "/configured-model",
+    responses(
+        (status = 200, description = "Configured default model", body = ConfiguredModelResponse),
+        (status = 404, description = "DEFAULT_MODEL is not set", body = ErrorResponse)
+    )
+)]
+#[actix_web::get("/configured-model")]
+async fn configured_model_endpoint() -> Result<impl Responder, actix_web::Error> {
+    let config = AppConfig::get();
+
+    config.default_model.as_ref().map_or_else(
+        || {
+            Ok(HttpResponse::NotFound().json(ErrorResponse {
+                error: "DEFAULT_MODEL is not set".to_string(),
+            }))
+        },
+        |model| Ok(HttpResponse::Ok().json(ConfiguredModelResponse { model: model.clone() })),
+    )
 }
 
 #[utoipa::path(
@@ -730,13 +762,21 @@ fn process_last_request_prompt(
 #[allow(clippy::pedantic)]
 #[derive(OpenApi)]
 #[openapi(
-    paths(text_to_cypher, clear_schema_cache, list_graphs_endpoint, get_schema_endpoint),
+    paths(
+        text_to_cypher,
+        clear_schema_cache,
+        list_graphs_endpoint,
+        get_schema_endpoint,
+        configured_model_endpoint
+    ),
     components(schemas(
         TextToCypherRequest,
         Progress,
         ChatRequest,
         ChatMessage,
         ChatRole,
+        ConfiguredModelResponse,
+        ErrorResponse,
         error::ErrorResponse
     ))
 )]
@@ -773,6 +813,7 @@ async fn main() -> std::io::Result<()> {
             .service(clear_schema_cache)
             .service(list_graphs_endpoint)
             .service(get_schema_endpoint)
+            .service(configured_model_endpoint)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
     .bind(("0.0.0.0", 8080))?
