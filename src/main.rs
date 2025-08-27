@@ -141,7 +141,7 @@ mod schema;
 mod template;
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
-use formatter::format_query_records;
+use formatter::{format_as_json, format_query_records};
 use mcp::run_mcp_server;
 use template::TemplateEngine;
 
@@ -259,6 +259,12 @@ struct ErrorResponse {
     error: String,
 }
 
+#[derive(Serialize, Deserialize, ToSchema)]
+struct GraphQueryRequest {
+    graph_name: String,
+    query: String,
+}
+
 fn process_clear_schema_cache(graph_name: &str) {
     tracing::info!("Clearing schema cache for graph: {graph_name}");
     let cache = AppConfig::get().schema_cache.clone();
@@ -320,6 +326,25 @@ async fn configured_model_endpoint() -> Result<impl Responder, actix_web::Error>
         },
         |model| Ok(HttpResponse::Ok().json(ConfiguredModelResponse { model: model.clone() })),
     )
+}
+
+#[utoipa::path(
+    post,
+    path = "/graph_query",
+    request_body = GraphQueryRequest,
+    responses(
+        (status = 200, description = "Query executed successfully", body = String, content_type = "application/json"),
+        (status = 400, description = "Query execution failed", body = ErrorResponse)
+    )
+)]
+#[post("/graph_query")]
+async fn graph_query_endpoint(
+    req: actix_web::web::Json<GraphQueryRequest>
+) -> Result<impl Responder, actix_web::Error> {
+    match graph_query(&req.query, &req.graph_name, false).await {
+        Ok(json_result) => Ok(HttpResponse::Ok().content_type("application/json").body(json_result)),
+        Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() })),
+    }
 }
 
 #[utoipa::path(
@@ -541,7 +566,7 @@ async fn execute_cypher_query(
     send_result!(tx, Progress::Status(String::from("Executing Cypher query...")));
     tracing::info!("Executing Cypher Query: {}", query);
 
-    match execute_query(query, graph_name, tx).await {
+    match execute_query(query, graph_name, true, tx).await {
         Ok(result) => {
             tracing::info!("Query executed successfully, result: {}", result);
             send_result!(tx, Progress::CypherResult(result.clone()));
@@ -574,9 +599,45 @@ async fn generate_final_answer(
     execute_chat_stream(client, model, genai_chat_request, tx).await;
 }
 
+#[allow(dead_code)]
+async fn graph_query(
+    query: &str,
+    graph_name: &str,
+    read_only: bool,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let connection_info: FalkorConnectionInfo = AppConfig::get()
+        .falkordb_connection
+        .as_str()
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
+
+    let client = FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .build()
+        .await
+        .map_err(|e| format!("Failed to build client: {e}"))?;
+    let graph_name = graph_name.to_string();
+    let query = query.to_string();
+
+    // Run the FalkorDB operations in a blocking context
+    let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
+        .await
+        .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
+
+    let json_result = match result {
+        Ok(records) => format_as_json(&records),
+        Err(e) => {
+            let error_msg = format!("Query execution failed: {e}");
+            return Err(error_msg.into());
+        }
+    };
+    Ok(json_result)
+}
+
 async fn execute_query(
     query: &str,
     graph_name: &str,
+    read_only: bool,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let connection_info: FalkorConnectionInfo = AppConfig::get()
@@ -595,7 +656,7 @@ async fn execute_query(
     let query = query.to_string();
 
     // Run the FalkorDB operations in a blocking context
-    let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query))
+    let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
         .await
         .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
 
@@ -654,17 +715,26 @@ fn execute_query_blocking(
     client: &falkordb::FalkorAsyncClient,
     graph_name: &str,
     query: &str,
+    read_only: bool,
 ) -> Result<Vec<Vec<falkordb::FalkorValue>>, Box<dyn std::error::Error + Send + Sync>> {
     // Create a new Tokio runtime for this blocking operation
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
 
     rt.block_on(async {
         let mut graph = client.select_graph(graph_name);
-        let query_result = graph
-            .ro_query(query)
-            .execute()
-            .await
-            .map_err(|e| format!("Query execution failed: {e}"))?;
+        let query_result = if read_only {
+            graph
+                .ro_query(query)
+                .execute()
+                .await
+                .map_err(|e| format!("Query execution failed: {e}"))?
+        } else {
+            graph
+                .query(query)
+                .execute()
+                .await
+                .map_err(|e| format!("Query execution failed: {e}"))?
+        };
 
         let mut records = Vec::new();
         for record in query_result.data {
@@ -767,7 +837,8 @@ fn process_last_request_prompt(
         clear_schema_cache,
         list_graphs_endpoint,
         get_schema_endpoint,
-        configured_model_endpoint
+        configured_model_endpoint,
+        graph_query_endpoint
     ),
     components(schemas(
         TextToCypherRequest,
@@ -777,6 +848,7 @@ fn process_last_request_prompt(
         ChatRole,
         ConfiguredModelResponse,
         ErrorResponse,
+        GraphQueryRequest,
         error::ErrorResponse
     ))
 )]
@@ -814,6 +886,7 @@ async fn main() -> std::io::Result<()> {
             .service(list_graphs_endpoint)
             .service(get_schema_endpoint)
             .service(configured_model_endpoint)
+            .service(graph_query_endpoint)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
     .bind(("0.0.0.0", 8080))?

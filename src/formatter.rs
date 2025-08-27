@@ -130,6 +130,134 @@ fn format_falkor_value(value: &FalkorValue) -> String {
     }
 }
 
+/// Formats a query result as JSON for programmatic consumption
+#[must_use]
+pub fn format_as_json(records: &[Vec<FalkorValue>]) -> String {
+    if records.is_empty() {
+        return "[]".to_string();
+    }
+
+    let mut result = String::from("[");
+    for (i, record) in records.iter().enumerate() {
+        if i > 0 {
+            result.push(',');
+        }
+
+        result.push('[');
+        for (j, value) in record.iter().enumerate() {
+            if j > 0 {
+                result.push(',');
+            }
+            result.push_str(&falkor_value_to_json(value));
+        }
+        result.push(']');
+    }
+    result.push(']');
+
+    result
+}
+
+/// Converts a `FalkorValue` to its JSON representation
+fn falkor_value_to_json(value: &FalkorValue) -> String {
+    match value {
+        FalkorValue::Bool(b) => b.to_string(),
+        FalkorValue::I64(i) => i.to_string(),
+        FalkorValue::F64(f) => f.to_string(),
+        FalkorValue::String(s) => format!("\"{}\"", escape_json_string(s)),
+        FalkorValue::Node(node) => {
+            let mut json = String::from("{\"type\":\"node\",\"id\":");
+            json.push_str(&node.entity_id.to_string());
+
+            json.push_str(",\"labels\":[");
+            for (i, label) in node.labels.iter().enumerate() {
+                if i > 0 {
+                    json.push(',');
+                }
+                write!(json, "\"{}\"", escape_json_string(label)).unwrap();
+            }
+            json.push_str("],\"properties\":{");
+
+            for (i, (k, v)) in node.properties.iter().enumerate() {
+                if i > 0 {
+                    json.push(',');
+                }
+                write!(json, "\"{}\":{}", escape_json_string(k), falkor_value_to_json(v)).unwrap();
+            }
+            json.push_str("}}");
+            json
+        }
+        FalkorValue::Edge(edge) => {
+            let mut json = String::from("{\"type\":\"edge\",\"id\":");
+            json.push_str(&edge.entity_id.to_string());
+            json.push_str(",\"relationship_type\":\"");
+            json.push_str(&escape_json_string(&edge.relationship_type));
+            json.push_str("\",\"src_node_id\":");
+            json.push_str(&edge.src_node_id.to_string());
+            json.push_str(",\"dst_node_id\":");
+            json.push_str(&edge.dst_node_id.to_string());
+            json.push_str(",\"properties\":{");
+
+            for (i, (k, v)) in edge.properties.iter().enumerate() {
+                if i > 0 {
+                    json.push(',');
+                }
+                write!(json, "\"{}\":{}", escape_json_string(k), falkor_value_to_json(v)).unwrap();
+            }
+            json.push_str("}}");
+            json
+        }
+        FalkorValue::Path(path) => {
+            let mut json = String::from("{\"type\":\"path\",\"nodes\":[");
+            for (i, node) in path.nodes.iter().enumerate() {
+                if i > 0 {
+                    json.push(',');
+                }
+                json.push_str(&falkor_value_to_json(&FalkorValue::Node(node.clone())));
+            }
+            json.push_str("],\"relationships\":[");
+            for (i, edge) in path.relationships.iter().enumerate() {
+                if i > 0 {
+                    json.push(',');
+                }
+                json.push_str(&falkor_value_to_json(&FalkorValue::Edge(edge.clone())));
+            }
+            json.push_str("]}");
+            json
+        }
+        FalkorValue::Array(arr) => {
+            let mut json = String::from("[");
+            for (i, item) in arr.iter().enumerate() {
+                if i > 0 {
+                    json.push(',');
+                }
+                json.push_str(&falkor_value_to_json(item));
+            }
+            json.push(']');
+            json
+        }
+        _ => {
+            // For other types, serialize as string representation
+            let debug_str = format!("{value:?}");
+            format!("\"{}\"", escape_json_string(&debug_str))
+        }
+    }
+}
+
+/// Escapes a string for JSON format
+fn escape_json_string(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '"' => "\\\"".to_string(),
+            '\\' => "\\\\".to_string(),
+            '\n' => "\\n".to_string(),
+            '\r' => "\\r".to_string(),
+            '\t' => "\\t".to_string(),
+            c if c.is_control() => format!("\\u{:04x}", c as u32),
+            c => c.to_string(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
