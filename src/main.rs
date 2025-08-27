@@ -521,7 +521,7 @@ async fn generate_cypher_query(
     let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, schema);
     let query = execute_chat(client, model, genai_chat_request, tx).await;
 
-    if query.trim().is_empty() {
+    if query.trim().is_empty() || query.trim() == "NO ANSWER" {
         tracing::warn!("No query generated from AI model");
         send_option!(tx, Progress::Error("No valid query was generated".to_string()));
         return None;
