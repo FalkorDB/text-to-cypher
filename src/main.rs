@@ -863,7 +863,6 @@ fn execute_query_blocking(
     })
 }
 
-
 fn execute_query_with_csv_import_blocking(
     client: &falkordb::FalkorAsyncClient,
     graph_name: &str,
