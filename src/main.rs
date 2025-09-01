@@ -884,7 +884,7 @@ fn execute_query_with_csv_import_blocking(
         // Check current user and directory permissions
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
         tracing::info!("Running as user: {}", current_user);
-        
+
         // Check if import folder exists and its permissions
         let path = PathBuf::from(&import_folder);
         if path.exists() {
@@ -944,30 +944,27 @@ async fn get_import_folder(
     client: &falkordb::FalkorAsyncClient
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     tracing::info!("Attempting to get IMPORT_FOLDER configuration from FalkorDB");
-    let values = client
-        .config_get("IMPORT_FOLDER")
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to get IMPORT_FOLDER config: {}", e);
-            format!("Failed to get IMPORT_FOLDER: {e}")
-        })?;
-    
+    let values = client.config_get("IMPORT_FOLDER").await.map_err(|e| {
+        tracing::error!("Failed to get IMPORT_FOLDER config: {}", e);
+        format!("Failed to get IMPORT_FOLDER: {e}")
+    })?;
+
     tracing::info!("Received config values: {:?}", values);
-    
+
     let config_value: ConfigValue = values
         .get("IMPORT_FOLDER")
         .cloned()
         .ok_or("IMPORT_FOLDER not found in config response")?;
-    
+
     match config_value {
         ConfigValue::String(s) => {
             tracing::info!("Successfully retrieved IMPORT_FOLDER: {}", s);
             Ok(s)
-        },
+        }
         ConfigValue::Int64(_) => {
             tracing::error!("IMPORT_FOLDER is not a string");
             Err("IMPORT_FOLDER is not a string".into())
-        },
+        }
     }
 }
 
