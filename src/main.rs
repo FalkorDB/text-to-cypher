@@ -879,6 +879,13 @@ fn execute_query_with_csv_import_blocking(
     rt.block_on(async {
         // Get the IMPORT_FOLDER using graph.config get IMPORT_FOLDER
         let import_folder = get_import_folder(client).await?;
+
+        // if import folder does not exists create it recursively
+        if !PathBuf::from(&import_folder).exists() {
+            fs::create_dir_all(&import_folder).map_err(|e| format!("Failed to create IMPORT_FOLDER: {e}"))?;
+            tracing::info!("Created IMPORT_FOLDER: {}", import_folder);
+        }
+
         tracing::info!("Using IMPORT_FOLDER: {}", import_folder);
         // Create the full file path
         let file_path = PathBuf::from(&import_folder).join(filename);
