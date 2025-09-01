@@ -879,11 +879,26 @@ fn execute_query_with_csv_import_blocking(
     rt.block_on(async {
         // Get the IMPORT_FOLDER using graph.config get IMPORT_FOLDER
         let import_folder = get_import_folder(client).await?;
+        tracing::info!("FalkorDB IMPORT_FOLDER config: {}", import_folder);
 
-        // if import folder does not exists create it recursively
-        if !PathBuf::from(&import_folder).exists() {
-            fs::create_dir_all(&import_folder).map_err(|e| format!("Failed to create IMPORT_FOLDER: {e}"))?;
-            tracing::info!("Created IMPORT_FOLDER: {}", import_folder);
+        // Check current user and directory permissions
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        tracing::info!("Running as user: {}", current_user);
+        
+        // Check if import folder exists and its permissions
+        let path = PathBuf::from(&import_folder);
+        if path.exists() {
+            tracing::info!("IMPORT_FOLDER already exists: {}", import_folder);
+            if let Ok(metadata) = fs::metadata(&import_folder) {
+                tracing::info!("IMPORT_FOLDER permissions: {:?}", metadata.permissions());
+            }
+        } else {
+            tracing::info!("IMPORT_FOLDER does not exist, attempting to create: {}", import_folder);
+            fs::create_dir_all(&import_folder).map_err(|e| {
+                tracing::error!("Failed to create IMPORT_FOLDER '{}': {}", import_folder, e);
+                format!("Failed to create IMPORT_FOLDER: {e}")
+            })?;
+            tracing::info!("Successfully created IMPORT_FOLDER: {}", import_folder);
         }
 
         tracing::info!("Using IMPORT_FOLDER: {}", import_folder);
@@ -928,17 +943,31 @@ fn execute_query_with_csv_import_blocking(
 async fn get_import_folder(
     client: &falkordb::FalkorAsyncClient
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    tracing::info!("Attempting to get IMPORT_FOLDER configuration from FalkorDB");
     let values = client
         .config_get("IMPORT_FOLDER")
         .await
-        .map_err(|e| format!("Failed to get IMPORT_FOLDER: {e}"))?;
+        .map_err(|e| {
+            tracing::error!("Failed to get IMPORT_FOLDER config: {}", e);
+            format!("Failed to get IMPORT_FOLDER: {e}")
+        })?;
+    
+    tracing::info!("Received config values: {:?}", values);
+    
     let config_value: ConfigValue = values
         .get("IMPORT_FOLDER")
         .cloned()
         .ok_or("IMPORT_FOLDER not found in config response")?;
+    
     match config_value {
-        ConfigValue::String(s) => Ok(s),
-        ConfigValue::Int64(_) => Err("IMPORT_FOLDER is not a string".into()),
+        ConfigValue::String(s) => {
+            tracing::info!("Successfully retrieved IMPORT_FOLDER: {}", s);
+            Ok(s)
+        },
+        ConfigValue::Int64(_) => {
+            tracing::error!("IMPORT_FOLDER is not a string");
+            Err("IMPORT_FOLDER is not a string".into())
+        },
     }
 }
 

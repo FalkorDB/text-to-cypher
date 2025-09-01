@@ -61,11 +61,16 @@ COPY --from=downloader /tmp/text-to-cypher /app/text-to-cypher
 COPY --from=downloader /tmp/templates ./templates
 
 # Create import directory and set permissions
-RUN mkdir -p /var/lib/falkordb/import && \
-    chown -R appuser:appuser /var/lib/falkordb/import && \
-    chmod -R 755 /var/lib/falkordb/import && \
+RUN mkdir -p /var/lib/FalkorDB/import && \
+    mkdir -p /tmp/falkordb-import && \
+    chown -R appuser:appuser /var/lib/FalkorDB/import && \
+    chmod -R 755 /var/lib/FalkorDB/import && \
+    chown -R appuser:appuser /tmp/falkordb-import && \
+    chmod -R 755 /tmp/falkordb-import && \
     chown -R appuser:appuser /var/lib/falkordb && \
-    chmod -R 755 /var/lib/falkordb
+    chmod -R 755 /var/lib/falkordb && \
+    chown -R appuser:appuser /var/lib/FalkorDB && \
+    chmod -R 755 /var/lib/FalkorDB
 
 # Change ownership to the non-root user
 RUN chown -R appuser:appuser /app
