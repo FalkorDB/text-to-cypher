@@ -60,6 +60,13 @@ COPY --from=downloader /tmp/text-to-cypher /app/text-to-cypher
 # Copy the templates from the downloaded package (contains the correct templates for this version)
 COPY --from=downloader /tmp/templates ./templates
 
+# Create import directory and set permissions
+RUN mkdir -p /var/lib/falkordb/import && \
+    chown -R appuser:appuser /var/lib/falkordb/import && \
+    chmod -R 755 /var/lib/falkordb/import && \
+    chown -R appuser:appuser /var/lib/falkordb && \
+    chmod -R 755 /var/lib/falkordb
+
 # Change ownership to the non-root user
 RUN chown -R appuser:appuser /app
 
