@@ -940,6 +940,7 @@ fn execute_query_with_csv_import_blocking(
     })
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn get_import_folder(
     client: &falkordb::FalkorAsyncClient
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
