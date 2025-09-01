@@ -1,9 +1,11 @@
 #![allow(clippy::needless_for_each)]
 
+use actix_multipart::Multipart;
 use actix_web::HttpResponse;
 use actix_web::http::StatusCode;
 use actix_web::{App, HttpServer, Responder, Result, post};
 use actix_web_lab::sse::{self, Sse};
+use falkordb::ConfigValue;
 use falkordb::FalkorClientBuilder;
 use falkordb::FalkorConnectionInfo;
 use futures_util::StreamExt;
@@ -11,6 +13,7 @@ use genai::ModelIden;
 use genai::resolver::AuthData;
 use genai::resolver::AuthResolver;
 use moka::sync::Cache;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
@@ -18,6 +21,7 @@ use tracing_subscriber::fmt;
 use utoipa::OpenApi;
 use utoipa::ToSchema;
 use utoipa_swagger_ui::SwaggerUi;
+use uuid::Uuid;
 
 // Macro for functions returning ()
 macro_rules! send {
@@ -348,6 +352,73 @@ async fn graph_query_endpoint(
 }
 
 #[utoipa::path(
+    post,
+    path = "/graph_query_upload/{graph_name}",
+    params(
+        ("graph_name" = String, Path, description = "Name of the graph to execute query on")
+    ),
+    request_body(content = String, description = "Multipart form data with 'file' and 'cypher' fields", content_type = "multipart/form-data"),
+    responses(
+        (status = 200, description = "Query executed successfully with uploaded CSV", body = String, content_type = "application/json"),
+        (status = 400, description = "Query execution failed or invalid form data", body = ErrorResponse)
+    )
+)]
+#[post("/graph_query_upload/{graph_name}")]
+#[allow(clippy::future_not_send)]
+async fn graph_query_upload_endpoint(
+    graph_name: actix_web::web::Path<String>,
+    mut payload: Multipart,
+) -> Result<impl Responder, actix_web::Error> {
+    let graph_name = graph_name.into_inner();
+
+    let mut csv_content: Option<String> = None;
+    let mut cypher_query: Option<String> = None;
+
+    // Process multipart data field by field
+    while let Some(item) = futures_util::stream::StreamExt::next(&mut payload).await {
+        let mut field =
+            item.map_err(|e| actix_web::error::ErrorBadRequest(format!("Failed to read multipart field: {e}")))?;
+
+        // Get the field name
+        let field_name = field.content_disposition().get_name().map(ToString::to_string);
+
+        if let Some(field_name) = field_name {
+            // Read the field data into bytes
+            let mut bytes = actix_web::web::BytesMut::new();
+            while let Some(chunk) = futures_util::stream::StreamExt::next(&mut field).await {
+                let data =
+                    chunk.map_err(|e| actix_web::error::ErrorBadRequest(format!("Failed to read field chunk: {e}")))?;
+                bytes.extend_from_slice(&data);
+            }
+
+            // Convert to string
+            let content = String::from_utf8(bytes.to_vec()).map_err(|e| {
+                actix_web::error::ErrorBadRequest(format!("Invalid UTF-8 in field '{field_name}': {e}"))
+            })?;
+
+            // Store the content based on field name
+            match field_name.as_str() {
+                "file" => csv_content = Some(content),
+                "cypher" => cypher_query = Some(content),
+                _ => tracing::warn!("Unexpected field in multipart data: {}", field_name),
+            }
+        }
+    }
+
+    // Validate that we have both required fields
+    let csv_content =
+        csv_content.ok_or_else(|| actix_web::error::ErrorBadRequest("Missing 'file' field in multipart data"))?;
+    let cypher_query =
+        cypher_query.ok_or_else(|| actix_web::error::ErrorBadRequest("Missing 'cypher' field in multipart data"))?;
+
+    // Execute the query with uploaded CSV data
+    match graph_query_with_csv(&cypher_query, &graph_name, &csv_content).await {
+        Ok(json_result) => Ok(HttpResponse::Ok().content_type("application/json").body(json_result)),
+        Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() })),
+    }
+}
+
+#[utoipa::path(
     get,
     path = "/list_graphs",
     responses(
@@ -634,6 +705,54 @@ async fn graph_query(
     Ok(json_result)
 }
 
+#[allow(dead_code)]
+async fn graph_query_with_csv(
+    query: &str,
+    graph_name: &str,
+    csv_content: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let connection_info: FalkorConnectionInfo = AppConfig::get()
+        .falkordb_connection
+        .as_str()
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
+
+    let client = FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .build()
+        .await
+        .map_err(|e| format!("Failed to build client: {e}"))?;
+
+    let graph_name = graph_name.to_string();
+    let query = query.to_string();
+    let csv_content = csv_content.to_string();
+
+    // replace filename in the query with a random uuid.
+    let uuid = Uuid::new_v4().to_string();
+    let filename = format!("{uuid}.csv");
+    let re = Regex::new(r"file://.*\.csv").unwrap();
+    let query = re.replace(&query, format!("file://{uuid}.csv")).to_string();
+
+    tracing::info!("Extracted CSV filename from query: {filename}");
+    tracing::info!("query is: {query}");
+
+    // Run the FalkorDB operations in a blocking context
+    let result = tokio::task::spawn_blocking(move || {
+        execute_query_with_csv_import_blocking(&client, &graph_name, &query, &csv_content, &filename)
+    })
+    .await
+    .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
+
+    let json_result = match result {
+        Ok(records) => format_as_json(&records),
+        Err(e) => {
+            let error_msg = format!("Query execution failed: {e}");
+            return Err(error_msg.into());
+        }
+    };
+    Ok(json_result)
+}
+
 async fn execute_query(
     query: &str,
     graph_name: &str,
@@ -744,6 +863,79 @@ fn execute_query_blocking(
     })
 }
 
+
+fn execute_query_with_csv_import_blocking(
+    client: &falkordb::FalkorAsyncClient,
+    graph_name: &str,
+    query: &str,
+    csv_content: &str,
+    filename: &str,
+) -> Result<Vec<Vec<falkordb::FalkorValue>>, Box<dyn std::error::Error + Send + Sync>> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    // Create a new Tokio runtime for this blocking operation
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
+
+    rt.block_on(async {
+        // Get the IMPORT_FOLDER using graph.config get IMPORT_FOLDER
+        let import_folder = get_import_folder(client).await?;
+        tracing::info!("Using IMPORT_FOLDER: {}", import_folder);
+        // Create the full file path
+        let file_path = PathBuf::from(&import_folder).join(filename);
+
+        tracing::info!("Full file path for CSV import: {:?}", file_path);
+
+        // Write CSV content to the import folder
+        fs::write(&file_path, csv_content).map_err(|e| format!("Failed to write CSV file to import folder: {e}"))?;
+        tracing::info!("CSV file written to import folder: {:?}", file_path);
+
+        // Execute the query (no need to modify the query as the file is now in the correct location)
+        let mut graph = client.select_graph(graph_name);
+        let query_result = graph
+            .query(query)
+            .execute()
+            .await
+            .map_err(|e| format!("Query execution failed: {e}"))?;
+
+        tracing::info!("Query {query} executed, processing results...");
+
+        let mut records = Vec::new();
+        for record in query_result.data {
+            records.push(record);
+        }
+
+        tracing::info!(
+            "Query executed successfully with CSV import, records count: {}",
+            records.len()
+        );
+        tracing::info!("Cleaning up CSV file: {:?}", file_path);
+        // Clean up - delete the file from the IMPORT_FOLDER
+        if let Err(e) = fs::remove_file(&file_path) {
+            tracing::warn!("Failed to remove CSV file from import folder: {}", e);
+        }
+
+        Ok(records)
+    })
+}
+
+async fn get_import_folder(
+    client: &falkordb::FalkorAsyncClient
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let values = client
+        .config_get("IMPORT_FOLDER")
+        .await
+        .map_err(|e| format!("Failed to get IMPORT_FOLDER: {e}"))?;
+    let config_value: ConfigValue = values
+        .get("IMPORT_FOLDER")
+        .cloned()
+        .ok_or("IMPORT_FOLDER not found in config response")?;
+    match config_value {
+        ConfigValue::String(s) => Ok(s),
+        ConfigValue::Int64(_) => Err("IMPORT_FOLDER is not a string".into()),
+    }
+}
+
 fn generate_create_cypher_query_chat_request(
     chat_request: &ChatRequest,
     ontology: &str,
@@ -838,7 +1030,8 @@ fn process_last_request_prompt(
         list_graphs_endpoint,
         get_schema_endpoint,
         configured_model_endpoint,
-        graph_query_endpoint
+        graph_query_endpoint,
+        graph_query_upload_endpoint
     ),
     components(schemas(
         TextToCypherRequest,
@@ -887,6 +1080,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_schema_endpoint)
             .service(configured_model_endpoint)
             .service(graph_query_endpoint)
+            .service(graph_query_upload_endpoint)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
     .bind(("0.0.0.0", 8080))?
