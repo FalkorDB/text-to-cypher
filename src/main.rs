@@ -269,6 +269,11 @@ struct GraphQueryRequest {
     query: String,
 }
 
+#[derive(Serialize, Deserialize, ToSchema, Debug)]
+struct LoadCsvRequest {
+    data: Vec<Vec<String>>,
+}
+
 fn process_clear_schema_cache(graph_name: &str) {
     tracing::info!("Clearing schema cache for graph: {graph_name}");
     let cache = AppConfig::get().schema_cache.clone();
@@ -454,6 +459,45 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
     tracing::info!("Clearing schema cache for graph: {}", graph_name);
     process_clear_schema_cache(&graph_name);
     HttpResponse::new(StatusCode::OK)
+}
+
+#[utoipa::path(
+    post,
+    path = "/load_csv",
+    request_body = LoadCsvRequest,
+    responses(
+        (status = 200, description = "CSV loaded and query executed successfully", body = String, content_type = "application/json"),
+        (status = 400, description = "Invalid request format or query execution failed", body = ErrorResponse)
+    )
+)]
+#[post("/load_csv")]
+async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<impl Responder, actix_web::Error> {
+    let request = req.into_inner();
+
+    // Validate the request format
+    if request.data.is_empty() {
+        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
+            error: "Request data array is empty".to_string(),
+        }));
+    }
+
+    // Each data entry should be [csv_data, cypher_query, graph_name]
+    let entry = &request.data[0]; // Process first entry for now
+    if entry.len() != 3 {
+        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
+            error: "Each data entry must contain exactly 3 elements: [csv_data, cypher_query, graph_name]".to_string(),
+        }));
+    }
+
+    let csv_content = &entry[0];
+    let cypher_query = &entry[1];
+    let graph_name = &entry[2];
+
+    // Execute the query with uploaded CSV data using the same logic as graph_query_upload
+    match graph_query_with_csv(cypher_query, graph_name, csv_content).await {
+        Ok(json_result) => Ok(HttpResponse::Ok().content_type("application/json").body(json_result)),
+        Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() })),
+    }
 }
 
 #[utoipa::path(
@@ -705,12 +749,18 @@ async fn graph_query(
     Ok(json_result)
 }
 
-#[allow(dead_code)]
 async fn graph_query_with_csv(
     query: &str,
     graph_name: &str,
     csv_content: &str,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    tracing::info!(
+        "graph_query_with_csv called with graph_name: {}, query: {}, csv_content length: {}",
+        graph_name,
+        query,
+        csv_content.len()
+    );
+
     let connection_info: FalkorConnectionInfo = AppConfig::get()
         .falkordb_connection
         .as_str()
@@ -1060,6 +1110,7 @@ fn process_last_request_prompt(
     paths(
         text_to_cypher,
         clear_schema_cache,
+        load_csv_endpoint,
         list_graphs_endpoint,
         get_schema_endpoint,
         configured_model_endpoint,
@@ -1075,6 +1126,7 @@ fn process_last_request_prompt(
         ConfiguredModelResponse,
         ErrorResponse,
         GraphQueryRequest,
+        LoadCsvRequest,
         error::ErrorResponse
     ))
 )]
@@ -1109,6 +1161,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .service(text_to_cypher)
             .service(clear_schema_cache)
+            .service(load_csv_endpoint)
             .service(list_graphs_endpoint)
             .service(get_schema_endpoint)
             .service(configured_model_endpoint)
