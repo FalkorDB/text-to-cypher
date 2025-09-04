@@ -518,11 +518,14 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
 async fn echo_endpoint(req: actix_web::web::Json<serde_json::Value>) -> Result<impl Responder, actix_web::Error> {
     // Log the incoming request
     tracing::info!("Echo endpoint called");
-    tracing::info!("Received JSON payload: {}", serde_json::to_string_pretty(&*req).unwrap_or_else(|_| "Failed to serialize".to_string()));
-    
+    tracing::info!(
+        "Received JSON payload: {}",
+        serde_json::to_string_pretty(&*req).unwrap_or_else(|_| "Failed to serialize".to_string())
+    );
+
     // Simply return the received JSON back
     let response = HttpResponse::Ok().json(&*req);
-    
+
     tracing::info!("Echo endpoint responding with same payload");
     Ok(response)
 }
