@@ -274,6 +274,12 @@ struct LoadCsvRequest {
     data: Vec<Vec<String>>,
 }
 
+#[derive(Serialize, Deserialize, ToSchema, Debug)]
+struct EchoRequest {
+    #[serde(flatten)]
+    data: serde_json::Value,
+}
+
 fn process_clear_schema_cache(graph_name: &str) {
     tracing::info!("Clearing schema cache for graph: {graph_name}");
     let cache = AppConfig::get().schema_cache.clone();
@@ -498,6 +504,27 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
         Ok(json_result) => Ok(HttpResponse::Ok().content_type("application/json").body(json_result)),
         Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() })),
     }
+}
+
+#[utoipa::path(
+    post,
+    path = "/echo",
+    request_body = EchoRequest,
+    responses(
+        (status = 200, description = "Echo back the received JSON", content_type = "application/json")
+    )
+)]
+#[post("/echo")]
+async fn echo_endpoint(req: actix_web::web::Json<serde_json::Value>) -> Result<impl Responder, actix_web::Error> {
+    // Log the incoming request
+    tracing::info!("Echo endpoint called");
+    tracing::info!("Received JSON payload: {}", serde_json::to_string_pretty(&*req).unwrap_or_else(|_| "Failed to serialize".to_string()));
+    
+    // Simply return the received JSON back
+    let response = HttpResponse::Ok().json(&*req);
+    
+    tracing::info!("Echo endpoint responding with same payload");
+    Ok(response)
 }
 
 #[utoipa::path(
@@ -1111,6 +1138,7 @@ fn process_last_request_prompt(
         text_to_cypher,
         clear_schema_cache,
         load_csv_endpoint,
+        echo_endpoint,
         list_graphs_endpoint,
         get_schema_endpoint,
         configured_model_endpoint,
@@ -1127,6 +1155,7 @@ fn process_last_request_prompt(
         ErrorResponse,
         GraphQueryRequest,
         LoadCsvRequest,
+        EchoRequest,
         error::ErrorResponse
     ))
 )]
@@ -1162,6 +1191,7 @@ async fn main() -> std::io::Result<()> {
             .service(text_to_cypher)
             .service(clear_schema_cache)
             .service(load_csv_endpoint)
+            .service(echo_endpoint)
             .service(list_graphs_endpoint)
             .service(get_schema_endpoint)
             .service(configured_model_endpoint)
