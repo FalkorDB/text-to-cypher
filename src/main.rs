@@ -265,8 +265,7 @@ struct ErrorResponse {
 
 #[derive(Serialize, Deserialize, ToSchema)]
 struct GraphQueryRequest {
-    graph_name: String,
-    query: String,
+    data: Vec<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]
@@ -353,6 +352,7 @@ async fn configured_model_endpoint() -> Result<impl Responder, actix_web::Error>
     )
 }
 
+#[allow(clippy::cognitive_complexity)]
 #[utoipa::path(
     post,
     path = "/graph_query",
@@ -366,9 +366,117 @@ async fn configured_model_endpoint() -> Result<impl Responder, actix_web::Error>
 async fn graph_query_endpoint(
     req: actix_web::web::Json<GraphQueryRequest>
 ) -> Result<impl Responder, actix_web::Error> {
-    match graph_query(&req.query, &req.graph_name, false).await {
-        Ok(json_result) => Ok(HttpResponse::Ok().content_type("application/json").body(json_result)),
-        Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() })),
+    let raw_request = req.into_inner();
+
+    // Log the incoming Snowflake format request
+    tracing::info!("Received graph_query request with Snowflake format");
+    tracing::info!(
+        "Raw JSON payload: {}",
+        serde_json::to_string_pretty(&raw_request).unwrap_or_else(|_| "Failed to serialize".to_string())
+    );
+
+    // Validate the Snowflake format: data should be an array with at least one entry
+    if raw_request.data.is_empty() {
+        tracing::error!("Empty data array in Snowflake request");
+        return Ok(create_snowflake_error_response("Data array cannot be empty"));
+    }
+
+    // Get the first entry from the data array
+    let first_entry = &raw_request.data[0];
+
+    // Snowflake format: data[0] should be an array where [0] is index and [1] is the actual data
+    let data_array = first_entry.as_array().ok_or_else(|| {
+        tracing::error!("First data entry is not an array");
+        actix_web::error::ErrorBadRequest("First data entry must be an array")
+    })?;
+
+    if data_array.len() < 2 {
+        tracing::error!("Data array must have at least 2 elements [index, data]");
+        return Ok(create_snowflake_error_response(
+            "Data array must have at least 2 elements [index, data]",
+        ));
+    }
+
+    // Extract the actual data object (second element in the array)
+    let data_object = &data_array[1];
+
+    tracing::info!(
+        "Extracted data object: {}",
+        serde_json::to_string_pretty(data_object).unwrap_or_else(|_| "Failed to serialize".to_string())
+    );
+
+    // Extract the required fields from the data object
+    let graph_name = data_object
+        .get("graph_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("Missing or invalid 'graph_name' field in data object");
+            actix_web::error::ErrorBadRequest("Missing or invalid 'graph_name' field")
+        })?
+        .to_string();
+
+    let query = data_object
+        .get("query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("Missing or invalid 'query' field in data object");
+            actix_web::error::ErrorBadRequest("Missing or invalid 'query' field")
+        })?
+        .to_string();
+
+    tracing::info!("Successfully extracted: graph_name={}, query={}", graph_name, query);
+
+    // Validate the extracted data
+    if graph_name.is_empty() {
+        tracing::warn!("Empty graph name provided");
+        return Ok(create_snowflake_error_response("Graph name cannot be empty"));
+    }
+
+    if query.is_empty() {
+        tracing::warn!("Empty query provided");
+        return Ok(create_snowflake_error_response("Query cannot be empty"));
+    }
+
+    // Execute the query
+    match graph_query(&query, &graph_name, false).await {
+        Ok(json_result) => {
+            tracing::info!("Successfully executed graph_query for graph: {}", graph_name);
+            tracing::debug!("Raw query result: {}", json_result);
+
+            // Parse the JSON result to convert it to Snowflake format
+            match serde_json::from_str::<serde_json::Value>(&json_result) {
+                Ok(parsed_result) => {
+                    // Convert the result to Snowflake format: { "data": [ [0, result] ] }
+                    let snowflake_response = serde_json::json!({
+                        "data": [
+                            [0, parsed_result]
+                        ]
+                    });
+
+                    tracing::info!(
+                        "Converted to Snowflake format: {}",
+                        serde_json::to_string_pretty(&snowflake_response)
+                            .unwrap_or_else(|_| "Failed to serialize".to_string())
+                    );
+
+                    Ok(HttpResponse::Ok().json(snowflake_response))
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse query result as JSON: {}", e);
+                    // If parsing fails, return the raw result wrapped in Snowflake format
+                    let snowflake_response = serde_json::json!({
+                        "data": [
+                            [0, json_result]
+                        ]
+                    });
+                    Ok(HttpResponse::Ok().json(snowflake_response))
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to execute graph_query for graph {}: {}", graph_name, e);
+            Ok(create_snowflake_error_response(&e.to_string()))
+        }
     }
 }
 
