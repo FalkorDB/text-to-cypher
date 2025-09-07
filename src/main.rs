@@ -472,7 +472,7 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
 #[utoipa::path(
     post,
     path = "/load_csv",
-    request_body = LoadCsvRequest,
+    request_body = EchoRequest,
     responses(
         (status = 200, description = "CSV loaded and query executed successfully", body = String, content_type = "application/json"),
         (status = 400, description = "Invalid request format or query execution failed", body = ErrorResponse)
@@ -480,10 +480,52 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
 )]
 #[allow(clippy::cognitive_complexity)]
 #[post("/load_csv")]
-async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<impl Responder, actix_web::Error> {
-    let request = req.into_inner();
+async fn load_csv_endpoint(req: actix_web::web::Json<serde_json::Value>) -> Result<impl Responder, actix_web::Error> {
+    let raw_request = req.into_inner();
 
-    tracing::info!("Received load_csv request for graph: {}", request.graph_name);
+    // Log the incoming arbitrary JSON request
+    tracing::info!("Received load_csv request with arbitrary JSON");
+    tracing::info!(
+        "Raw JSON payload: {}",
+        serde_json::to_string_pretty(&raw_request).unwrap_or_else(|_| "Failed to serialize".to_string())
+    );
+
+    // Try to extract LoadCsvRequest fields from the arbitrary JSON
+    let csv_data = raw_request
+        .get("csv_data")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("Missing or invalid 'csv_data' field in request");
+            actix_web::error::ErrorBadRequest("Missing or invalid 'csv_data' field")
+        })?
+        .to_string();
+
+    let cypher_query = raw_request
+        .get("cypher_query")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("Missing or invalid 'cypher_query' field in request");
+            actix_web::error::ErrorBadRequest("Missing or invalid 'cypher_query' field")
+        })?
+        .to_string();
+
+    let graph_name = raw_request
+        .get("graph_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("Missing or invalid 'graph_name' field in request");
+            actix_web::error::ErrorBadRequest("Missing or invalid 'graph_name' field")
+        })?
+        .to_string();
+
+    // Create LoadCsvRequest from extracted values
+    let request = LoadCsvRequest {
+        csv_data,
+        cypher_query,
+        graph_name,
+    };
+
+    tracing::info!("Extracted LoadCsvRequest for graph: {}", request.graph_name);
     tracing::debug!("CSV data length: {} bytes", request.csv_data.len());
     tracing::debug!("Cypher query: {}", request.cypher_query);
 
