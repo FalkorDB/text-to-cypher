@@ -280,6 +280,16 @@ struct EchoRequest {
     data: serde_json::Value,
 }
 
+// Helper function to create Snowflake format error responses
+fn create_snowflake_error_response(error_message: &str) -> HttpResponse {
+    let error_response = serde_json::json!({
+        "data": [
+            [0, {"error": error_message}]
+        ]
+    });
+    HttpResponse::BadRequest().json(error_response)
+}
+
 fn process_clear_schema_cache(graph_name: &str) {
     tracing::info!("Clearing schema cache for graph: {graph_name}");
     let cache = AppConfig::get().schema_cache.clone();
@@ -476,6 +486,7 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
         (status = 400, description = "Invalid request format or query execution failed", body = ErrorResponse)
     )
 )]
+#[allow(clippy::too_many_lines)]
 #[allow(clippy::cognitive_complexity)]
 #[post("/load_csv")]
 async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<impl Responder, actix_web::Error> {
@@ -491,9 +502,7 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
     // Validate the Snowflake format: data should be an array with at least one entry
     if raw_request.data.is_empty() {
         tracing::error!("Empty data array in Snowflake request");
-        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
-            error: "Data array cannot be empty".to_string(),
-        }));
+        return Ok(create_snowflake_error_response("Data array cannot be empty"));
     }
 
     // Get the first entry from the data array
@@ -507,9 +516,9 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
 
     if data_array.len() < 2 {
         tracing::error!("Data array must have at least 2 elements [index, data]");
-        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
-            error: "Data array must have at least 2 elements [index, data]".to_string(),
-        }));
+        return Ok(create_snowflake_error_response(
+            "Data array must have at least 2 elements [index, data]",
+        ));
     }
 
     // Extract the actual data object (second element in the array)
@@ -567,34 +576,58 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
     // Validate the extracted data
     if csv_data.is_empty() {
         tracing::warn!("Empty CSV data provided");
-        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
-            error: "CSV data cannot be empty".to_string(),
-        }));
+        return Ok(create_snowflake_error_response("CSV data cannot be empty"));
     }
 
     if cypher_query.is_empty() {
         tracing::warn!("Empty Cypher query provided");
-        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
-            error: "Cypher query cannot be empty".to_string(),
-        }));
+        return Ok(create_snowflake_error_response("Cypher query cannot be empty"));
     }
 
     if graph_name.is_empty() {
         tracing::warn!("Empty graph name provided");
-        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
-            error: "Graph name cannot be empty".to_string(),
-        }));
+        return Ok(create_snowflake_error_response("Graph name cannot be empty"));
     }
 
     // Execute the query with uploaded CSV data using the same logic as graph_query_upload
     match graph_query_with_csv(&cypher_query, &graph_name, &csv_data).await {
         Ok(json_result) => {
             tracing::info!("Successfully executed load_csv for graph: {}", graph_name);
-            Ok(HttpResponse::Ok().content_type("application/json").body(json_result))
+            tracing::debug!("Raw query result: {}", json_result);
+
+            // Parse the JSON result to convert it to Snowflake format
+            match serde_json::from_str::<serde_json::Value>(&json_result) {
+                Ok(parsed_result) => {
+                    // Convert the result to Snowflake format: { "data": [ [0, result] ] }
+                    let snowflake_response = serde_json::json!({
+                        "data": [
+                            [0, parsed_result]
+                        ]
+                    });
+
+                    tracing::info!(
+                        "Converted to Snowflake format: {}",
+                        serde_json::to_string_pretty(&snowflake_response)
+                            .unwrap_or_else(|_| "Failed to serialize".to_string())
+                    );
+
+                    Ok(HttpResponse::Ok().json(snowflake_response))
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse query result as JSON: {}", e);
+                    // If parsing fails, return the raw result wrapped in Snowflake format
+                    let snowflake_response = serde_json::json!({
+                        "data": [
+                            [0, json_result]
+                        ]
+                    });
+                    Ok(HttpResponse::Ok().json(snowflake_response))
+                }
+            }
         }
         Err(e) => {
             tracing::error!("Failed to execute load_csv for graph {}: {}", graph_name, e);
-            Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() }))
+            Ok(create_snowflake_error_response(&e.to_string()))
         }
     }
 }
