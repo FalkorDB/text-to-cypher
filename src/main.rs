@@ -271,7 +271,9 @@ struct GraphQueryRequest {
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]
 struct LoadCsvRequest {
-    data: Vec<Vec<String>>,
+    csv_data: String,
+    cypher_query: String,
+    graph_name: String,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]
@@ -476,33 +478,47 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
         (status = 400, description = "Invalid request format or query execution failed", body = ErrorResponse)
     )
 )]
+#[allow(clippy::cognitive_complexity)]
 #[post("/load_csv")]
 async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<impl Responder, actix_web::Error> {
     let request = req.into_inner();
 
+    tracing::info!("Received load_csv request for graph: {}", request.graph_name);
+    tracing::debug!("CSV data length: {} bytes", request.csv_data.len());
+    tracing::debug!("Cypher query: {}", request.cypher_query);
+
     // Validate the request format
-    if request.data.is_empty() {
+    if request.csv_data.is_empty() {
+        tracing::warn!("Empty CSV data provided");
         return Ok(HttpResponse::BadRequest().json(ErrorResponse {
-            error: "Request data array is empty".to_string(),
+            error: "CSV data cannot be empty".to_string(),
         }));
     }
 
-    // Each data entry should be [csv_data, cypher_query, graph_name]
-    let entry = &request.data[0]; // Process first entry for now
-    if entry.len() != 3 {
+    if request.cypher_query.is_empty() {
+        tracing::warn!("Empty Cypher query provided");
         return Ok(HttpResponse::BadRequest().json(ErrorResponse {
-            error: "Each data entry must contain exactly 3 elements: [csv_data, cypher_query, graph_name]".to_string(),
+            error: "Cypher query cannot be empty".to_string(),
         }));
     }
 
-    let csv_content = &entry[0];
-    let cypher_query = &entry[1];
-    let graph_name = &entry[2];
+    if request.graph_name.is_empty() {
+        tracing::warn!("Empty graph name provided");
+        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
+            error: "Graph name cannot be empty".to_string(),
+        }));
+    }
 
     // Execute the query with uploaded CSV data using the same logic as graph_query_upload
-    match graph_query_with_csv(cypher_query, graph_name, csv_content).await {
-        Ok(json_result) => Ok(HttpResponse::Ok().content_type("application/json").body(json_result)),
-        Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() })),
+    match graph_query_with_csv(&request.cypher_query, &request.graph_name, &request.csv_data).await {
+        Ok(json_result) => {
+            tracing::info!("Successfully executed load_csv for graph: {}", request.graph_name);
+            Ok(HttpResponse::Ok().content_type("application/json").body(json_result))
+        }
+        Err(e) => {
+            tracing::error!("Failed to execute load_csv for graph {}: {}", request.graph_name, e);
+            Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() }))
+        }
     }
 }
 
