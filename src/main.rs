@@ -271,9 +271,7 @@ struct GraphQueryRequest {
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]
 struct LoadCsvRequest {
-    csv_data: String,
-    cypher_query: String,
-    graph_name: String,
+    data: Vec<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, ToSchema, Debug)]
@@ -472,7 +470,7 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
 #[utoipa::path(
     post,
     path = "/load_csv",
-    request_body = EchoRequest,
+    request_body = LoadCsvRequest,
     responses(
         (status = 200, description = "CSV loaded and query executed successfully", body = String, content_type = "application/json"),
         (status = 400, description = "Invalid request format or query execution failed", body = ErrorResponse)
@@ -480,71 +478,108 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
 )]
 #[allow(clippy::cognitive_complexity)]
 #[post("/load_csv")]
-async fn load_csv_endpoint(req: actix_web::web::Json<serde_json::Value>) -> Result<impl Responder, actix_web::Error> {
+async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<impl Responder, actix_web::Error> {
     let raw_request = req.into_inner();
 
-    // Log the incoming arbitrary JSON request
-    tracing::info!("Received load_csv request with arbitrary JSON");
+    // Log the incoming Snowflake format request
+    tracing::info!("Received load_csv request with Snowflake format");
     tracing::info!(
         "Raw JSON payload: {}",
         serde_json::to_string_pretty(&raw_request).unwrap_or_else(|_| "Failed to serialize".to_string())
     );
 
-    // Try to extract LoadCsvRequest fields from the arbitrary JSON
-    let csv_data = raw_request
+    // Validate the Snowflake format: data should be an array with at least one entry
+    if raw_request.data.is_empty() {
+        tracing::error!("Empty data array in Snowflake request");
+        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
+            error: "Data array cannot be empty".to_string(),
+        }));
+    }
+
+    // Get the first entry from the data array
+    let first_entry = &raw_request.data[0];
+
+    // Snowflake format: data[0] should be an array where [0] is index and [1] is the actual data
+    let data_array = first_entry.as_array().ok_or_else(|| {
+        tracing::error!("First data entry is not an array");
+        actix_web::error::ErrorBadRequest("First data entry must be an array")
+    })?;
+
+    if data_array.len() < 2 {
+        tracing::error!("Data array must have at least 2 elements [index, data]");
+        return Ok(HttpResponse::BadRequest().json(ErrorResponse {
+            error: "Data array must have at least 2 elements [index, data]".to_string(),
+        }));
+    }
+
+    // Extract the actual data object (second element in the array)
+    let data_object = &data_array[1];
+
+    tracing::info!(
+        "Extracted data object: {}",
+        serde_json::to_string_pretty(data_object).unwrap_or_else(|_| "Failed to serialize".to_string())
+    );
+
+    // Extract the required fields from the data object
+    let csv_data = data_object
         .get("csv_data")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'csv_data' field in request");
+            tracing::error!("Missing or invalid 'csv_data' field in data object");
             actix_web::error::ErrorBadRequest("Missing or invalid 'csv_data' field")
         })?
         .to_string();
 
-    let cypher_query = raw_request
+    let cypher_query = data_object
         .get("cypher_query")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'cypher_query' field in request");
+            tracing::error!("Missing or invalid 'cypher_query' field in data object");
             actix_web::error::ErrorBadRequest("Missing or invalid 'cypher_query' field")
         })?
         .to_string();
 
-    let graph_name = raw_request
+    let graph_name = data_object
         .get("graph_name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'graph_name' field in request");
+            tracing::error!("Missing or invalid 'graph_name' field in data object");
             actix_web::error::ErrorBadRequest("Missing or invalid 'graph_name' field")
         })?
         .to_string();
 
-    // Create LoadCsvRequest from extracted values
-    let request = LoadCsvRequest {
-        csv_data,
-        cypher_query,
+    tracing::info!(
+        "Successfully extracted: graph_name={}, csv_data_length={}, cypher_query={}",
         graph_name,
-    };
+        csv_data.len(),
+        cypher_query
+    );
+    tracing::debug!("CSV data: {}", csv_data);
 
-    tracing::info!("Extracted LoadCsvRequest for graph: {}", request.graph_name);
-    tracing::debug!("CSV data length: {} bytes", request.csv_data.len());
-    tracing::debug!("Cypher query: {}", request.cypher_query);
+    tracing::info!(
+        "Successfully extracted: graph_name={}, csv_data_length={}, cypher_query={}",
+        graph_name,
+        csv_data.len(),
+        cypher_query
+    );
+    tracing::debug!("CSV data: {}", csv_data);
 
-    // Validate the request format
-    if request.csv_data.is_empty() {
+    // Validate the extracted data
+    if csv_data.is_empty() {
         tracing::warn!("Empty CSV data provided");
         return Ok(HttpResponse::BadRequest().json(ErrorResponse {
             error: "CSV data cannot be empty".to_string(),
         }));
     }
 
-    if request.cypher_query.is_empty() {
+    if cypher_query.is_empty() {
         tracing::warn!("Empty Cypher query provided");
         return Ok(HttpResponse::BadRequest().json(ErrorResponse {
             error: "Cypher query cannot be empty".to_string(),
         }));
     }
 
-    if request.graph_name.is_empty() {
+    if graph_name.is_empty() {
         tracing::warn!("Empty graph name provided");
         return Ok(HttpResponse::BadRequest().json(ErrorResponse {
             error: "Graph name cannot be empty".to_string(),
@@ -552,13 +587,13 @@ async fn load_csv_endpoint(req: actix_web::web::Json<serde_json::Value>) -> Resu
     }
 
     // Execute the query with uploaded CSV data using the same logic as graph_query_upload
-    match graph_query_with_csv(&request.cypher_query, &request.graph_name, &request.csv_data).await {
+    match graph_query_with_csv(&cypher_query, &graph_name, &csv_data).await {
         Ok(json_result) => {
-            tracing::info!("Successfully executed load_csv for graph: {}", request.graph_name);
+            tracing::info!("Successfully executed load_csv for graph: {}", graph_name);
             Ok(HttpResponse::Ok().content_type("application/json").body(json_result))
         }
         Err(e) => {
-            tracing::error!("Failed to execute load_csv for graph {}: {}", request.graph_name, e);
+            tracing::error!("Failed to execute load_csv for graph {}: {}", graph_name, e);
             Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e.to_string() }))
         }
     }
