@@ -268,6 +268,17 @@ struct GraphQueryRequest {
     data: Vec<serde_json::Value>,
 }
 
+#[derive(Serialize, Deserialize, ToSchema)]
+struct GraphListRequest {
+    data: Vec<serde_json::Value>,
+}
+
+/// Request structure for graph deletion endpoint using Snowflake format
+#[derive(Serialize, Deserialize, ToSchema)]
+struct GraphDeleteRequest {
+    data: Vec<serde_json::Value>,
+}
+
 #[derive(Serialize, Deserialize, ToSchema, Debug)]
 struct LoadCsvRequest {
     data: Vec<serde_json::Value>,
@@ -476,6 +487,145 @@ async fn graph_query_endpoint(
         Err(e) => {
             tracing::error!("Failed to execute graph_query for graph {}: {}", graph_name, e);
             Ok(create_snowflake_error_response(&e.to_string()))
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/graph_list",
+    request_body = GraphListRequest,
+    responses(
+        (status = 200, description = "List of available graphs", body = String, content_type = "application/json"),
+        (status = 400, description = "Failed to list graphs", body = ErrorResponse)
+    )
+)]
+#[post("/graph_list")]
+#[allow(clippy::cognitive_complexity)]
+async fn graph_list_endpoint(_req: actix_web::web::Json<GraphListRequest>) -> Result<impl Responder, actix_web::Error> {
+    // Get the list of graphs
+    match get_graphs_list().await {
+        Ok(graphs) => {
+            tracing::info!("Successfully retrieved {} graphs", graphs.len());
+            tracing::debug!("Graph list: {:?}", graphs);
+
+            // Convert the graph list to Snowflake format: { "data": [ [0, graph_names_array] ] }
+            let snowflake_response = serde_json::json!({
+                "data": [
+                    [0, graphs]
+                ]
+            });
+
+            tracing::info!(
+                "Converted to Snowflake format: {}",
+                serde_json::to_string_pretty(&snowflake_response).unwrap_or_else(|_| "Failed to serialize".to_string())
+            );
+
+            Ok(HttpResponse::Ok().json(snowflake_response))
+        }
+        Err(e) => {
+            tracing::error!("Failed to list graphs: {}", e);
+            Ok(create_snowflake_error_response(&format!("Failed to list graphs: {e}")))
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/graph_delete",
+    request_body = GraphDeleteRequest,
+    responses(
+        (status = 200, description = "Graph deleted successfully", body = String, content_type = "application/json"),
+        (status = 400, description = "Failed to delete graph", body = ErrorResponse)
+    )
+)]
+#[post("/graph_delete")]
+#[allow(clippy::cognitive_complexity)]
+async fn graph_delete_endpoint(
+    req: actix_web::web::Json<GraphDeleteRequest>
+) -> Result<impl Responder, actix_web::Error> {
+    let raw_request = req.into_inner();
+
+    // Log the incoming Snowflake format request
+    tracing::info!("Received graph_delete request with Snowflake format");
+    tracing::info!(
+        "Raw JSON payload: {}",
+        serde_json::to_string_pretty(&raw_request).unwrap_or_else(|_| "Failed to serialize".to_string())
+    );
+
+    // Validate the Snowflake format: data should be an array with at least one entry
+    if raw_request.data.is_empty() {
+        tracing::error!("Empty data array in Snowflake request");
+        return Ok(create_snowflake_error_response("Data array cannot be empty"));
+    }
+
+    // Get the first entry from the data array
+    let first_entry = &raw_request.data[0];
+
+    // Snowflake format: data[0] should be an array where [0] is index and [1] is the actual data
+    let data_array = first_entry.as_array().ok_or_else(|| {
+        tracing::error!("First data entry is not an array");
+        actix_web::error::ErrorBadRequest("First data entry must be an array")
+    })?;
+
+    if data_array.len() < 2 {
+        tracing::error!("Data array must have at least 2 elements [index, data]");
+        return Ok(create_snowflake_error_response(
+            "Data array must have at least 2 elements [index, data]",
+        ));
+    }
+
+    // Extract the actual data object (second element in the array)
+    let data_object = &data_array[1];
+
+    tracing::info!(
+        "Extracted data object: {}",
+        serde_json::to_string_pretty(data_object).unwrap_or_else(|_| "Failed to serialize".to_string())
+    );
+
+    // Extract the required graph_name field from the data object
+    let graph_name = data_object
+        .get("graph_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            tracing::error!("Missing or invalid 'graph_name' field in data object");
+            actix_web::error::ErrorBadRequest("Missing or invalid 'graph_name' field")
+        })?
+        .to_string();
+
+    tracing::info!("Successfully extracted graph_name: {}", graph_name);
+
+    // Validate the extracted data
+    if graph_name.is_empty() {
+        tracing::warn!("Empty graph name provided");
+        return Ok(create_snowflake_error_response("Graph name cannot be empty"));
+    }
+
+    // Delete the graph
+    match delete_graph(&graph_name).await {
+        Ok(result) => {
+            tracing::info!("Successfully deleted graph: {}", graph_name);
+            tracing::debug!("Delete result: {}", result);
+
+            // Convert the result to Snowflake format: { "data": [ [0, result] ] }
+            let snowflake_response = serde_json::json!({
+                "data": [
+                    [0, {"message": format!("Graph '{}' deleted successfully", graph_name), "success": true}]
+                ]
+            });
+
+            tracing::info!(
+                "Converted to Snowflake format: {}",
+                serde_json::to_string_pretty(&snowflake_response).unwrap_or_else(|_| "Failed to serialize".to_string())
+            );
+
+            Ok(HttpResponse::Ok().json(snowflake_response))
+        }
+        Err(e) => {
+            tracing::error!("Failed to delete graph {}: {}", graph_name, e);
+            Ok(create_snowflake_error_response(&format!(
+                "Failed to delete graph '{graph_name}': {e}"
+            )))
         }
     }
 }
@@ -1144,6 +1294,56 @@ async fn get_graphs_list() -> Result<Vec<String>, Box<dyn std::error::Error + Se
     Ok(graphs)
 }
 
+/// Deletes a graph from `FalkorDB`
+///
+/// # Arguments
+///
+/// * `graph_name` - The name of the graph to delete
+///
+/// # Returns
+///
+/// * `Result<String, Box<dyn std::error::Error + Send + Sync>>` - Success message or error
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The connection to `FalkorDB` fails
+/// - The graph deletion operation fails
+/// - The graph does not exist
+async fn delete_graph(graph_name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let connection_info: FalkorConnectionInfo = AppConfig::get()
+        .falkordb_connection
+        .as_str()
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
+
+    let client = FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .build()
+        .await
+        .map_err(|e| format!("Failed to build client: {e}"))?;
+
+    let graph_name_owned = graph_name.to_string();
+
+    // Run the FalkorDB operations in a blocking context
+    tokio::task::spawn_blocking(move || {
+        // Create a new Tokio runtime for this blocking operation
+        let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
+
+        rt.block_on(async {
+            // Select the graph and call delete on it
+            let mut graph = client.select_graph(&graph_name_owned);
+            graph.delete().await.map_err(|e| format!("Failed to delete graph: {e}"))?;
+
+            Ok::<String, Box<dyn std::error::Error + Send + Sync>>(format!(
+                "Graph '{graph_name_owned}' deleted successfully"
+            ))
+        })
+    })
+    .await
+    .map_err(|e| format!("Failed to execute blocking task: {e}"))?
+}
+
 fn execute_query_blocking(
     client: &falkordb::FalkorAsyncClient,
     graph_name: &str,
@@ -1377,6 +1577,8 @@ fn process_last_request_prompt(
         load_csv_endpoint,
         echo_endpoint,
         list_graphs_endpoint,
+        graph_list_endpoint,
+        graph_delete_endpoint,
         get_schema_endpoint,
         configured_model_endpoint,
         graph_query_endpoint,
@@ -1391,6 +1593,8 @@ fn process_last_request_prompt(
         ConfiguredModelResponse,
         ErrorResponse,
         GraphQueryRequest,
+        GraphListRequest,
+        GraphDeleteRequest,
         LoadCsvRequest,
         EchoRequest,
         error::ErrorResponse
@@ -1430,6 +1634,8 @@ async fn main() -> std::io::Result<()> {
             .service(load_csv_endpoint)
             .service(echo_endpoint)
             .service(list_graphs_endpoint)
+            .service(graph_list_endpoint)
+            .service(graph_delete_endpoint)
             .service(get_schema_endpoint)
             .service(configured_model_endpoint)
             .service(graph_query_endpoint)
