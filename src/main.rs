@@ -740,8 +740,8 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
     path = "/load_csv",
     request_body = LoadCsvRequest,
     responses(
-        (status = 200, description = "CSV loaded and query executed successfully", body = String, content_type = "application/json"),
-        (status = 400, description = "Invalid request format or query execution failed", body = ErrorResponse)
+        (status = 200, description = "CSV file loaded and query executed successfully", body = String, content_type = "application/json"),
+        (status = 400, description = "Invalid request format, CSV file not found, or query execution failed", body = ErrorResponse)
     )
 )]
 #[allow(clippy::too_many_lines)]
@@ -756,6 +756,33 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
         "Raw JSON payload: {}",
         serde_json::to_string_pretty(&raw_request).unwrap_or_else(|_| "Failed to serialize".to_string())
     );
+
+    // List all files in IMPORT_FOLDER at the start
+    if let Ok(connection_info) = AppConfig::get().falkordb_connection.as_str().try_into() {
+        if let Ok(client) = FalkorClientBuilder::new_async()
+            .with_connection_info(connection_info)
+            .build()
+            .await
+        {
+            match list_import_folder_files(&client).await {
+                Ok(files) => {
+                    tracing::info!("Files currently in IMPORT_FOLDER: {:?}", files);
+                    if files.is_empty() {
+                        tracing::info!("IMPORT_FOLDER is empty");
+                    } else {
+                        tracing::info!("Total files in IMPORT_FOLDER: {}", files.len());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to list IMPORT_FOLDER files: {}", e);
+                }
+            }
+        } else {
+            tracing::warn!("Failed to create FalkorDB client for listing IMPORT_FOLDER files");
+        }
+    } else {
+        tracing::warn!("Invalid FalkorDB connection string for listing IMPORT_FOLDER files");
+    }
 
     // Validate the Snowflake format: data should be an array with at least one entry
     if raw_request.data.is_empty() {
@@ -788,12 +815,12 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
     );
 
     // Extract the required fields from the data object
-    let csv_data = data_object
-        .get("csv_data")
+    let csv_file = data_object
+        .get("csv_file")
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'csv_data' field in data object");
-            actix_web::error::ErrorBadRequest("Missing or invalid 'csv_data' field")
+            tracing::error!("Missing or invalid 'csv_file' field in data object");
+            actix_web::error::ErrorBadRequest("Missing or invalid 'csv_file' field")
         })?
         .to_string();
 
@@ -816,25 +843,25 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
         .to_string();
 
     tracing::info!(
-        "Successfully extracted: graph_name={}, csv_data_length={}, cypher_query={}",
+        "Successfully extracted: graph_name={}, csv_file={}, cypher_query={}",
         graph_name,
-        csv_data.len(),
+        csv_file,
         cypher_query
     );
-    tracing::debug!("CSV data: {}", csv_data);
+    tracing::debug!("CSV file: {}", csv_file);
 
     tracing::info!(
-        "Successfully extracted: graph_name={}, csv_data_length={}, cypher_query={}",
+        "Successfully extracted: graph_name={}, csv_file={}, cypher_query={}",
         graph_name,
-        csv_data.len(),
+        csv_file,
         cypher_query
     );
-    tracing::debug!("CSV data: {}", csv_data);
+    tracing::debug!("CSV file: {}", csv_file);
 
     // Validate the extracted data
-    if csv_data.is_empty() {
-        tracing::warn!("Empty CSV data provided");
-        return Ok(create_snowflake_error_response("CSV data cannot be empty"));
+    if csv_file.is_empty() {
+        tracing::warn!("Empty CSV file name provided");
+        return Ok(create_snowflake_error_response("CSV file name cannot be empty"));
     }
 
     if cypher_query.is_empty() {
@@ -847,8 +874,8 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
         return Ok(create_snowflake_error_response("Graph name cannot be empty"));
     }
 
-    // Execute the query with uploaded CSV data using the same logic as graph_query_upload
-    match graph_query_with_csv(&cypher_query, &graph_name, &csv_data).await {
+    // Execute the query with the existing CSV file using the new logic
+    match graph_query_with_existing_csv(&cypher_query, &graph_name, &csv_file).await {
         Ok(json_result) => {
             tracing::info!("Successfully executed load_csv for graph: {}", graph_name);
             tracing::debug!("Raw query result: {}", json_result);
@@ -1217,6 +1244,51 @@ async fn graph_query_with_csv(
     Ok(json_result)
 }
 
+async fn graph_query_with_existing_csv(
+    query: &str,
+    graph_name: &str,
+    csv_filename: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    tracing::info!(
+        "graph_query_with_existing_csv called with graph_name: {}, query: {}, csv_filename: {}",
+        graph_name,
+        query,
+        csv_filename
+    );
+
+    let connection_info: FalkorConnectionInfo = AppConfig::get()
+        .falkordb_connection
+        .as_str()
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
+
+    let client = FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .build()
+        .await
+        .map_err(|e| format!("Failed to build client: {e}"))?;
+
+    let graph_name = graph_name.to_string();
+    let query = query.to_string();
+    let csv_filename = csv_filename.to_string();
+
+    // Run the FalkorDB operations in a blocking context
+    let result = tokio::task::spawn_blocking(move || {
+        execute_query_with_existing_csv_blocking(&client, &graph_name, &query, &csv_filename)
+    })
+    .await
+    .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
+
+    let json_result = match result {
+        Ok(records) => format_as_json(&records),
+        Err(e) => {
+            let error_msg = format!("Query execution failed: {e}");
+            return Err(error_msg.into());
+        }
+    };
+    Ok(json_result)
+}
+
 async fn execute_query(
     query: &str,
     graph_name: &str,
@@ -1454,33 +1526,156 @@ fn execute_query_with_csv_import_blocking(
     })
 }
 
+fn execute_query_with_existing_csv_blocking(
+    client: &falkordb::FalkorAsyncClient,
+    graph_name: &str,
+    query: &str,
+    csv_filename: &str,
+) -> Result<Vec<Vec<falkordb::FalkorValue>>, Box<dyn std::error::Error + Send + Sync>> {
+    use std::path::PathBuf;
+
+    // Create a new Tokio runtime for this blocking operation
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
+
+    rt.block_on(async {
+        // Get the IMPORT_FOLDER using graph.config get IMPORT_FOLDER
+        let import_folder = get_import_folder(client).await?;
+        tracing::info!("FalkorDB IMPORT_FOLDER config: {}", import_folder);
+
+        // Create the full file path
+        let file_path = PathBuf::from(&import_folder).join(csv_filename);
+        tracing::info!("Expected CSV file path: {:?}", file_path);
+
+        // Check if the file exists
+        if !file_path.exists() {
+            let error_msg = format!("CSV file '{csv_filename}' not found in IMPORT_FOLDER '{import_folder}'");
+            tracing::error!("{}", error_msg);
+            return Err(error_msg.into());
+        }
+
+        tracing::info!("CSV file found at: {:?}", file_path);
+
+        // Read and log each line of the CSV file
+        match std::fs::read_to_string(&file_path) {
+            Ok(csv_content) => {
+                let lines: Vec<&str> = csv_content.lines().collect();
+                tracing::info!("CSV file '{}' contains {} lines", csv_filename, lines.len());
+
+                for (line_number, line) in lines.iter().enumerate() {
+                    let line_num = line_number + 1; // 1-based line numbering
+                    tracing::info!("CSV line {}: {}", line_num, line);
+                }
+
+                if lines.is_empty() {
+                    tracing::warn!("CSV file '{}' is empty", csv_filename);
+                } else {
+                    tracing::info!(
+                        "Finished logging all {} lines from CSV file '{}'",
+                        lines.len(),
+                        csv_filename
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to read CSV file '{}' for line logging: {}", csv_filename, e);
+                // Continue with execution even if reading for logging fails
+            }
+        }
+
+        // Execute the query (the file is already in the correct location)
+        let mut graph = client.select_graph(graph_name);
+        let query_result = graph
+            .query(query)
+            .execute()
+            .await
+            .map_err(|e| format!("Query execution failed: {e}"))?;
+
+        tracing::info!("Query {query} executed, processing results...");
+
+        let mut records = Vec::new();
+        for record in query_result.data {
+            records.push(record);
+        }
+
+        tracing::info!(
+            "Query executed successfully with existing CSV file, records count: {}",
+            records.len()
+        );
+
+        Ok(records)
+    })
+}
+
 #[allow(clippy::cognitive_complexity)]
 async fn get_import_folder(
     client: &falkordb::FalkorAsyncClient
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    tracing::info!("Attempting to get IMPORT_FOLDER configuration from FalkorDB");
+    // First check if IMPORT_FOLDER environment variable is defined
+    if let Ok(env_import_folder) = std::env::var("IMPORT_FOLDER") {
+        tracing::info!("IMPORT_FOLDER found in environment variable");
+        tracing::info!("Using IMPORT_FOLDER from environment: {}", env_import_folder);
+        return Ok(env_import_folder);
+    }
+
+    // Fall back to existing logic - query FalkorDB configuration
+    tracing::info!("IMPORT_FOLDER not found in environment, attempting to get from FalkorDB configuration");
     let values = client.config_get("IMPORT_FOLDER").await.map_err(|e| {
-        tracing::error!("Failed to get IMPORT_FOLDER config: {}", e);
-        format!("Failed to get IMPORT_FOLDER: {e}")
+        tracing::error!("Failed to get IMPORT_FOLDER config from FalkorDB: {}", e);
+        format!("Failed to get IMPORT_FOLDER from FalkorDB: {e}")
     })?;
 
-    tracing::info!("Received config values: {:?}", values);
+    tracing::info!("Received FalkorDB config values: {:?}", values);
 
     let config_value: ConfigValue = values
         .get("IMPORT_FOLDER")
         .cloned()
-        .ok_or("IMPORT_FOLDER not found in config response")?;
+        .ok_or("IMPORT_FOLDER not found in FalkorDB config response")?;
 
     match config_value {
         ConfigValue::String(s) => {
-            tracing::info!("Successfully retrieved IMPORT_FOLDER: {}", s);
+            tracing::info!(
+                "Successfully retrieved IMPORT_FOLDER from FalkorDB configuration: {}",
+                s
+            );
             Ok(s)
         }
         ConfigValue::Int64(_) => {
-            tracing::error!("IMPORT_FOLDER is not a string");
-            Err("IMPORT_FOLDER is not a string".into())
+            tracing::error!("IMPORT_FOLDER from FalkorDB is not a string");
+            Err("IMPORT_FOLDER from FalkorDB is not a string".into())
         }
     }
+}
+
+async fn list_import_folder_files(
+    client: &falkordb::FalkorAsyncClient
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    use std::fs;
+
+    tracing::info!("Attempting to list files in IMPORT_FOLDER");
+    let import_folder = get_import_folder(client).await?;
+    tracing::info!("IMPORT_FOLDER path: {}", import_folder);
+
+    let entries = fs::read_dir(&import_folder).map_err(|e| {
+        tracing::error!("Failed to read IMPORT_FOLDER directory '{}': {}", import_folder, e);
+        format!("Failed to read IMPORT_FOLDER directory: {e}")
+    })?;
+
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
+        let path = entry.path();
+
+        if path.is_file()
+            && let Some(file_name) = path.file_name().and_then(|name| name.to_str())
+        {
+            files.push(file_name.to_string());
+        }
+    }
+
+    files.sort(); // Sort alphabetically for consistent output
+    tracing::info!("Found {} files in IMPORT_FOLDER: {:?}", files.len(), files);
+
+    Ok(files)
 }
 
 fn generate_create_cypher_query_chat_request(
