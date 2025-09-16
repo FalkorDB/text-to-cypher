@@ -1269,12 +1269,18 @@ async fn graph_query_with_existing_csv(
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
     let graph_name = graph_name.to_string();
-    let query = query.to_string();
     let csv_filename = csv_filename.to_string();
+
+    // Replace filename patterns in the query with the actual CSV filename
+    let re = Regex::new(r"file://.*\.csv").unwrap();
+    let updated_query = re.replace_all(query, format!("file://{csv_filename}")).to_string();
+
+    tracing::info!("Original query: {}", query);
+    tracing::info!("Updated query with actual filename: {}", updated_query);
 
     // Run the FalkorDB operations in a blocking context
     let result = tokio::task::spawn_blocking(move || {
-        execute_query_with_existing_csv_blocking(&client, &graph_name, &query, &csv_filename)
+        execute_query_with_existing_csv_blocking(&client, &graph_name, &updated_query, &csv_filename)
     })
     .await
     .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
