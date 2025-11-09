@@ -1,19 +1,20 @@
+
+![text-to-cypher](https://github.com/user-attachments/assets/43463290-6d24-46e3-ac51-e23b0f535288)
+
 # FalkorDB Text-to-Cypher
 
-FalkorDB Text-to-Cypher is a high-performance Rust-based API service that converts natural language queries into Cypher database queries for graph analytics. Delivered as an all-in-one Docker solution, it bundles the FalkorDB graph database, REST API, interactive web browser, and Model Context Protocol (MCP) server for AI assistant integration.
+FalkorDB Text-to-Cypher is a Rust microservice that transforms natural language queries into Cypher queries for graph database operations. The containerized deployment bundles FalkorDB graph database, REST API, web interface, and Model Context Protocol (MCP) server.
 
 ---
 
-## Features
-
-- **Natural Language to Cypher:** Translate human questions to Cypher queries using AI.
-- **Schema Discovery:** Automatically analyze and visualize graph schema.
-- **RESTful API:** HTTP endpoints with OpenAPI/Swagger docs and SSE streaming.
-- **Integrated FalkorDB:** High-performance graph database with Redis protocol compatibility.
-- **Web Interface:** Visual graph explorer and query builder.
-- **AI Model Integration:** Flexible configuration for GenAI and multi-provider support.
-- **All-in-One Docker:** Deployment for AMD64 and ARM64 in a single container.
-- **Production Ready:** Robust error handling, logging, and multi-platform support.
+## Main Features
+- **Natural language to Cypher translation** using configurable LLM backends
+- Automatic **schema discovery** and graph structure analysis
+- RESTful API with OpenAPI specification and streaming support
+- Multi-provider AI integration (OpenAI, Anthropic, custom endpoints)
+- Browser-based graph visualization via integrated web interface
+- Cross-platform container images for AMD64 and ARM64
+- **MCP server** for AI assistant orchestration
 
 ---
 
@@ -21,7 +22,7 @@ FalkorDB Text-to-Cypher is a high-performance Rust-based API service that conver
 
 | Service                   | Port   | Description                                |
 |---------------------------|--------|--------------------------------------------|
-| FalkorDB Database         | 6379   | Redis protocol, graph database             |
+| FalkorDB Database         | 6379   | Redis protocol, graph database engine             |
 | FalkorDB Web Interface    | 3000   | Browser UI for data visualization          |
 | Text-to-Cypher API        | 8080   | REST API, OpenAPI docs                     |
 | MCP Server                | 3001   | AI assistant protocol for integrations     |
@@ -116,9 +117,14 @@ Integrate with AI assistants using MCP Inspector or direct protocol, and use the
 
 ## Use Cases
 
-- **Enterprise Knowledge Graphs:** Democratize graph data access.
-- **Conversational AI:** Natural language graph exploration via chatbots or assistants.
-- **Graph Analytics:** Build queries without knowing Cypher.
+### Enterprise Knowledge Graphs
+Allow business users to query organizational knowledge graphs without Cypher expertise. Suitable for CRM, ERP or HR systems, large product catalogs, and compliance networks.
+
+### Conversational Graph Analytics
+Integrate with chatbots to provide natural language access to graph data. Query customer relationship networks, supply chains, or social graphs through conversational interfaces.
+
+### Rapid Query Construction
+Generate Cypher queries from requirements written in plain English. Reduces time from concept to executable query.
 
 ---
 
@@ -129,15 +135,14 @@ Integrate with AI assistants using MCP Inspector or direct protocol, and use the
 - MCP Server requires both configuration keys.
 - View logs: `docker logs -f <container-name>`
 - Documentation: [http://localhost:8080/swagger-ui/](http://localhost:8080/swagger-ui/)
-- Issues: [GitHub Issues](https://github.com/FalkorDB/text-to-cypher/issues)
+
+### Issue Reporting
+Submit technical issues with logs and reproduction steps: https://github.com/FalkorDB/text-to-cypher/issues
 
 ---
 
 ## License
 
-MIT License
+This project is licensed under the MIT License. See the LICENSE file for details.
 
 ---
-
-FalkorDB Text-to-Cypher  
-Unlock intuitive graph analytics and natural language access to your data!
