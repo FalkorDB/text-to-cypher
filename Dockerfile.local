@@ -24,8 +24,12 @@ FROM falkordb/falkordb:latest
 RUN apt-get update && apt-get install -y ca-certificates supervisor && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user for security (if not already exists)
-RUN groupadd -g 1000 appuser 2>/dev/null || true && \
-    useradd -m -s /bin/bash -u 1000 -g appuser appuser 2>/dev/null || true
+RUN if ! getent group appuser >/dev/null; then \
+        groupadd -g 1000 appuser; \
+    fi && \
+    if ! getent passwd appuser >/dev/null; then \
+        useradd -m -s /bin/bash -u 1000 -g appuser appuser; \
+    fi
 
 # Set the working directory for our application
 WORKDIR /app
@@ -37,16 +41,13 @@ COPY --from=builder /app/target/release/text-to-cypher /app/text-to-cypher
 COPY --from=builder /app/templates ./templates
 
 # Create import directory and set permissions
-RUN mkdir -p /var/lib/FalkorDB/import && \
+# Note: Using /var/lib/falkordb as the primary data directory path
+RUN mkdir -p /var/lib/falkordb/import && \
     mkdir -p /tmp/falkordb-import && \
-    chown -R appuser:appuser /var/lib/FalkorDB/import && \
-    chmod -R 755 /var/lib/FalkorDB/import && \
-    chown -R appuser:appuser /tmp/falkordb-import && \
-    chmod -R 755 /tmp/falkordb-import && \
     chown -R appuser:appuser /var/lib/falkordb && \
+    chown -R appuser:appuser /tmp/falkordb-import && \
     chmod -R 755 /var/lib/falkordb && \
-    chown -R appuser:appuser /var/lib/FalkorDB && \
-    chmod -R 755 /var/lib/FalkorDB
+    chmod -R 755 /tmp/falkordb-import
 
 # Change ownership to the non-root user
 RUN chown -R appuser:appuser /app

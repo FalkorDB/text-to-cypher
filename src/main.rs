@@ -311,6 +311,42 @@ fn process_clear_schema_cache(graph_name: &str) {
     cache.invalidate(graph_name);
 }
 
+/// Helper function to setup GenAI client with proper authentication
+fn setup_genai_client(request: &mut TextToCypherRequest) -> Result<(genai::Client, String), String> {
+    let config = AppConfig::get();
+
+    // Apply defaults from .env file if values are not provided
+    if request.model.is_none() {
+        request.model.clone_from(&config.default_model);
+    }
+
+    if request.key.is_none() {
+        request.key.clone_from(&config.default_key);
+    }
+
+    // Ensure we have a model after applying defaults
+    let model = request.model.as_ref()
+        .ok_or_else(|| "Model must be provided either in request or as DEFAULT_MODEL in .env file".to_string())?
+        .clone();
+
+    let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
+        let key = key.clone();
+        let auth_resolver = AuthResolver::from_resolver_fn(
+            move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
+                let ModelIden {
+                    adapter_kind,
+                    model_name,
+                } = model_iden;
+                tracing::info!("Using custom auth provider for {adapter_kind} (model: {model_name})");
+                Ok(Some(AuthData::from_single(key.clone())))
+            },
+        );
+        genai::Client::builder().with_auth_resolver(auth_resolver).build()
+    });
+
+    Ok((client, model))
+}
+
 #[utoipa::path(
     get,
     path = "/get_schema/{graph_name}",
@@ -957,56 +993,27 @@ async fn echo_endpoint(req: actix_web::web::Json<serde_json::Value>) -> Result<i
 #[post("/text_to_cypher")]
 async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Result<impl Responder, actix_web::Error> {
     let mut request = req.into_inner();
-    let config = AppConfig::get();
-
-    // Apply defaults from .env file if values are not provided
-    if request.model.is_none() {
-        request.model.clone_from(&config.default_model);
-    }
-
-    if request.key.is_none() {
-        request.key.clone_from(&config.default_key);
-    }
-
     let (tx, rx) = mpsc::channel(100);
 
-    // Ensure we have a model after applying defaults
-    if request.model.is_none() {
-        // Send error via SSE instead of returning HTTP error
-        tokio::spawn(async move {
-            let error_event = sse::Event::Data(sse::Data::new(
-                serde_json::to_string(&Progress::Error(
-                    "Model must be provided either in request or as DEFAULT_MODEL in .env file".to_string(),
-                ))
-                .unwrap_or_else(|_| r#"{"Error":"Serialization failed"}"#.to_string()),
-            ));
-            let _ = tx.send(error_event).await;
-        });
-        let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok::<_, actix_web::Error>);
-        return Ok(Sse::from_stream(stream));
-    }
-
-    let model = request.model.as_ref().unwrap(); // Safe to unwrap after the check above
-
-    let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
-        let key = key.clone(); // Clone the key for use in the closure
-        let auth_resolver = AuthResolver::from_resolver_fn(
-            move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
-                let ModelIden {
-                    adapter_kind,
-                    model_name,
-                } = model_iden;
-                tracing::info!("Using custom auth provider for {adapter_kind} (model: {model_name})");
-
-                // Use the provided key instead of reading from environment
-                Ok(Some(AuthData::from_single(key.clone())))
-            },
-        );
-        genai::Client::builder().with_auth_resolver(auth_resolver).build()
-    });
+    // Setup client and model using helper function
+    let (client, model) = match setup_genai_client(&mut request) {
+        Ok((client, model)) => (client, model),
+        Err(e) => {
+            // Send error via SSE instead of returning HTTP error
+            tokio::spawn(async move {
+                let error_event = sse::Event::Data(sse::Data::new(
+                    serde_json::to_string(&Progress::Error(e))
+                        .unwrap_or_else(|_| r#"{"Error":"Serialization failed"}"#.to_string()),
+                ));
+                let _ = tx.send(error_event).await;
+            });
+            let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok::<_, actix_web::Error>);
+            return Ok(Sse::from_stream(stream));
+        }
+    };
 
     // Handle service target resolution errors via SSE
-    let service_target = match client.resolve_service_target(model).await {
+    let service_target = match client.resolve_service_target(&model).await {
         Ok(target) => target,
         Err(e) => {
             // Send error via SSE instead of returning HTTP error
@@ -1043,55 +1050,27 @@ async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resul
 #[post("/generate_cypher")]
 async fn generate_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Result<impl Responder, actix_web::Error> {
     let mut request = req.into_inner();
-    let config = AppConfig::get();
 
-    // Apply defaults from .env file if values are not provided
-    if request.model.is_none() {
-        request.model.clone_from(&config.default_model);
-    }
-
-    if request.key.is_none() {
-        request.key.clone_from(&config.default_key);
-    }
-
-    // Ensure we have a model after applying defaults
-    if request.model.is_none() {
-        return Ok(HttpResponse::BadRequest().json(ErrorResponse { 
-            error: "Model must be provided either in request or as DEFAULT_MODEL in .env file".to_string() 
-        }));
-    }
-
-    let model = request.model.as_ref().unwrap(); // Safe to unwrap after the check above
-
-    let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
-        let key = key.clone(); // Clone the key for use in the closure
-        let auth_resolver = AuthResolver::from_resolver_fn(
-            move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
-                let ModelIden {
-                    adapter_kind,
-                    model_name,
-                } = model_iden;
-                tracing::info!("Using custom auth provider for {adapter_kind} (model: {model_name})");
-
-                // Use the provided key instead of reading from environment
-                Ok(Some(AuthData::from_single(key.clone())))
-            },
-        );
-        genai::Client::builder().with_auth_resolver(auth_resolver).build()
-    });
+    // Setup client and model using helper function
+    let (client, model) = match setup_genai_client(&mut request) {
+        Ok((client, model)) => (client, model),
+        Err(e) => {
+            return Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e }));
+        }
+    };
 
     // Handle service target resolution errors
-    let service_target = match client.resolve_service_target(model).await {
+    let _service_target = match client.resolve_service_target(&model).await {
         Ok(target) => target,
         Err(e) => {
-            return Ok(HttpResponse::BadRequest().json(ErrorResponse { 
-                error: format!("Failed to resolve service target: {e}") 
+            return Ok(HttpResponse::BadRequest().json(ErrorResponse {
+                error: format!("Failed to resolve service target: {e}")
             }));
         }
     };
 
     // Generate Cypher query without executing it or streaming the response
-    match generate_cypher_only(&request, &client, &service_target, model).await {
+    match generate_cypher_only(&request, &client, &model).await {
         Ok(cypher) => Ok(HttpResponse::Ok().json(CypherResponse { query: cypher })),
         Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e }))
     }
@@ -1157,6 +1136,33 @@ async fn get_or_discover_schema(
     Some(schema.clone())
 }
 
+/// Core function to generate Cypher query from schema without progress tracking
+async fn generate_cypher_from_schema(
+    request: &TextToCypherRequest,
+    schema: &str,
+    client: &genai::Client,
+    model: &str,
+) -> Result<String, String> {
+    let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, schema);
+
+    let chat_response = match client.exec_chat(model, genai_chat_request, None).await {
+        Ok(response) => response,
+        Err(e) => return Err(format!("Chat request failed: {}", e)),
+    };
+
+    let query = chat_response
+        .content_text_into_string()
+        .unwrap_or_else(|| String::from(""));
+
+    if query.trim().is_empty() || query.trim() == "NO ANSWER" {
+        tracing::warn!("No query generated from AI model");
+        return Err("No valid query was generated".to_string());
+    }
+
+    let clean_query = query.replace('\n', " ").replace("```", "").trim().to_string();
+    Ok(clean_query)
+}
+
 #[allow(clippy::cognitive_complexity)]
 async fn generate_cypher_query(
     request: &TextToCypherRequest,
@@ -1170,18 +1176,17 @@ async fn generate_cypher_query(
         Progress::Status(String::from("Generating Cypher query using schema ..."))
     );
 
-    let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, schema);
-    let query = execute_chat(client, model, genai_chat_request, tx).await;
-
-    if query.trim().is_empty() || query.trim() == "NO ANSWER" {
-        tracing::warn!("No query generated from AI model");
-        send_option!(tx, Progress::Error("No valid query was generated".to_string()));
-        return None;
+    match generate_cypher_from_schema(request, schema, client, model).await {
+        Ok(clean_query) => {
+            send_option!(tx, Progress::CypherQuery(clean_query.clone()));
+            Some(clean_query)
+        }
+        Err(e) => {
+            tracing::warn!("Query generation failed: {}", e);
+            send_option!(tx, Progress::Error(e));
+            None
+        }
     }
-
-    let clean_query = query.replace('\n', " ").replace("```", "").trim().to_string();
-    send_option!(tx, Progress::CypherQuery(clean_query.clone()));
-    Some(clean_query)
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -1230,7 +1235,6 @@ async fn generate_final_answer(
 async fn generate_cypher_only(
     request: &TextToCypherRequest,
     client: &genai::Client,
-    _service_target: &genai::ServiceTarget,
     model: &str,
 ) -> Result<String, String> {
     tracing::info!("Processing generate_cypher request: {request:?}");
@@ -1246,26 +1250,9 @@ async fn generate_cypher_only(
         Err(e) => return Err(format!("Failed to discover schema: {}", e)),
     };
 
-    // Generate Cypher query
+    // Generate Cypher query using shared helper
     tracing::info!("Generating Cypher query using schema ...");
-    let genai_chat_request = generate_create_cypher_query_chat_request(&request.chat_request, &schema);
-    
-    // Make the actual request to the model
-    let chat_response = match client.exec_chat(model, genai_chat_request, None).await {
-        Ok(response) => response,
-        Err(e) => return Err(format!("Chat request failed: {}", e)),
-    };
-
-    let query = chat_response
-        .content_text_into_string()
-        .unwrap_or_else(|| String::from(""));
-
-    if query.trim().is_empty() || query.trim() == "NO ANSWER" {
-        tracing::warn!("No query generated from AI model");
-        return Err("No valid query was generated".into());
-    }
-
-    let clean_query = query.replace('\n', " ").replace("```", "").trim().to_string();
+    let clean_query = generate_cypher_from_schema(request, &schema, client, model).await?;
     tracing::info!("Generated Cypher query: {}", clean_query);
 
     Ok(clean_query)
