@@ -1,0 +1,66 @@
+# Build stage - Build from source to include code changes
+FROM rust:alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache musl-dev openssl-dev pkgconfig curl
+
+# Set working directory
+WORKDIR /app
+
+# Copy Cargo files
+COPY Cargo.toml Cargo.lock ./
+
+# Copy source code
+COPY src ./src
+COPY templates ./templates
+
+# Build the application in release mode
+RUN cargo build --release
+
+# Runtime stage - Use FalkorDB as base image
+FROM falkordb/falkordb:latest
+
+# Install runtime dependencies and supervisord
+RUN apt-get update && apt-get install -y ca-certificates supervisor && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for security (if not already exists)
+RUN groupadd -g 1000 appuser 2>/dev/null || true && \
+    useradd -m -s /bin/bash -u 1000 -g appuser appuser 2>/dev/null || true
+
+# Set the working directory for our application
+WORKDIR /app
+
+# Copy the compiled binary from the builder stage
+COPY --from=builder /app/target/release/text-to-cypher /app/text-to-cypher
+
+# Copy the templates from the builder stage
+COPY --from=builder /app/templates ./templates
+
+# Create import directory and set permissions
+RUN mkdir -p /var/lib/FalkorDB/import && \
+    mkdir -p /tmp/falkordb-import && \
+    chown -R appuser:appuser /var/lib/FalkorDB/import && \
+    chmod -R 755 /var/lib/FalkorDB/import && \
+    chown -R appuser:appuser /tmp/falkordb-import && \
+    chmod -R 755 /tmp/falkordb-import && \
+    chown -R appuser:appuser /var/lib/falkordb && \
+    chmod -R 755 /var/lib/falkordb && \
+    chown -R appuser:appuser /var/lib/FalkorDB && \
+    chmod -R 755 /var/lib/FalkorDB
+
+# Change ownership to the non-root user
+RUN chown -R appuser:appuser /app
+
+# Expose the ports your application runs on (in addition to FalkorDB's ports)
+EXPOSE 8080 3001
+
+# Copy supervisord configuration and scripts
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY entrypoint.sh /entrypoint.sh
+
+# Create supervisor log directory and make scripts executable
+RUN mkdir -p /var/log/supervisor && \
+    chmod +x /entrypoint.sh
+
+# Use ENTRYPOINT instead of CMD to ensure it runs
+ENTRYPOINT ["/entrypoint.sh"]
