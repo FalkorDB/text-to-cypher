@@ -50,6 +50,12 @@ docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -v $(pwd)/.env:/app/.env:ro \
   falkordb/text-to-cypher:latest
+
+# Custom ports using environment variables
+docker run -p 6379:6379 -p 3000:3000 -p 9090:9090 -p 4001:4001 \
+  -e REST_PORT=9090 -e MCP_PORT=4001 \
+  -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
+  falkordb/text-to-cypher:latest
 ```
 
 ### Available Services
@@ -94,8 +100,20 @@ The API includes comprehensive Swagger UI documentation available at `/swagger-u
 
 The application supports flexible configuration via environment variables or `.env` file:
 
+### Core Settings
+
 - `DEFAULT_MODEL`: Default AI model to use (e.g., "openai:gpt-4")
 - `DEFAULT_KEY`: Default API key for the AI service
+
+### Port Configuration
+
+- `REST_PORT`: REST API server port (default: 8080)
+- `MCP_PORT`: MCP server port for AI assistant integrations (default: 3001)
+  - The MCP server provides an SSE endpoint at `/sse` on this port
+
+### Optional Settings
+
+- `FALKORDB_CONNECTION`: FalkorDB connection string (default: "falkor://127.0.0.1:6379")
 
 Create a `.env` file from the provided example:
 

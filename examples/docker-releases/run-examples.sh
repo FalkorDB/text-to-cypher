@@ -13,11 +13,15 @@ NC='\033[0m' # No Color
 VERSION=${1:-v2025.07.23-d1092dc}
 API_KEY=${2:-"demo-key-change-me"}
 MODEL=${3:-"gpt-4o-mini"}
+REST_PORT=${REST_PORT:-8080}
+MCP_PORT=${MCP_PORT:-3001}
 
 echo -e "${YELLOW}Running text-to-cypher Docker examples${NC}"
 echo -e "${BLUE}Version: $VERSION${NC}"
 echo -e "${BLUE}Model: $MODEL${NC}"
 echo -e "${BLUE}API Key: ${API_KEY:0:10}...${NC}"
+echo -e "${BLUE}REST API Port: $REST_PORT${NC}"
+echo -e "${BLUE}MCP Server Port: $MCP_PORT${NC}"
 
 # Function to wait for service
 wait_for_service() {
@@ -45,21 +49,21 @@ wait_for_service() {
 echo -e "\n${GREEN}=== Example 1: Simple Container ===${NC}"
 docker run -d \
   --name text-to-cypher-simple \
-  -p 8080:8080 \
-  -p 3001:3001 \
+  -p $REST_PORT:8080 \
+  -p $MCP_PORT:3001 \
   -e DEFAULT_MODEL="$MODEL" \
   -e DEFAULT_KEY="$API_KEY" \
   text-to-cypher:simple-$VERSION
 
 # Wait for service and test
-if wait_for_service "http://localhost:8080/swagger-ui/" "text-to-cypher-simple"; then
+if wait_for_service "http://localhost:$REST_PORT/swagger-ui/" "text-to-cypher-simple"; then
     echo -e "${GREEN}✅ Simple container is running${NC}"
-    echo -e "${BLUE}API Documentation: http://localhost:8080/swagger-ui/${NC}"
-    echo -e "${BLUE}Health check: curl http://localhost:8080/swagger-ui/${NC}"
+    echo -e "${BLUE}API Documentation: http://localhost:$REST_PORT/swagger-ui/${NC}"
+    echo -e "${BLUE}Health check: curl http://localhost:$REST_PORT/swagger-ui/${NC}"
     
     # Test basic functionality
     echo -e "${YELLOW}Testing API endpoint...${NC}"
-    if curl -s "http://localhost:8080/swagger-ui/" | grep -q "Swagger"; then
+    if curl -s "http://localhost:$REST_PORT/swagger-ui/" | grep -q "Swagger"; then
         echo -e "${GREEN}✅ Swagger UI is accessible${NC}"
     else
         echo -e "${RED}❌ Swagger UI test failed${NC}"
@@ -74,20 +78,22 @@ docker stop text-to-cypher-simple && docker rm text-to-cypher-simple
 
 # Example 2: Production container
 echo -e "\n${GREEN}=== Example 2: Production Container ===${NC}"
+PROD_REST_PORT=$((REST_PORT + 1))
+PROD_MCP_PORT=$((MCP_PORT + 1))
 docker run -d \
   --name text-to-cypher-prod \
-  -p 8081:8080 \
-  -p 3002:3001 \
+  -p $PROD_REST_PORT:8080 \
+  -p $PROD_MCP_PORT:3001 \
   -e DEFAULT_MODEL="$MODEL" \
   -e DEFAULT_KEY="$API_KEY" \
   -e RUST_LOG=info \
   text-to-cypher:production-$VERSION
 
 # Wait for service and test
-if wait_for_service "http://localhost:8081/swagger-ui/" "text-to-cypher-prod"; then
+if wait_for_service "http://localhost:$PROD_REST_PORT/swagger-ui/" "text-to-cypher-prod"; then
     echo -e "${GREEN}✅ Production container is running${NC}"
-    echo -e "${BLUE}API Documentation: http://localhost:8081/swagger-ui/${NC}"
-    echo -e "${BLUE}MCP Server: localhost:3002${NC}"
+    echo -e "${BLUE}API Documentation: http://localhost:$PROD_REST_PORT/swagger-ui/${NC}"
+    echo -e "${BLUE}MCP Server: localhost:$PROD_MCP_PORT${NC}"
     
     # Show container info
     echo -e "${YELLOW}Container information:${NC}"
@@ -105,15 +111,17 @@ echo -e "\n${GREEN}=== Example 3: Docker Compose Stack ===${NC}"
 cat > .env << EOF
 OPENAI_API_KEY=$API_KEY
 DEFAULT_MODEL=$MODEL
+REST_PORT=$REST_PORT
+MCP_PORT=$MCP_PORT
 EOF
 
 echo -e "${YELLOW}Starting Docker Compose stack...${NC}"
 docker-compose up -d
 
 # Wait for the compose service
-if wait_for_service "http://localhost:8080/swagger-ui/" "docker-compose text-to-cypher"; then
+if wait_for_service "http://localhost:$REST_PORT/swagger-ui/" "docker-compose text-to-cypher"; then
     echo -e "${GREEN}✅ Docker Compose stack is running${NC}"
-    echo -e "${BLUE}Text-to-Cypher API: http://localhost:8080/swagger-ui/${NC}"
+    echo -e "${BLUE}Text-to-Cypher API: http://localhost:$REST_PORT/swagger-ui/${NC}"
     echo -e "${BLUE}FalkorDB: localhost:6379${NC}"
     
     # Show all running containers
@@ -130,5 +138,5 @@ echo "docker-compose down"
 echo "docker rmi \$(docker images -q text-to-cypher)"
 
 echo -e "\n${YELLOW}To test the API:${NC}"
-echo "curl http://localhost:8080/swagger-ui/"
-echo "curl http://localhost:8081/swagger-ui/"
+echo "curl http://localhost:$REST_PORT/swagger-ui/"
+echo "curl http://localhost:$PROD_REST_PORT/swagger-ui/"
