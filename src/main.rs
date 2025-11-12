@@ -10,8 +10,10 @@ use falkordb::FalkorClientBuilder;
 use falkordb::FalkorConnectionInfo;
 use futures_util::StreamExt;
 use genai::ModelIden;
+use genai::adapter::AdapterKind;
 use genai::resolver::AuthData;
 use genai::resolver::AuthResolver;
+use genai::resolver::ModelMapper;
 use moka::sync::Cache;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -311,7 +313,7 @@ fn process_clear_schema_cache(graph_name: &str) {
     cache.invalidate(graph_name);
 }
 
-/// Helper function to setup GenAI client with proper authentication
+/// Helper function to setup GenAI client with proper authentication and model mapping
 fn setup_genai_client(request: &mut TextToCypherRequest) -> Result<(genai::Client, String), String> {
     let config = AppConfig::get();
 
@@ -325,11 +327,30 @@ fn setup_genai_client(request: &mut TextToCypherRequest) -> Result<(genai::Clien
     }
 
     // Ensure we have a model after applying defaults
-    let model = request.model.as_ref()
+    let model = request
+        .model
+        .as_ref()
         .ok_or_else(|| "Model must be provided either in request or as DEFAULT_MODEL in .env file".to_string())?
         .clone();
 
-    let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
+    // Create ModelMapper to route Kimi K2 models to Groq adapter
+    let model_mapper =
+        ModelMapper::from_mapper_fn(|model_iden: ModelIden| -> Result<ModelIden, genai::resolver::Error> {
+            // Route Kimi K2 models (via Groq) to Groq adapter
+            if model_iden.model_name.starts_with("moonshotai/kimi-k2") {
+                tracing::info!("Mapping model '{}' to Groq adapter", model_iden.model_name);
+                Ok(ModelIden::new(
+                    AdapterKind::Groq,
+                    model_iden.model_name, // Keep the same model string for Groq API
+                ))
+            } else {
+                // Pass through other models unchanged
+                Ok(model_iden)
+            }
+        });
+
+    // Build client with ModelMapper and optional AuthResolver
+    let client = if let Some(key) = request.key.as_ref() {
         let key = key.clone();
         let auth_resolver = AuthResolver::from_resolver_fn(
             move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
@@ -341,8 +362,13 @@ fn setup_genai_client(request: &mut TextToCypherRequest) -> Result<(genai::Clien
                 Ok(Some(AuthData::from_single(key.clone())))
             },
         );
-        genai::Client::builder().with_auth_resolver(auth_resolver).build()
-    });
+        genai::Client::builder()
+            .with_model_mapper(model_mapper)
+            .with_auth_resolver(auth_resolver)
+            .build()
+    } else {
+        genai::Client::builder().with_model_mapper(model_mapper).build()
+    };
 
     Ok((client, model))
 }
@@ -1064,7 +1090,7 @@ async fn generate_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resu
         Ok(target) => target,
         Err(e) => {
             return Ok(HttpResponse::BadRequest().json(ErrorResponse {
-                error: format!("Failed to resolve service target: {e}")
+                error: format!("Failed to resolve service target: {e}"),
             }));
         }
     };
@@ -1072,7 +1098,7 @@ async fn generate_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resu
     // Generate Cypher query without executing it or streaming the response
     match generate_cypher_only(&request, &client, &model).await {
         Ok(cypher) => Ok(HttpResponse::Ok().json(CypherResponse { query: cypher })),
-        Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e }))
+        Err(e) => Ok(HttpResponse::BadRequest().json(ErrorResponse { error: e })),
     }
 }
 
@@ -1150,9 +1176,7 @@ async fn generate_cypher_from_schema(
         Err(e) => return Err(format!("Chat request failed: {}", e)),
     };
 
-    let query = chat_response
-        .content_text_into_string()
-        .unwrap_or_else(|| String::from(""));
+    let query = chat_response.content_text_into_string().unwrap_or_else(|| String::from(""));
 
     if query.trim().is_empty() || query.trim() == "NO ANSWER" {
         tracing::warn!("No query generated from AI model");
