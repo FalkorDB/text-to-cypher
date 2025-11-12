@@ -1076,7 +1076,7 @@ async fn process_text_to_cypher_request(
     };
 
     // Step 4: Execute the query and get results
-    let Ok(query_result) = execute_cypher_query(&query, &request.graph_name, &tx).await else {
+    let Ok(query_result) = execute_cypher_query(&query, &request.graph_name, &falkordb_connection, &tx).await else {
         return;
     };
 
@@ -1133,12 +1133,13 @@ async fn generate_cypher_query(
 async fn execute_cypher_query(
     query: &str,
     graph_name: &str,
+    falkordb_connection: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, ()> {
     send_result!(tx, Progress::Status(String::from("Executing Cypher query...")));
     tracing::info!("Executing Cypher Query: {}", query);
 
-    match execute_query(query, graph_name, true, tx).await {
+    match execute_query(query, graph_name, falkordb_connection, true, tx).await {
         Ok(result) => {
             tracing::info!("Query executed successfully, result: {}", result);
             send_result!(tx, Progress::CypherResult(result.clone()));
@@ -1314,12 +1315,11 @@ async fn graph_query_with_existing_csv(
 async fn execute_query(
     query: &str,
     graph_name: &str,
+    falkordb_connection: &str,
     read_only: bool,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let connection_info: FalkorConnectionInfo = AppConfig::get()
-        .falkordb_connection
-        .as_str()
+    let connection_info: FalkorConnectionInfo = falkordb_connection
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
