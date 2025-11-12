@@ -1070,7 +1070,8 @@ async fn process_text_to_cypher_request(
     };
 
     // Step 4: Execute the query and get results
-    let Ok(query_result) = execute_cypher_query(&query, &request.graph_name, &falkordb_connection, &tx).await else {
+    let Ok(query_result) = execute_cypher_query(&query, &request.graph_name, falkordb_connection.as_str(), &tx).await
+    else {
         return;
     };
 

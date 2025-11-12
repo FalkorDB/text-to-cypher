@@ -53,4 +53,4 @@ chat:
   auto_reply: true
 
 # Tone of reviews
-tone_instructions: "Be concise, professional, and constructive. Focus on Rust-specific concerns like ownership, borrowing, lifetimes, and error handling. Suggest PR titles using conventional commit format (feat:, fix:, docs:, refactor:, test:, chore:, perf:)."
+tone_instructions: "Be concise and constructive. Focus on Rust concerns like ownership, borrowing, lifetimes, and error handling. Suggest PR titles using conventional commits (feat:, fix:, docs:, refactor:, test:, chore:, perf:)."
