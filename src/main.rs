@@ -158,6 +158,8 @@ struct AppConfig {
     default_model: Option<String>,
     default_key: Option<String>,
     schema_cache: Cache<String, String>,
+    rest_port: u16,
+    mcp_port: u16,
 }
 
 static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
@@ -171,11 +173,23 @@ impl AppConfig {
         let default_model = std::env::var("DEFAULT_MODEL").ok();
         let default_key = std::env::var("DEFAULT_KEY").ok();
         let schema_cache = Cache::new(100);
+        
+        let rest_port = std::env::var("REST_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8080);
+        
+        let mcp_port = std::env::var("MCP_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(3001);
 
         tracing::info!(
-            "Loaded configuration - env_file_loaded: {}, default_model: {:?}",
+            "Loaded configuration - env_file_loaded: {}, default_model: {:?}, rest_port: {}, mcp_port: {}",
             env_loaded,
-            default_model
+            default_model,
+            rest_port,
+            mcp_port
         );
 
         Self {
@@ -183,6 +197,8 @@ impl AppConfig {
             default_model,
             default_key,
             schema_cache,
+            rest_port,
+            mcp_port,
         }
     }
 
@@ -1809,13 +1825,15 @@ async fn main() -> std::io::Result<()> {
 
     // Initialize configuration from .env file
     let config = AppConfig::get();
+    let rest_port = config.rest_port;
+    let mcp_port = config.mcp_port;
 
-    tracing::info!("Starting server at http://localhost:8080/swagger-ui/");
+    tracing::info!("Starting server with REST API on port {} and MCP on port {}", rest_port, mcp_port);
 
     // Conditionally start MCP server based on configuration
     let mcp_handle = if config.should_start_mcp_server() {
-        Some(tokio::spawn(async {
-            if let Err(e) = run_mcp_server().await {
+        Some(tokio::spawn(async move {
+            if let Err(e) = run_mcp_server(mcp_port).await {
                 tracing::error!("MCP server error: {}", e);
             }
         }))
@@ -1826,7 +1844,9 @@ async fn main() -> std::io::Result<()> {
     // Start the HTTP server with Swagger UI at /swagger-ui/
     // OpenAPI documentation will be available at /api-doc/openapi.json
     // Swagger UI will be accessible at:
-    // http://localhost:8080/swagger-ui/
+    // http://localhost:{rest_port}/swagger-ui/
+    
+    tracing::info!("Starting HTTP server on 0.0.0.0:{}", rest_port);
 
     let http_server = HttpServer::new(|| {
         App::new()
@@ -1843,7 +1863,7 @@ async fn main() -> std::io::Result<()> {
             .service(graph_query_upload_endpoint)
             .service(SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-doc/openapi.json", ApiDoc::openapi()))
     })
-    .bind(("0.0.0.0", 8080))?
+    .bind(("0.0.0.0", rest_port))?
     .run();
 
     // Run server(s) concurrently

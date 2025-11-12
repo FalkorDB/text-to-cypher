@@ -15,7 +15,7 @@ use rust_mcp_sdk::error::SdkResult;
 /// # Errors
 ///
 /// Returns an error if the server fails to start or encounters a runtime error.
-pub async fn run_mcp_server() -> SdkResult<()> {
+pub async fn run_mcp_server(port: u16) -> SdkResult<()> {
     // Note: Tracing is already initialized in main, no need to initialize it again
 
     // STEP 1: Define server details and capabilities
@@ -65,12 +65,14 @@ Example: First check resources, then ask 'Who are all the people?' for a social 
     let handler = MyServerHandler {};
 
     // STEP 3: instantiate HyperServer, providing `server_details` , `handler` and HyperServerOptions
+    tracing::info!("Starting MCP server on 0.0.0.0:{}", port);
+    
     let server = hyper_server::create_server(
         server_details,
         handler,
         HyperServerOptions {
             host: "0.0.0.0".to_string(),
-            port: 3001,
+            port,
             ping_interval: Duration::from_secs(5),
             ..Default::default()
         },

@@ -9,8 +9,8 @@ services:
         TEXT_TO_CYPHER_VERSION: v0.1.0-alpha.1
     container_name: text-to-cypher
     ports:
-      - "8080:8080"  # HTTP API
-      - "3001:3001"  # MCP Server
+      - "${REST_PORT:-8080}:8080"  # HTTP API
+      - "${MCP_PORT:-3001}:3001"  # MCP Server
     environment:
       # Configure your AI service here
       - DEFAULT_MODEL=gpt-4o-mini
@@ -72,3 +72,5 @@ networks:
 # Example .env file content:
 # OPENAI_API_KEY=your-openai-api-key-here
 # DEFAULT_MODEL=gpt-4o-mini
+# REST_PORT=8080
+# MCP_PORT=3001
