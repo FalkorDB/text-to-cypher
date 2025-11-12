@@ -173,16 +173,10 @@ impl AppConfig {
         let default_model = std::env::var("DEFAULT_MODEL").ok();
         let default_key = std::env::var("DEFAULT_KEY").ok();
         let schema_cache = Cache::new(100);
-        
-        let rest_port = std::env::var("REST_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(8080);
-        
-        let mcp_port = std::env::var("MCP_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(3001);
+
+        let rest_port = std::env::var("REST_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
+
+        let mcp_port = std::env::var("MCP_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3001);
 
         tracing::info!(
             "Loaded configuration - env_file_loaded: {}, default_model: {:?}, rest_port: {}, mcp_port: {}",
@@ -1828,7 +1822,11 @@ async fn main() -> std::io::Result<()> {
     let rest_port = config.rest_port;
     let mcp_port = config.mcp_port;
 
-    tracing::info!("Starting server with REST API on port {} and MCP on port {}", rest_port, mcp_port);
+    tracing::info!(
+        "Starting server with REST API on port {} and MCP on port {}",
+        rest_port,
+        mcp_port
+    );
 
     // Conditionally start MCP server based on configuration
     let mcp_handle = if config.should_start_mcp_server() {
@@ -1845,7 +1843,7 @@ async fn main() -> std::io::Result<()> {
     // OpenAPI documentation will be available at /api-doc/openapi.json
     // Swagger UI will be accessible at:
     // http://localhost:{rest_port}/swagger-ui/
-    
+
     tracing::info!("Starting HTTP server on 0.0.0.0:{}", rest_port);
 
     let http_server = HttpServer::new(|| {

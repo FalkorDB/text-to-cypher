@@ -66,7 +66,7 @@ Example: First check resources, then ask 'Who are all the people?' for a social 
 
     // STEP 3: instantiate HyperServer, providing `server_details` , `handler` and HyperServerOptions
     tracing::info!("Starting MCP server on 0.0.0.0:{}", port);
-    
+
     let server = hyper_server::create_server(
         server_details,
         handler,
