@@ -1,0 +1,56 @@
+# CodeRabbit AI Configuration
+# Documentation: https://docs.coderabbit.ai/guides/configure-coderabbit/
+
+# Language settings
+language: en-US
+
+# Early access features
+early_access: false
+
+# Enable reviews for all PRs regardless of target branch
+reviews:
+  # Request changes workflow - CodeRabbit can request changes on PRs
+  request_changes_workflow: false
+  
+  # High level summary
+  high_level_summary: true
+  
+  # Poem style summary (optional, can be disabled)
+  poem: true
+  
+  # Review status - enable reviews
+  review_status: true
+  
+  # Collapse walkthrough on PR
+  collapse_walkthrough: false
+  
+  # Auto-review settings
+  auto_review:
+    enabled: true
+    # Review all PRs regardless of base branch (use regex pattern)
+    base_branches:
+      - ".*"  # This regex matches any branch name
+    drafts: false  # Set to true if you want to review draft PRs too
+  
+  # Path-based instructions for more context-aware reviews
+  path_instructions:
+    - path: "**/*.rs"
+      instructions: "Review Rust code for memory safety, proper error handling, idiomatic Rust patterns, and adherence to Rust API guidelines. Check for unnecessary allocations, clone() usage, and unsafe code blocks."
+    - path: "**/Cargo.toml"
+      instructions: "Review dependency versions, feature flags, and ensure proper semantic versioning."
+    - path: "src/main.rs"
+      instructions: "Review application entry point for proper initialization, configuration loading, and graceful shutdown handling."
+    - path: "src/**/*.rs"
+      instructions: "Review for proper module organization, visibility modifiers, and documentation comments. Ensure async/await usage is correct and efficient."
+    - path: "tests/**/*.rs"
+      instructions: "Review test code for proper assertions, edge case coverage, and maintainability. Ensure tests are deterministic and isolated."
+    - path: "**/Dockerfile"
+      instructions: "Review for multi-stage builds, proper layer caching, security best practices, and minimal image size."
+
+# Chat features
+chat:
+  # Auto-reply to questions
+  auto_reply: true
+
+# Tone of reviews
+tone_instructions: "Be concise, professional, and constructive. Focus on Rust-specific concerns like ownership, borrowing, lifetimes, and error handling. Suggest PR titles using conventional commit format (feat:, fix:, docs:, refactor:, test:, chore:, perf:)."
