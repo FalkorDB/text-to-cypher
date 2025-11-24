@@ -1072,7 +1072,9 @@ async fn process_text_to_cypher_request(
     };
 
     // Step 4: Execute the query and get results, with self-healing on failure
-    let query_result = if execute_cypher_query(&query, &request.graph_name, falkordb_connection.as_str(), &tx).await == Err(()) {
+    let query_result = if let Ok(result) = execute_cypher_query(&query, &request.graph_name, falkordb_connection.as_str(), &tx).await {
+        result
+    } else {
         // Try self-healing: regenerate query with error feedback
         tracing::info!("First query execution failed, attempting self-healing...");
         send!(tx, Progress::Status(String::from("Query failed, attempting self-healing...")));
@@ -1105,8 +1107,6 @@ async fn process_text_to_cypher_request(
         } else {
             return;
         }
-    } else {
-        execute_cypher_query(&query, &request.graph_name, falkordb_connection.as_str(), &tx).await.unwrap()
     };
 
     // Step 5: Generate final answer using AI
