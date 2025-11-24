@@ -138,6 +138,7 @@ macro_rules! send_or_empty {
 }
 
 mod chat;
+mod core;
 mod error;
 mod formatter;
 mod mcp;
@@ -1896,17 +1897,7 @@ async fn discover_graph_schema(
     falkordb_connection: &str,
     graph_name: &str,
 ) -> Schema {
-    let connection_info: FalkorConnectionInfo = falkordb_connection.try_into().expect("Invalid connection info");
-
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
-        .await
-        .expect("Failed to build client");
-
-    // Select the specified graph
-    let mut graph = client.select_graph(graph_name);
-    let schema = Schema::discover_from_graph(&mut graph, 100)
+    let schema = crate::core::discover_graph_schema(falkordb_connection, graph_name)
         .await
         .expect("Failed to discover schema from graph");
 

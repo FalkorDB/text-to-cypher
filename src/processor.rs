@@ -151,21 +151,7 @@ fn get_last_user_message(request: &ProcessorRequest) -> Option<&crate::chat::Cha
 }
 
 async fn discover_schema(falkordb_connection: &str, graph_name: &str) -> Result<String, String> {
-    let connection_info: FalkorConnectionInfo = falkordb_connection
-        .try_into()
-        .map_err(|e| format!("Invalid connection info: {e}"))?;
-
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
-        .await
-        .map_err(|e| format!("Failed to build client: {e}"))?;
-
-    let mut graph = client.select_graph(graph_name);
-    let schema = Schema::discover_from_graph(&mut graph, 100)
-        .await
-        .map_err(|e| format!("Failed to discover schema: {e}"))?;
-
+    let schema = crate::core::discover_graph_schema(falkordb_connection, graph_name).await?;
     serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))
 }
 
