@@ -1079,11 +1079,15 @@ async fn process_text_to_cypher_request(
             tracing::info!("First query execution failed, attempting self-healing...");
             send!(tx, Progress::Status(String::from("Query failed, attempting self-healing...")));
             
-            // Attempt to get a fixed query
+            // Use a generic error message since we don't capture specific errors
+            let error_msg = "Query execution failed - see logs for details";
+            
+            // Attempt to get a fixed query with error context
             if let Some(fixed_query) = attempt_query_self_healing(
                 &request,
                 &schema,
                 &query,
+                error_msg,
                 &client,
                 model,
                 &tx,
@@ -1097,7 +1101,9 @@ async fn process_text_to_cypher_request(
                     }
                     Err(()) => {
                         tracing::error!("Self-healing failed");
-                        send!(tx, Progress::Error("Query execution failed even after self-healing attempt".to_string()));
+                        send!(tx, Progress::Error(
+                            "Query execution failed even after self-healing attempt".to_string()
+                        ));
                         return;
                     }
                 }
@@ -1116,13 +1122,14 @@ async fn attempt_query_self_healing(
     request: &TextToCypherRequest,
     schema: &str,
     failed_query: &str,
+    error_message: &str,
     client: &genai::Client,
     model: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Option<String> {
     tracing::info!("Attempting to self-heal failed query: {}", failed_query);
     
-    // Create a feedback message explaining the failure
+    // Create a feedback message with specific error context
     let mut retry_request = request.chat_request.clone();
     retry_request.messages.push(ChatMessage {
         role: ChatRole::Assistant,
@@ -1130,7 +1137,10 @@ async fn attempt_query_self_healing(
     });
     retry_request.messages.push(ChatMessage {
         role: ChatRole::User,
-        content: "The previous query failed to execute. Please generate a corrected Cypher query that follows the schema more closely and avoids syntax errors.".to_string(),
+        content: format!(
+            "The previous query failed with error: {}. Please generate a corrected Cypher query that fixes this error and follows the schema more closely.",
+            error_message
+        ),
     });
     
     // Generate new query
@@ -1144,10 +1154,15 @@ async fn attempt_query_self_healing(
     
     let clean_query = retry_query.replace('\n', " ").replace("```", "").trim().to_string();
     
-    // Validate the regenerated query
+    // Validate the regenerated query - must pass validation to proceed
     let validation_result = CypherValidator::validate(&clean_query);
     if !validation_result.is_valid {
-        tracing::warn!("Self-healed query still has validation errors: {:?}", validation_result.errors);
+        tracing::warn!("Self-healed query failed validation: {:?}", validation_result.errors);
+        send_option!(tx, Progress::Error(format!(
+            "Self-healing failed - regenerated query has validation errors: {}",
+            validation_result.errors.join("; ")
+        )));
+        return None;
     }
     
     send_option!(tx, Progress::CypherQuery(format!("Fixed: {}", clean_query)));
@@ -1256,8 +1271,9 @@ async fn execute_cypher_query(
             Ok(result)
         }
         Err(e) => {
-            tracing::error!("Query execution failed: {}", e);
-            send_result!(tx, Progress::Error(format!("Query execution failed: {e}")));
+            let error_msg = e.to_string();
+            tracing::error!("Query execution failed: {}", error_msg);
+            send_result!(tx, Progress::Error(format!("Query execution failed: {error_msg}")));
             Err(())
         }
     }

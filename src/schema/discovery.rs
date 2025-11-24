@@ -150,6 +150,16 @@ impl Schema {
         let max_examples = 3.min(sample_size);
         
         for attribute in attributes {
+            // Validate attribute name to prevent injection
+            // Attribute names should be alphanumeric with underscores
+            if !attribute.name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                tracing::warn!(
+                    "Skipping example collection for attribute '{}' - invalid characters",
+                    attribute.name
+                );
+                continue;
+            }
+            
             let query = format!(
                 r"MATCH (n:{label})
                 WHERE n.{} IS NOT NULL

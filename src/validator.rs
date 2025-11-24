@@ -9,7 +9,7 @@ static PATTERNS: OnceLock<ValidationPatterns> = OnceLock::new();
 struct ValidationPatterns {
     /// Pattern to detect basic Cypher syntax
     basic_cypher: Regex,
-    /// Pattern to detect dangerous operations
+    /// Pattern to detect dangerous operations - matches DROP and various DELETE patterns
     dangerous_ops: Regex,
     /// Pattern to check for balanced parentheses
     match_clause: Regex,
@@ -21,7 +21,8 @@ impl ValidationPatterns {
     fn get() -> &'static Self {
         PATTERNS.get_or_init(|| Self {
             basic_cypher: Regex::new(r"(?i)(MATCH|CREATE|MERGE|DELETE|SET|REMOVE|RETURN|WITH|UNWIND|CALL)").unwrap(),
-            dangerous_ops: Regex::new(r"(?i)(DROP|DETACH\s+DELETE\s+\(\s*\)|DELETE\s+\(\s*\))").unwrap(),
+            // Enhanced pattern to catch more dangerous operations including unparenthesized deletes
+            dangerous_ops: Regex::new(r"(?i)(DROP\s+|DETACH\s+DELETE\s+[a-z_]+\s*$|DELETE\s+[a-z_]+\s*$|DELETE\s*\(\s*\)|DETACH\s+DELETE\s*\(\s*\))").unwrap(),
             match_clause: Regex::new(r"(?i)MATCH\s+").unwrap(),
             return_clause: Regex::new(r"(?i)RETURN\s+").unwrap(),
         })
@@ -145,6 +146,9 @@ impl CypherValidator {
     /// # Returns
     ///
     /// A suggested fixed query, if applicable
+    ///
+    /// Note: This function is available for future use in direct query fixing.
+    /// Currently, self-healing uses LLM-based regeneration which is more flexible.
     #[allow(dead_code)]
     pub fn suggest_fix(query: &str, error: &str) -> Option<String> {
         let query = query.trim();
