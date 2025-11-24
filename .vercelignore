@@ -24,7 +24,7 @@ entrypoint.sh
 docs/
 examples/
 *.md
-!README.md
+!readme.md
 !VERCEL.md
 
 # Test files

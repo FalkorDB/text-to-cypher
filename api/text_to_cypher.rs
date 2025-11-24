@@ -8,13 +8,20 @@ use text_to_cypher::vercel::{VercelRequest, VercelResponse};
 fn main() {
     // Read request from stdin (Vercel's standard input method)
     let mut buffer = String::new();
-    if std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer).is_ok() {
-        if let Ok(request) = serde_json::from_str::<VercelRequest>(&buffer) {
-            let response = handler(&request);
-            if let Ok(json) = serde_json::to_string(&response) {
-                println!("{json}");
+    match std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer) {
+        Ok(_) => {
+            match serde_json::from_str::<VercelRequest>(&buffer) {
+                Ok(request) => {
+                    let response = handler(&request);
+                    match serde_json::to_string(&response) {
+                        Ok(json) => println!("{json}"),
+                        Err(e) => eprintln!("Failed to serialize response: {e}"),
+                    }
+                }
+                Err(e) => eprintln!("Failed to parse request: {e}"),
             }
         }
+        Err(e) => eprintln!("Failed to read from stdin: {e}"),
     }
 }
 
