@@ -37,11 +37,11 @@ impl VercelResponse {
             },
             Err(e) => {
                 eprintln!("Failed to serialize response body: {e}");
-                // Return a 500 error response with a JSON error message
+                // Return a 500 error response with a static JSON string to avoid secondary serialization failure
                 Self {
                     status_code: 500,
                     headers,
-                    body: serde_json::json!({"error": "Internal Server Error: failed to serialize response body"}).to_string(),
+                    body: r#"{"error":"Internal Server Error: failed to serialize response body"}"#.to_string(),
                 }
             }
         }
