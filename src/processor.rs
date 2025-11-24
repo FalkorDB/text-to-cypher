@@ -57,7 +57,7 @@ pub async fn process(mut request: ProcessorRequest) -> ProcessorResponse {
         let key = key.clone();
         let auth_resolver = AuthResolver::from_resolver_fn(
             move |_model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
-                Ok(Some(AuthData::from_single(key.clone())))
+                Ok(Some(AuthData::from_single(key)))
             },
         );
         genai::Client::builder().with_auth_resolver(auth_resolver).build()
@@ -138,6 +138,15 @@ pub async fn process(mut request: ProcessorRequest) -> ProcessorResponse {
     }
 }
 
+/// Helper function to check if the last message is from a user
+fn is_last_message_from_user(request: &ProcessorRequest) -> bool {
+    request
+        .chat_request
+        .messages
+        .last()
+        .is_some_and(|msg| matches!(msg.role, ChatRole::User))
+}
+
 async fn discover_schema(falkordb_connection: &str, graph_name: &str) -> Result<String, String> {
     let connection_info: FalkorConnectionInfo = falkordb_connection
         .try_into()
@@ -183,7 +192,7 @@ async fn generate_query(
     );
 
     // Process last user message if exists
-    if let Some(last_msg) = request.chat_request.messages.last() && matches!(last_msg.role, ChatRole::User) {
+    if is_last_message_from_user(request) && let Some(last_msg) = request.chat_request.messages.last() {
         let user_prompt = TemplateEngine::render_user_prompt(&last_msg.content)
             .unwrap_or_else(|_| format!("Generate an OpenCypher statement for: {}", last_msg.content));
         chat_req = chat_req.append_message(genai::chat::ChatMessage::user(user_prompt));
@@ -257,7 +266,7 @@ async fn generate_answer(
     }
 
     // Add query and results
-    if let Some(last_msg) = request.chat_request.messages.last() && matches!(last_msg.role, ChatRole::User) {
+    if is_last_message_from_user(request) && let Some(last_msg) = request.chat_request.messages.last() {
         let final_prompt = TemplateEngine::render_last_request_prompt(&last_msg.content, cypher_query, query_result)
             .unwrap_or_else(|_| {
                 format!(
