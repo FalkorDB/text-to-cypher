@@ -6,6 +6,8 @@ This guide explains how to deploy the text-to-cypher API as serverless functions
 
 The text-to-cypher project can be deployed to Vercel as serverless functions using the [@vercel/rust](https://github.com/vercel-community/rust) runtime. This allows you to run the API without managing servers while benefiting from Vercel's global edge network.
 
+**Current Status**: This is a minimal implementation demonstrating Vercel serverless support. Currently, only the main `/text_to_cypher` endpoint is implemented as a serverless function. Additional endpoints can be added following the same pattern.
+
 ## Prerequisites
 
 - A [Vercel account](https://vercel.com/signup)
@@ -155,6 +157,29 @@ When running on Vercel, be aware of the following limitations:
 | MCP Server | ✅ Available | ❌ Not available |
 | Web UI | ✅ Included | ❌ Not included |
 | SSE Streaming | ✅ Full support | ⚠️ Limited |
+| Endpoints | All endpoints | Main endpoint (extensible) |
+
+## Extending the Implementation
+
+The current implementation provides a foundation for Vercel deployment with the main `/text_to_cypher` endpoint. To add additional endpoints:
+
+1. Create a new Rust file in the `api/` directory (e.g., `api/get_schema.rs`)
+2. Implement a `handler` function following the pattern in `api/text_to_cypher.rs`
+3. Add a binary target in `Cargo.toml`:
+   ```toml
+   [[bin]]
+   name = "get_schema"
+   path = "api/get_schema.rs"
+   ```
+4. Add a route in `vercel.json`:
+   ```json
+   {
+     "src": "/get_schema",
+     "dest": "api/get_schema.rs"
+   }
+   ```
+
+The `src/vercel.rs` module provides utilities for handling Vercel requests and responses consistently across all endpoints.
 
 ## Development
 

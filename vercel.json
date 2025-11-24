@@ -10,42 +10,6 @@
     {
       "src": "/text_to_cypher",
       "dest": "api/text_to_cypher.rs"
-    },
-    {
-      "src": "/clear_schema_cache",
-      "dest": "api/clear_schema_cache.rs"
-    },
-    {
-      "src": "/load_csv",
-      "dest": "api/load_csv.rs"
-    },
-    {
-      "src": "/echo",
-      "dest": "api/echo.rs"
-    },
-    {
-      "src": "/list_graphs",
-      "dest": "api/list_graphs.rs"
-    },
-    {
-      "src": "/graph_list",
-      "dest": "api/graph_list.rs"
-    },
-    {
-      "src": "/graph_delete",
-      "dest": "api/graph_delete.rs"
-    },
-    {
-      "src": "/get_schema",
-      "dest": "api/get_schema.rs"
-    },
-    {
-      "src": "/configured_model",
-      "dest": "api/configured_model.rs"
-    },
-    {
-      "src": "/graph_query",
-      "dest": "api/graph_query.rs"
     }
   ]
 }
