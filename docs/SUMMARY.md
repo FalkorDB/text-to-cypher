@@ -176,5 +176,5 @@ Implemented by the FalkorDB team with contributions from the community.
 ---
 
 **Version**: 0.1.0 with improvements
-**Date**: November 2024
+**Date**: November 2025
 **Status**: Production Ready ✅

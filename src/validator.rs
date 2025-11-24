@@ -21,9 +21,9 @@ impl ValidationPatterns {
     fn get() -> &'static Self {
         PATTERNS.get_or_init(|| Self {
             basic_cypher: Regex::new(r"(?i)(MATCH|CREATE|MERGE|DELETE|SET|REMOVE|RETURN|WITH|UNWIND|CALL)").unwrap(),
-            // Enhanced pattern to catch dangerous operations with any valid Cypher identifier
-            // Matches: DROP, DELETE var, DETACH DELETE var (case-insensitive, any identifier)
-            dangerous_ops: Regex::new(r"(?i)(DROP\s+|DETACH\s+DELETE\s+[a-zA-Z_][a-zA-Z0-9_]*\s*$|DELETE\s+[a-zA-Z_][a-zA-Z0-9_]*\s*$|DELETE\s*\(\s*\)|DETACH\s+DELETE\s*\(\s*\))").unwrap(),
+            // Simplified pattern to catch dangerous operations more reliably
+            // Matches any DROP or DELETE (with or without DETACH, with any following content)
+            dangerous_ops: Regex::new(r"(?i)(DROP\s|DELETE\s)").unwrap(),
             match_clause: Regex::new(r"(?i)MATCH\s+").unwrap(),
             return_clause: Regex::new(r"(?i)RETURN\s+").unwrap(),
         })
@@ -47,6 +47,7 @@ impl CypherValidator {
     /// # Returns
     ///
     /// A `ValidationResult` containing validation status and any errors/warnings
+    #[must_use]
     pub fn validate(query: &str) -> ValidationResult {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
@@ -172,11 +173,10 @@ impl CypherValidator {
             }
             
             // Missing WHERE keyword before condition
-            if query.contains('=') && !query.to_uppercase().contains("WHERE") && query.to_uppercase().contains("MATCH") {
-                if let Some(fixed) = Self::try_add_where_clause(query) {
+            if query.contains('=') && !query.to_uppercase().contains("WHERE") && query.to_uppercase().contains("MATCH")
+                && let Some(fixed) = Self::try_add_where_clause(query) {
                     return Some(fixed);
                 }
-            }
         }
         
         // Property not found - suggest using toLower() or different property

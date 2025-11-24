@@ -188,7 +188,7 @@ impl Schema {
                         attribute.examples = Some(examples);
                         tracing::debug!(
                             "Collected {} examples for {}.{}: {:?}",
-                            attribute.examples.as_ref().map_or(0, |e| e.len()),
+                            attribute.examples.as_ref().map_or(0, std::vec::Vec::len),
                             label,
                             attribute.name,
                             attribute.examples
@@ -219,11 +219,10 @@ impl Schema {
         let mut chars = name.chars();
         
         // First character must be letter or underscore
-        if let Some(first) = chars.next() {
-            if !first.is_alphabetic() && first != '_' {
+        if let Some(first) = chars.next()
+            && !first.is_alphabetic() && first != '_' {
                 return false;
             }
-        }
         
         // Remaining characters must be alphanumeric or underscore
         chars.all(|c| c.is_alphanumeric() || c == '_')
@@ -237,12 +236,14 @@ impl Schema {
             return false;
         }
         
-        // Allow alphanumeric, underscore, and dot
-        // Disallow special chars that could be used for injection
-        name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
-            && !name.contains("--")  // SQL comment
-            && !name.contains("/*")  // Block comment
-            && !name.contains("*/")
+        let allowed = name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+        // Disallow SQL and Cypher comment patterns, semicolons, backticks, and UNION keyword
+        let no_sql_comments = !name.contains("--") && !name.contains("/*") && !name.contains("*/");
+        let no_cypher_comment = !name.contains("//");
+        let no_semicolon = !name.contains(';');
+        let no_backtick = !name.contains('`');
+        let no_union = !name.to_ascii_lowercase().contains("union");
+        allowed && no_sql_comments && no_cypher_comment && no_semicolon && no_backtick && no_union
     }
 
     async fn get_entity_labels(graph: &mut AsyncGraph) -> Result<Vec<String>, FalkorDBError> {
