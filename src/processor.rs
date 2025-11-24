@@ -53,15 +53,18 @@ pub async fn process(mut request: ProcessorRequest) -> ProcessorResponse {
     };
 
     // Create genai client
-    let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
-        let key = key.clone();
-        let auth_resolver = AuthResolver::from_resolver_fn(
-            move |_model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
-                Ok(Some(AuthData::from_single(key)))
-            },
-        );
-        genai::Client::builder().with_auth_resolver(auth_resolver).build()
-    });
+    let client = match request.key.as_ref() {
+        Some(key) => {
+            let key = key.clone();
+            let auth_resolver = AuthResolver::from_resolver_fn(
+                move |_model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
+                    Ok(Some(AuthData::from_single(key)))
+                },
+            );
+            genai::Client::builder().with_auth_resolver(auth_resolver).build()
+        }
+        None => genai::Client::default(),
+    };
 
     // Resolve service target
     if let Err(e) = client.resolve_service_target(model).await {
@@ -138,13 +141,13 @@ pub async fn process(mut request: ProcessorRequest) -> ProcessorResponse {
     }
 }
 
-/// Helper function to check if the last message is from a user
-fn is_last_message_from_user(request: &ProcessorRequest) -> bool {
+/// Helper function to get the last message if it's from a user
+fn get_last_user_message(request: &ProcessorRequest) -> Option<&crate::chat::ChatMessage> {
     request
         .chat_request
         .messages
         .last()
-        .is_some_and(|msg| matches!(msg.role, ChatRole::User))
+        .filter(|msg| matches!(msg.role, ChatRole::User))
 }
 
 async fn discover_schema(falkordb_connection: &str, graph_name: &str) -> Result<String, String> {
@@ -192,7 +195,7 @@ async fn generate_query(
     );
 
     // Process last user message if exists
-    if is_last_message_from_user(request) && let Some(last_msg) = request.chat_request.messages.last() {
+    if let Some(last_msg) = get_last_user_message(request) {
         let user_prompt = TemplateEngine::render_user_prompt(&last_msg.content)
             .unwrap_or_else(|_| format!("Generate an OpenCypher statement for: {}", last_msg.content));
         chat_req = chat_req.append_message(genai::chat::ChatMessage::user(user_prompt));
@@ -266,7 +269,7 @@ async fn generate_answer(
     }
 
     // Add query and results
-    if is_last_message_from_user(request) && let Some(last_msg) = request.chat_request.messages.last() {
+    if let Some(last_msg) = get_last_user_message(request) {
         let final_prompt = TemplateEngine::render_last_request_prompt(&last_msg.content, cypher_query, query_result)
             .unwrap_or_else(|_| {
                 format!(

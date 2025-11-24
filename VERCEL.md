@@ -156,7 +156,7 @@ When running on Vercel, be aware of the following limitations:
 | Scaling | Manual | Automatic |
 | MCP Server | ✅ Available | ❌ Not available |
 | Web UI | ✅ Included | ❌ Not included |
-| SSE Streaming | ✅ Full support | ⚠️ Limited |
+| SSE Streaming | ✅ Full support | ❌ Not available |
 | Endpoints | All endpoints | Main endpoint (extensible) |
 
 ## Extending the Implementation

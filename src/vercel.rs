@@ -29,10 +29,21 @@ impl VercelResponse {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
         
-        Self {
-            status_code,
-            headers,
-            body: serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string()),
+        match serde_json::to_string(&body) {
+            Ok(body_str) => Self {
+                status_code,
+                headers,
+                body: body_str,
+            },
+            Err(e) => {
+                eprintln!("Failed to serialize response body: {e}");
+                // Return a 500 error response with a JSON error message
+                Self {
+                    status_code: 500,
+                    headers,
+                    body: serde_json::json!({"error": "Internal Server Error: failed to serialize response body"}).to_string(),
+                }
+            }
         }
     }
 
