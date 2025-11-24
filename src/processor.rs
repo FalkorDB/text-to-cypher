@@ -5,9 +5,7 @@
 
 use crate::chat::{ChatRequest, ChatRole};
 use crate::formatter::format_query_records;
-use crate::schema::discovery::Schema;
 use crate::template::TemplateEngine;
-use falkordb::{FalkorClientBuilder, FalkorConnectionInfo};
 use genai::resolver::{AuthData, AuthResolver};
 use genai::ModelIden;
 use serde::{Deserialize, Serialize};
@@ -206,30 +204,7 @@ async fn execute_query(
     graph_name: &str,
     falkordb_connection: &str,
 ) -> Result<String, String> {
-    let connection_info: FalkorConnectionInfo = falkordb_connection
-        .try_into()
-        .map_err(|e| format!("Invalid connection info: {e}"))?;
-
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
-        .await
-        .map_err(|e| format!("Failed to build client: {e}"))?;
-
-    let mut graph = client.select_graph(graph_name);
-    let query_result = graph
-        .query(query)
-        .with_timeout(30_000)
-        .execute()
-        .await
-        .map_err(|e| format!("Query execution failed: {e}"))?;
-
-    // Convert LazyResultSet to Vec<Vec<FalkorValue>>
-    let mut records = Vec::new();
-    for record in query_result.data {
-        records.push(record);
-    }
-
+    let records = crate::core::execute_graph_query(falkordb_connection, graph_name, query, 30_000).await?;
     let formatted = format_query_records(&records);
     Ok(formatted)
 }
