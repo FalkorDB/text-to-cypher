@@ -146,15 +146,23 @@ impl Schema {
         attributes: &mut [Attribute],
         sample_size: usize,
     ) -> Result<(), FalkorDBError> {
+        // Validate label to prevent injection attacks
+        // Labels should start with letter/underscore and contain alphanumeric/underscore
+        if !Self::is_valid_identifier(label) {
+            tracing::warn!("Skipping example collection for invalid label: {}", label);
+            return Ok(());
+        }
+        
         // Limit the number of examples to collect
         let max_examples = 3.min(sample_size);
         
         for attribute in attributes {
             // Validate attribute name to prevent injection
-            // Attribute names should be alphanumeric with underscores
-            if !attribute.name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            // Be permissive but safe - allow common valid patterns
+            // Note: More complex property paths are rarely used in actual schemas
+            if !Self::is_valid_property_name(&attribute.name) {
                 tracing::warn!(
-                    "Skipping example collection for attribute '{}' - invalid characters",
+                    "Skipping example collection for attribute '{}' - potentially unsafe characters",
                     attribute.name
                 );
                 continue;
@@ -199,6 +207,42 @@ impl Schema {
         }
         
         Ok(())
+    }
+
+    /// Validates that an identifier (label, relationship type) is safe to use in queries
+    /// Cypher identifiers must start with letter or underscore, followed by alphanumeric or underscore
+    fn is_valid_identifier(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        
+        let mut chars = name.chars();
+        
+        // First character must be letter or underscore
+        if let Some(first) = chars.next() {
+            if !first.is_alphabetic() && first != '_' {
+                return false;
+            }
+        }
+        
+        // Remaining characters must be alphanumeric or underscore
+        chars.all(|c| c.is_alphanumeric() || c == '_')
+    }
+
+    /// Validates that a property name is safe to use in queries
+    /// Allows alphanumeric, underscore, and dot (for nested properties if needed)
+    /// More permissive than identifier validation but still safe
+    fn is_valid_property_name(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        
+        // Allow alphanumeric, underscore, and dot
+        // Disallow special chars that could be used for injection
+        name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            && !name.contains("--")  // SQL comment
+            && !name.contains("/*")  // Block comment
+            && !name.contains("*/")
     }
 
     async fn get_entity_labels(graph: &mut AsyncGraph) -> Result<Vec<String>, FalkorDBError> {
@@ -373,4 +417,48 @@ async fn process_relationships(
     }
 
     Ok(ret)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_identifier() {
+        // Valid identifiers
+        assert!(Schema::is_valid_identifier("Person"));
+        assert!(Schema::is_valid_identifier("_Person"));
+        assert!(Schema::is_valid_identifier("Person123"));
+        assert!(Schema::is_valid_identifier("_person_123"));
+        assert!(Schema::is_valid_identifier("PERSON"));
+
+        // Invalid identifiers
+        assert!(!Schema::is_valid_identifier(""));
+        assert!(!Schema::is_valid_identifier("123Person"));
+        assert!(!Schema::is_valid_identifier("Person-Name"));
+        assert!(!Schema::is_valid_identifier("Person Name"));
+        assert!(!Schema::is_valid_identifier("Person;DROP"));
+        assert!(!Schema::is_valid_identifier("Person'"));
+        assert!(!Schema::is_valid_identifier("Person\""));
+    }
+
+    #[test]
+    fn test_valid_property_name() {
+        // Valid property names
+        assert!(Schema::is_valid_property_name("name"));
+        assert!(Schema::is_valid_property_name("firstName"));
+        assert!(Schema::is_valid_property_name("first_name"));
+        assert!(Schema::is_valid_property_name("name123"));
+        assert!(Schema::is_valid_property_name("person.name")); // Nested property
+        assert!(Schema::is_valid_property_name("_name"));
+
+        // Invalid property names
+        assert!(!Schema::is_valid_property_name(""));
+        assert!(!Schema::is_valid_property_name("name;DROP"));
+        assert!(!Schema::is_valid_property_name("name--comment"));
+        assert!(!Schema::is_valid_property_name("name/*comment*/"));
+        assert!(!Schema::is_valid_property_name("name'"));
+        assert!(!Schema::is_valid_property_name("name\""));
+        assert!(!Schema::is_valid_property_name("name;"));
+    }
 }

@@ -21,8 +21,9 @@ impl ValidationPatterns {
     fn get() -> &'static Self {
         PATTERNS.get_or_init(|| Self {
             basic_cypher: Regex::new(r"(?i)(MATCH|CREATE|MERGE|DELETE|SET|REMOVE|RETURN|WITH|UNWIND|CALL)").unwrap(),
-            // Enhanced pattern to catch more dangerous operations including unparenthesized deletes
-            dangerous_ops: Regex::new(r"(?i)(DROP\s+|DETACH\s+DELETE\s+[a-z_]+\s*$|DELETE\s+[a-z_]+\s*$|DELETE\s*\(\s*\)|DETACH\s+DELETE\s*\(\s*\))").unwrap(),
+            // Enhanced pattern to catch dangerous operations with any valid Cypher identifier
+            // Matches: DROP, DELETE var, DETACH DELETE var (case-insensitive, any identifier)
+            dangerous_ops: Regex::new(r"(?i)(DROP\s+|DETACH\s+DELETE\s+[a-zA-Z_][a-zA-Z0-9_]*\s*$|DELETE\s+[a-zA-Z_][a-zA-Z0-9_]*\s*$|DELETE\s*\(\s*\)|DETACH\s+DELETE\s*\(\s*\))").unwrap(),
             match_clause: Regex::new(r"(?i)MATCH\s+").unwrap(),
             return_clause: Regex::new(r"(?i)RETURN\s+").unwrap(),
         })
@@ -74,7 +75,14 @@ impl CypherValidator {
         }
         
         // Check for MATCH clause (most queries should have one)
-        if !patterns.match_clause.is_match(query) && !query.to_uppercase().starts_with("CREATE") {
+        // Allow queries that start with other valid statements that don't require MATCH
+        let query_upper = query.to_uppercase();
+        let starts_with_non_match = query_upper.starts_with("CREATE") 
+            || query_upper.starts_with("MERGE") 
+            || query_upper.starts_with("CALL")
+            || query_upper.starts_with("UNWIND");
+        
+        if !patterns.match_clause.is_match(query) && !starts_with_non_match {
             warnings.push("Query does not contain a MATCH clause".to_string());
         }
         
