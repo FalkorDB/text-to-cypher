@@ -166,7 +166,22 @@ The integrated Docker solution runs four concurrent services:
 
 ## Deployment Options
 
-### Docker Deployment (Production)
+The text-to-cypher service can be deployed in multiple ways depending on your needs:
+
+### Vercel Serverless (Managed, Auto-scaling)
+
+Deploy as serverless functions on Vercel's global edge network. Perfect for production deployments with automatic scaling and zero server management.
+
+```bash
+# Deploy to Vercel
+vercel
+
+# Or connect your GitHub repository at vercel.com/dashboard
+```
+
+**Note**: Vercel deployment requires an external FalkorDB instance. The integrated database, MCP server, and web UI are only available in Docker deployment. See [VERCEL.md](VERCEL.md) for complete deployment guide.
+
+### Docker Deployment (All-in-One)
 
 The project provides an all-in-one Docker image that includes FalkorDB database, web browser interface, text-to-cypher API, and MCP server:
 

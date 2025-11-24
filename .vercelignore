@@ -1,0 +1,38 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.github/
+
+# Docker files (not needed for Vercel)
+Dockerfile
+docker-build.sh
+.dockerignore
+supervisord.conf
+entrypoint.sh
+
+# Documentation
+docs/
+examples/
+*.md
+!README.md
+!VERCEL.md
+
+# Test files
+tests/
+
+# Environment files (set via Vercel dashboard)
+.env
+.env.example
+
+# Misc
+.DS_Store
