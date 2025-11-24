@@ -26,6 +26,8 @@ pub struct Attribute {
     pub unique: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub examples: Option<Vec<String>>,
 }
 
 impl Attribute {
@@ -43,6 +45,28 @@ impl Attribute {
             count,
             unique,
             required,
+            examples: None,
+        }
+    }
+
+    /// Create a new Attribute with example values
+    #[must_use]
+    #[allow(dead_code)]
+    pub const fn with_examples(
+        name: String,
+        r#type: AttributeType,
+        count: i64,
+        unique: bool,
+        required: bool,
+        examples: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            name,
+            r#type,
+            count,
+            unique,
+            required,
+            examples,
         }
     }
 }

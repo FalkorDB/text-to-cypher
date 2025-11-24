@@ -73,7 +73,12 @@ impl Schema {
             "
         );
 
-        Self::collect_attributes(graph, label, &query).await
+        let mut attributes = Self::collect_attributes(graph, label, &query).await?;
+        
+        // Collect example values for each attribute
+        Self::collect_example_values(graph, label, &mut attributes, sample_size).await?;
+        
+        Ok(attributes)
     }
 
     async fn collect_relationship_attributes(
@@ -132,6 +137,58 @@ impl Schema {
         }
 
         Ok(attributes)
+    }
+
+    /// Collects example values for entity attributes to improve schema understanding
+    async fn collect_example_values(
+        graph: &mut AsyncGraph,
+        label: &str,
+        attributes: &mut [Attribute],
+        sample_size: usize,
+    ) -> Result<(), FalkorDBError> {
+        // Limit the number of examples to collect
+        let max_examples = 3.min(sample_size);
+        
+        for attribute in attributes {
+            let query = format!(
+                r"MATCH (n:{label})
+                WHERE n.{} IS NOT NULL
+                RETURN DISTINCT toString(n.{}) AS value
+                LIMIT {max_examples}",
+                attribute.name, attribute.name
+            );
+            
+            match graph.ro_query(&query).execute().await {
+                Ok(result) => {
+                    let mut examples = Vec::new();
+                    for record in result.data {
+                        if let Some(FalkorValue::String(value)) = record.first() {
+                            examples.push(value.clone());
+                        }
+                    }
+                    if !examples.is_empty() {
+                        attribute.examples = Some(examples);
+                        tracing::debug!(
+                            "Collected {} examples for {}.{}: {:?}",
+                            attribute.examples.as_ref().map_or(0, |e| e.len()),
+                            label,
+                            attribute.name,
+                            attribute.examples
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to collect examples for {}.{}: {}",
+                        label,
+                        attribute.name,
+                        e
+                    );
+                }
+            }
+        }
+        
+        Ok(())
     }
 
     async fn get_entity_labels(graph: &mut AsyncGraph) -> Result<Vec<String>, FalkorDBError> {
