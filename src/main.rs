@@ -1067,13 +1067,14 @@ async fn process_text_to_cypher_request(
     };
 
     // Step 3: Generate and execute cypher query with self-healing retry
-    let Some(query) = generate_cypher_query(&request, &schema, &client, model, &tx).await else {
+    let Some(initial_query) = generate_cypher_query(&request, &schema, &client, model, &tx).await else {
         return;
     };
+    let mut executed_query = initial_query.clone();
 
     // Step 4: Execute the query and get results, with self-healing on failure
     let query_result = if let Ok(result) =
-        execute_cypher_query(&query, &request.graph_name, falkordb_connection.as_str(), &tx).await
+        execute_cypher_query(&executed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
     {
         result
     } else {
@@ -1089,7 +1090,7 @@ async fn process_text_to_cypher_request(
 
         // Attempt to get a fixed query with error context
         if let Some(fixed_query) =
-            attempt_query_self_healing(&request, &schema, &query, error_msg, &client, model, &tx).await
+            attempt_query_self_healing(&request, &schema, &executed_query, error_msg, &client, model, &tx).await
         {
             // Try executing the fixed query
             if let Ok(result) =
@@ -1097,6 +1098,7 @@ async fn process_text_to_cypher_request(
             {
                 tracing::info!("Self-healed query executed successfully");
                 send!(tx, Progress::Status(String::from("Self-healing successful")));
+                executed_query = fixed_query;
                 result
             } else {
                 tracing::error!("Self-healing failed");
@@ -1112,10 +1114,11 @@ async fn process_text_to_cypher_request(
     };
 
     // Step 5: Generate final answer using AI
-    generate_final_answer(&request, &query, &query_result, &client, model, &tx).await;
+    generate_final_answer(&request, &executed_query, &query_result, &client, model, &tx).await;
 }
 
 /// Validates a query and returns it if valid, None otherwise
+#[allow(clippy::cognitive_complexity)]
 async fn validate_and_log_query(
     query: &str,
     tx: &mpsc::Sender<sse::Event>,
@@ -1143,6 +1146,7 @@ async fn validate_and_log_query(
 }
 
 /// Attempts to self-heal a failed query by regenerating with error context
+#[allow(clippy::cognitive_complexity)]
 async fn attempt_query_self_healing(
     request: &TextToCypherRequest,
     schema: &str,

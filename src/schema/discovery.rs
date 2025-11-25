@@ -140,6 +140,7 @@ impl Schema {
     }
 
     /// Collects example values for entity attributes to improve schema understanding
+    #[allow(clippy::cognitive_complexity)]
     async fn collect_example_values(
         graph: &mut AsyncGraph,
         label: &str,
@@ -478,11 +479,11 @@ mod tests {
         assert_eq!(Schema::escape_property_name("name"), "`name`");
         assert_eq!(Schema::escape_property_name("firstName"), "`firstName`");
         assert_eq!(Schema::escape_property_name("first_name"), "`first_name`");
-        
+
         // Backticks in names get escaped by doubling
         assert_eq!(Schema::escape_property_name("na`me"), "`na``me`");
         assert_eq!(Schema::escape_property_name("`test`"), "```test```");
-        
+
         // Empty string
         assert_eq!(Schema::escape_property_name(""), "``");
     }
