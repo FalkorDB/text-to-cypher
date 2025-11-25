@@ -28,9 +28,16 @@ Named paths: path = (start)-[:REL]->(end)
 Shortest paths: allShortestPaths((start)-[:REL*]->(end))
 Weighted paths: algo.SPpaths() for single-pair, algo.SSpaths() for single-source
 
+Value Matching Best Practices:
+When matching property values, prefer exact matches when examples are provided
+Use the example values as a guide for formatting and case sensitivity
+For string matching, default to case-insensitive comparisons using toLower()
+Examples in the ontology show the actual data format - follow these patterns
+
 Error Handling:
 If the question cannot be answered with the provided ontology, return: "UNABLE_TO_GENERATE: [brief reason]"
 If entities or relationships mentioned don't exist in ontology, return: "UNABLE_TO_GENERATE: Required entities/relationships not found in ontology"
+If unsure about property names or values, refer to the examples provided in the ontology
 
 Output Format:
 Return ONLY the OpenCypher statement enclosed in triple backticks

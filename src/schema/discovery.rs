@@ -73,7 +73,12 @@ impl Schema {
             "
         );
 
-        Self::collect_attributes(graph, label, &query).await
+        let mut attributes = Self::collect_attributes(graph, label, &query).await?;
+
+        // Collect example values for each attribute
+        Self::collect_example_values(graph, label, &mut attributes, sample_size).await?;
+
+        Ok(attributes)
     }
 
     async fn collect_relationship_attributes(
@@ -132,6 +137,123 @@ impl Schema {
         }
 
         Ok(attributes)
+    }
+
+    /// Collects example values for entity attributes to improve schema understanding
+    #[allow(clippy::cognitive_complexity)]
+    async fn collect_example_values(
+        graph: &mut AsyncGraph,
+        label: &str,
+        attributes: &mut [Attribute],
+        sample_size: usize,
+    ) -> Result<(), FalkorDBError> {
+        // Validate label to prevent injection attacks
+        // Labels should start with letter/underscore and contain alphanumeric/underscore
+        if !Self::is_valid_identifier(label) {
+            tracing::warn!("Skipping example collection for invalid label: {}", label);
+            return Ok(());
+        }
+
+        // Limit the number of examples to collect
+        let max_examples = 3.min(sample_size);
+
+        for attribute in attributes {
+            // Validate attribute name to prevent injection
+            // Be permissive but safe - allow common valid patterns
+            // Note: More complex property paths are rarely used in actual schemas
+            if !Self::is_valid_property_name(&attribute.name) {
+                tracing::warn!(
+                    "Skipping example collection for attribute '{}' - potentially unsafe characters",
+                    attribute.name
+                );
+                continue;
+            }
+
+            // Use backtick escaping for property names and labels to prevent injection
+            // Even with validation, this provides defense-in-depth
+            let escaped_name = Self::escape_property_name(&attribute.name);
+            let escaped_label = Self::escape_property_name(label);
+            let query = format!(
+                r"MATCH (n:{escaped_label})
+                WHERE n.{escaped_name} IS NOT NULL
+                RETURN DISTINCT toString(n.{escaped_name}) AS value
+                LIMIT {max_examples}"
+            );
+
+            match graph.ro_query(&query).execute().await {
+                Ok(result) => {
+                    let mut examples = Vec::new();
+                    for record in result.data {
+                        if let Some(FalkorValue::String(value)) = record.first() {
+                            examples.push(value.clone());
+                        }
+                    }
+                    if !examples.is_empty() {
+                        attribute.examples = Some(examples);
+                        tracing::debug!(
+                            "Collected {} examples for {}.{}: {:?}",
+                            attribute.examples.as_ref().map_or(0, std::vec::Vec::len),
+                            label,
+                            attribute.name,
+                            attribute.examples
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to collect examples for {}.{}: {}", label, attribute.name, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validates that an identifier (label, relationship type) is safe to use in queries
+    /// Cypher identifiers must start with letter or underscore, followed by alphanumeric or underscore
+    fn is_valid_identifier(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+
+        let mut chars = name.chars();
+
+        // First character must be letter or underscore
+        if let Some(first) = chars.next()
+            && !first.is_alphabetic()
+            && first != '_'
+        {
+            return false;
+        }
+
+        // Remaining characters must be alphanumeric or underscore
+        chars.all(|c| c.is_alphanumeric() || c == '_')
+    }
+
+    /// Validates that a property name is safe to use in queries
+    /// Allows alphanumeric, underscore, and dot (for nested properties if needed)
+    /// More permissive than identifier validation but still safe
+    fn is_valid_property_name(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+
+        let allowed = name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+        // Disallow SQL and Cypher comment patterns, semicolons, backticks, and UNION keyword
+        let no_sql_comments = !name.contains("--") && !name.contains("/*") && !name.contains("*/");
+        let no_cypher_comment = !name.contains("//");
+        let no_semicolon = !name.contains(';');
+        let no_backtick = !name.contains('`');
+        let no_union = !name.to_ascii_lowercase().contains("union");
+        allowed && no_sql_comments && no_cypher_comment && no_semicolon && no_backtick && no_union
+    }
+
+    /// Escapes a property name for safe use in Cypher queries using backtick notation
+    /// This provides defense-in-depth even with prior validation
+    fn escape_property_name(name: &str) -> String {
+        // For Cypher, we use backticks to escape property names
+        // Any internal backticks are escaped by doubling them
+        let escaped = name.replace('`', "``");
+        format!("`{escaped}`")
     }
 
     async fn get_entity_labels(graph: &mut AsyncGraph) -> Result<Vec<String>, FalkorDBError> {
@@ -306,4 +428,63 @@ async fn process_relationships(
     }
 
     Ok(ret)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_identifier() {
+        // Valid identifiers
+        assert!(Schema::is_valid_identifier("Person"));
+        assert!(Schema::is_valid_identifier("_Person"));
+        assert!(Schema::is_valid_identifier("Person123"));
+        assert!(Schema::is_valid_identifier("_person_123"));
+        assert!(Schema::is_valid_identifier("PERSON"));
+
+        // Invalid identifiers
+        assert!(!Schema::is_valid_identifier(""));
+        assert!(!Schema::is_valid_identifier("123Person"));
+        assert!(!Schema::is_valid_identifier("Person-Name"));
+        assert!(!Schema::is_valid_identifier("Person Name"));
+        assert!(!Schema::is_valid_identifier("Person;DROP"));
+        assert!(!Schema::is_valid_identifier("Person'"));
+        assert!(!Schema::is_valid_identifier("Person\""));
+    }
+
+    #[test]
+    fn test_valid_property_name() {
+        // Valid property names
+        assert!(Schema::is_valid_property_name("name"));
+        assert!(Schema::is_valid_property_name("firstName"));
+        assert!(Schema::is_valid_property_name("first_name"));
+        assert!(Schema::is_valid_property_name("name123"));
+        assert!(Schema::is_valid_property_name("person.name")); // Nested property
+        assert!(Schema::is_valid_property_name("_name"));
+
+        // Invalid property names
+        assert!(!Schema::is_valid_property_name(""));
+        assert!(!Schema::is_valid_property_name("name;DROP"));
+        assert!(!Schema::is_valid_property_name("name--comment"));
+        assert!(!Schema::is_valid_property_name("name/*comment*/"));
+        assert!(!Schema::is_valid_property_name("name'"));
+        assert!(!Schema::is_valid_property_name("name\""));
+        assert!(!Schema::is_valid_property_name("name;"));
+    }
+
+    #[test]
+    fn test_escape_property_name() {
+        // Normal property names get backticks added
+        assert_eq!(Schema::escape_property_name("name"), "`name`");
+        assert_eq!(Schema::escape_property_name("firstName"), "`firstName`");
+        assert_eq!(Schema::escape_property_name("first_name"), "`first_name`");
+
+        // Backticks in names get escaped by doubling
+        assert_eq!(Schema::escape_property_name("na`me"), "`na``me`");
+        assert_eq!(Schema::escape_property_name("`test`"), "```test```");
+
+        // Empty string
+        assert_eq!(Schema::escape_property_name(""), "``");
+    }
 }

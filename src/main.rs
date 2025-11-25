@@ -143,11 +143,13 @@ mod formatter;
 mod mcp;
 mod schema;
 mod template;
+mod validator;
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
 use formatter::{format_as_json, format_query_records};
 use mcp::run_mcp_server;
 use template::TemplateEngine;
+use validator::CypherValidator;
 
 use crate::schema::discovery::Schema;
 
@@ -1064,19 +1066,129 @@ async fn process_text_to_cypher_request(
         return;
     };
 
-    // Step 3: Generate and execute cypher query
-    let Some(query) = generate_cypher_query(&request, &schema, &client, model, &tx).await else {
+    // Step 3: Generate and execute cypher query with self-healing retry
+    let Some(initial_query) = generate_cypher_query(&request, &schema, &client, model, &tx).await else {
         return;
     };
+    let mut executed_query = initial_query.clone();
 
-    // Step 4: Execute the query and get results
-    let Ok(query_result) = execute_cypher_query(&query, &request.graph_name, falkordb_connection.as_str(), &tx).await
-    else {
-        return;
+    // Step 4: Execute the query and get results, with self-healing on failure
+    let query_result = if let Ok(result) =
+        execute_cypher_query(&executed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
+    {
+        result
+    } else {
+        // Try self-healing: regenerate query with error feedback
+        tracing::info!("First query execution failed, attempting self-healing...");
+        send!(
+            tx,
+            Progress::Status(String::from("Query failed, attempting self-healing..."))
+        );
+
+        // Use a generic error message since we don't capture specific errors
+        let error_msg = "Query execution failed - see logs for details";
+
+        // Attempt to get a fixed query with error context
+        if let Some(fixed_query) =
+            attempt_query_self_healing(&request, &schema, &executed_query, error_msg, &client, model, &tx).await
+        {
+            // Try executing the fixed query
+            if let Ok(result) =
+                execute_cypher_query(&fixed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
+            {
+                tracing::info!("Self-healed query executed successfully");
+                send!(tx, Progress::Status(String::from("Self-healing successful")));
+                executed_query = fixed_query;
+                result
+            } else {
+                tracing::error!("Self-healing failed");
+                send!(
+                    tx,
+                    Progress::Error("Query execution failed even after self-healing attempt".to_string())
+                );
+                return;
+            }
+        } else {
+            return;
+        }
     };
 
     // Step 5: Generate final answer using AI
-    generate_final_answer(&request, &query, &query_result, &client, model, &tx).await;
+    generate_final_answer(&request, &executed_query, &query_result, &client, model, &tx).await;
+}
+
+/// Validates a query and returns it if valid, None otherwise
+#[allow(clippy::cognitive_complexity)]
+async fn validate_and_log_query(
+    query: &str,
+    tx: &mpsc::Sender<sse::Event>,
+) -> Option<String> {
+    let validation_result = CypherValidator::validate(query);
+
+    if !validation_result.is_valid {
+        tracing::warn!("Query failed validation: {:?}", validation_result.errors);
+        send_option!(
+            tx,
+            Progress::Error(format!(
+                "Query validation errors: {}",
+                validation_result.errors.join("; ")
+            ))
+        );
+        return None;
+    }
+
+    // Log any warnings even if query is valid
+    if !validation_result.warnings.is_empty() {
+        tracing::info!("Query validation warnings: {:?}", validation_result.warnings);
+    }
+
+    Some(query.to_string())
+}
+
+/// Attempts to self-heal a failed query by regenerating with error context
+#[allow(clippy::cognitive_complexity)]
+async fn attempt_query_self_healing(
+    request: &TextToCypherRequest,
+    schema: &str,
+    failed_query: &str,
+    error_message: &str,
+    client: &genai::Client,
+    model: &str,
+    tx: &mpsc::Sender<sse::Event>,
+) -> Option<String> {
+    tracing::info!("Attempting to self-heal failed query: {}", failed_query);
+
+    // Create a feedback message with specific error context
+    let mut retry_request = request.chat_request.clone();
+    retry_request.messages.push(ChatMessage {
+        role: ChatRole::Assistant,
+        content: failed_query.to_string(),
+    });
+    retry_request.messages.push(ChatMessage {
+        role: ChatRole::User,
+        content: format!(
+            "The previous query failed with error: {error_message}. Please generate a corrected Cypher query that fixes this error and follows the schema more closely."
+        ),
+    });
+
+    // Generate new query
+    let genai_chat_request = generate_create_cypher_query_chat_request(&retry_request, schema);
+    let retry_query = execute_chat(client, model, genai_chat_request, tx).await;
+
+    if retry_query.trim().is_empty() || retry_query.trim() == "NO ANSWER" {
+        tracing::warn!("Self-healing failed: no valid query generated");
+        return None;
+    }
+
+    let clean_query = retry_query.replace('\n', " ").replace("```", "").trim().to_string();
+
+    // Validate the regenerated query using shared validation logic
+    if let Some(validated) = validate_and_log_query(&clean_query, tx).await {
+        send_option!(tx, Progress::CypherQuery(format!("Fixed: {validated}")));
+        Some(validated)
+    } else {
+        None
+    }
 }
 
 async fn get_or_discover_schema(
@@ -1120,6 +1232,39 @@ async fn generate_cypher_query(
     }
 
     let clean_query = query.replace('\n', " ").replace("```", "").trim().to_string();
+
+    // Validate the generated query using shared validation logic
+    if validate_and_log_query(&clean_query, tx).await.is_none() {
+        send_option!(
+            tx,
+            Progress::Status(String::from("Query validation failed, attempting to regenerate..."))
+        );
+
+        // Try to regenerate with error feedback
+        let validation_result = CypherValidator::validate(&clean_query);
+        let error_feedback = validation_result.errors.join("; ");
+        let retry_request = append_validation_feedback(&request.chat_request, &clean_query, &error_feedback);
+        let genai_chat_request = generate_create_cypher_query_chat_request(&retry_request, schema);
+        let retry_query = execute_chat(client, model, genai_chat_request, tx).await;
+
+        if !retry_query.trim().is_empty() && retry_query.trim() != "NO ANSWER" {
+            let retry_clean = retry_query.replace('\n', " ").replace("```", "").trim().to_string();
+
+            // Use shared validation for retry as well
+            if let Some(validated) = validate_and_log_query(&retry_clean, tx).await {
+                tracing::info!("Retry query passed validation");
+                send_option!(tx, Progress::CypherQuery(validated.clone()));
+                return Some(validated);
+            }
+        }
+
+        // If retry failed, still use original but warn
+        send_option!(
+            tx,
+            Progress::Status(String::from("Warning: Query validation issues detected"))
+        );
+    }
+
     send_option!(tx, Progress::CypherQuery(clean_query.clone()));
     Some(clean_query)
 }
@@ -1141,8 +1286,9 @@ async fn execute_cypher_query(
             Ok(result)
         }
         Err(e) => {
-            tracing::error!("Query execution failed: {}", e);
-            send_result!(tx, Progress::Error(format!("Query execution failed: {e}")));
+            let error_msg = e.to_string();
+            tracing::error!("Query execution failed: {}", error_msg);
+            send_result!(tx, Progress::Error(format!("Query execution failed: {error_msg}")));
             Err(())
         }
     }
@@ -1693,6 +1839,31 @@ async fn list_import_folder_files(
     tracing::info!("Found {} files in IMPORT_FOLDER: {:?}", files.len(), files);
 
     Ok(files)
+}
+
+/// Appends validation feedback to a chat request for query regeneration
+fn append_validation_feedback(
+    chat_request: &ChatRequest,
+    failed_query: &str,
+    error_message: &str,
+) -> ChatRequest {
+    let mut messages = chat_request.messages.clone();
+
+    // Add the failed query as an assistant message
+    messages.push(ChatMessage {
+        role: ChatRole::Assistant,
+        content: failed_query.to_string(),
+    });
+
+    // Add validation error as user feedback
+    messages.push(ChatMessage {
+        role: ChatRole::User,
+        content: format!(
+            "The previous query has validation errors: {error_message}. Please generate a corrected Cypher query."
+        ),
+    });
+
+    ChatRequest { messages }
 }
 
 fn generate_create_cypher_query_chat_request(

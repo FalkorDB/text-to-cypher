@@ -17,17 +17,25 @@ No more complex setup - just run one Docker command and get a complete graph dat
 
 ## Features
 
+### Core Capabilities
 - **Text to Cypher Translation**: Convert natural language queries to Cypher database queries using AI
-- **Graph Schema Discovery**: Automatically discover and analyze graph database schemas
+- **Enhanced Schema Discovery**: Automatically discover and analyze graph database schemas with example values
+- **Query Validation**: Built-in validation system to catch syntax errors before execution
+- **Self-Healing Queries**: Automatic retry with error feedback when queries fail
 - **RESTful API**: Clean HTTP API with comprehensive OpenAPI/Swagger documentation
 - **MCP Server**: Model Context Protocol server for AI assistant integrations
 - **Streaming Responses**: Real-time Server-Sent Events (SSE) streaming of query processing results
+
+### Infrastructure
 - **Integrated FalkorDB**: Built-in FalkorDB graph database with web browser interface
 - **All-in-One Docker Solution**: Complete stack in a single container - database, web UI, API, and MCP server
-- **AI Model Integration**: Powered by genai for natural language processing with support for multiple providers
-- **Environment Configuration**: Flexible configuration via `.env` file with fallback to request parameters
-- **Production Ready**: Comprehensive error handling, logging, and robust architecture
 - **Multi-Platform Support**: Docker images available for both AMD64 and ARM64 architectures
+
+### AI & Quality
+- **AI Model Integration**: Powered by genai for natural language processing with support for multiple providers
+- **Schema-Aware Generation**: Uses schema with example values for better query accuracy
+- **Production Ready**: Comprehensive error handling, logging, and robust architecture
+- **Environment Configuration**: Flexible configuration via `.env` file with fallback to request parameters
 
 ## Quick Start
 
@@ -551,6 +559,25 @@ curl -X POST "http://localhost:8080/text_to_cypher" \
 - **Web Interface**: `http://localhost:3000` for graph exploration
 - **Logs**: Use `docker logs -f <container-name>` to view all service logs
 - **Issues**: Report problems at [GitHub Issues](https://github.com/FalkorDB/text-to-cypher/issues)
+
+## Recent Improvements
+
+This project implements best practices from current research and industry leaders:
+
+### Query Quality & Reliability
+- **Query Validation**: Automatic syntax and safety validation before execution
+- **Self-Healing**: Failed queries are automatically regenerated with error feedback
+- **Enhanced Schema**: Schema discovery now includes example values for better context
+
+### Based on Research From
+- [Neo4j Labs Text2Cypher](https://github.com/neo4j-labs/text2cypher) - Industry best practices
+- [arXiv 2412.10064](https://arxiv.org/abs/2412.10064) - Text2Cypher academic research
+- [GraphRAG](https://graphrag.com/reference/graphrag/text2cypher/) - Microsoft's approach
+- [MDPI Research](https://www.mdpi.com/2076-3417/15/15/8206) - Reinforcement learning techniques
+
+### Documentation
+- [Improvements Guide](docs/IMPROVEMENTS.md) - Detailed technical improvements
+- [Best Practices](docs/BEST_PRACTICES.md) - Usage guidelines and optimization tips
 
 ## License
 
