@@ -74,10 +74,10 @@ impl Schema {
         );
 
         let mut attributes = Self::collect_attributes(graph, label, &query).await?;
-        
+
         // Collect example values for each attribute
         Self::collect_example_values(graph, label, &mut attributes, sample_size).await?;
-        
+
         Ok(attributes)
     }
 
@@ -152,10 +152,10 @@ impl Schema {
             tracing::warn!("Skipping example collection for invalid label: {}", label);
             return Ok(());
         }
-        
+
         // Limit the number of examples to collect
         let max_examples = 3.min(sample_size);
-        
+
         for attribute in attributes {
             // Validate attribute name to prevent injection
             // Be permissive but safe - allow common valid patterns
@@ -167,7 +167,7 @@ impl Schema {
                 );
                 continue;
             }
-            
+
             let query = format!(
                 r"MATCH (n:{label})
                 WHERE n.{} IS NOT NULL
@@ -175,7 +175,7 @@ impl Schema {
                 LIMIT {max_examples}",
                 attribute.name, attribute.name
             );
-            
+
             match graph.ro_query(&query).execute().await {
                 Ok(result) => {
                     let mut examples = Vec::new();
@@ -196,16 +196,11 @@ impl Schema {
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to collect examples for {}.{}: {}",
-                        label,
-                        attribute.name,
-                        e
-                    );
+                    tracing::warn!("Failed to collect examples for {}.{}: {}", label, attribute.name, e);
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -215,15 +210,17 @@ impl Schema {
         if name.is_empty() {
             return false;
         }
-        
+
         let mut chars = name.chars();
-        
+
         // First character must be letter or underscore
         if let Some(first) = chars.next()
-            && !first.is_alphabetic() && first != '_' {
-                return false;
-            }
-        
+            && !first.is_alphabetic()
+            && first != '_'
+        {
+            return false;
+        }
+
         // Remaining characters must be alphanumeric or underscore
         chars.all(|c| c.is_alphanumeric() || c == '_')
     }
@@ -235,7 +232,7 @@ impl Schema {
         if name.is_empty() {
             return false;
         }
-        
+
         let allowed = name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
         // Disallow SQL and Cypher comment patterns, semicolons, backticks, and UNION keyword
         let no_sql_comments = !name.contains("--") && !name.contains("/*") && !name.contains("*/");
