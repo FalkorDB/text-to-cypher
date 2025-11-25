@@ -5,9 +5,16 @@
 use crate::schema::discovery::Schema;
 use falkordb::{FalkorClientBuilder, FalkorConnectionInfo, FalkorValue};
 
-/// Discover schema from a FalkorDB graph
+/// Discover schema from a `FalkorDB` graph
 ///
 /// This is the core schema discovery logic shared between standalone and serverless modes.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The connection string is invalid
+/// - Failed to build the `FalkorDB` client
+/// - Failed to discover the schema from the graph
 pub async fn discover_graph_schema(
     falkordb_connection: &str,
     graph_name: &str,
@@ -30,10 +37,17 @@ pub async fn discover_graph_schema(
     Ok(schema)
 }
 
-/// Execute a Cypher query against a FalkorDB graph
+/// Execute a Cypher query against a `FalkorDB` graph
 ///
 /// This is the core query execution logic shared between standalone and serverless modes.
 /// Returns the raw query results as a vector of records.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The connection string is invalid
+/// - Failed to build the `FalkorDB` client
+/// - Query execution failed or timed out
 pub async fn execute_graph_query(
     falkordb_connection: &str,
     graph_name: &str,

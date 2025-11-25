@@ -1308,6 +1308,7 @@ async fn graph_query_with_existing_csv(
     Ok(json_result)
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn execute_query(
     query: &str,
     graph_name: &str,

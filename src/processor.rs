@@ -51,18 +51,15 @@ pub async fn process(mut request: ProcessorRequest) -> ProcessorResponse {
     };
 
     // Create genai client
-    let client = match request.key.as_ref() {
-        Some(key) => {
-            let key = key.clone();
-            let auth_resolver = AuthResolver::from_resolver_fn(
-                move |_model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
-                    Ok(Some(AuthData::from_single(key)))
-                },
-            );
-            genai::Client::builder().with_auth_resolver(auth_resolver).build()
-        }
-        None => genai::Client::default(),
-    };
+    let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
+        let key = key.clone();
+        let auth_resolver = AuthResolver::from_resolver_fn(
+            move |_model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
+                Ok(Some(AuthData::from_single(key)))
+            },
+        );
+        genai::Client::builder().with_auth_resolver(auth_resolver).build()
+    });
 
     // Resolve service target
     if let Err(e) = client.resolve_service_target(model).await {

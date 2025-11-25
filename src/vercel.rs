@@ -61,6 +61,10 @@ impl VercelResponse {
 }
 
 /// Parse request body as JSON
+///
+/// # Errors
+///
+/// Returns an error if the JSON parsing fails
 pub fn parse_json_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, String> {
     serde_json::from_str(body).map_err(|e| format!("Failed to parse JSON: {e}"))
 }
