@@ -138,6 +138,7 @@ macro_rules! send_or_empty {
 }
 
 mod chat;
+mod core;
 mod error;
 mod formatter;
 mod mcp;
@@ -1307,6 +1308,7 @@ async fn graph_query_with_existing_csv(
     Ok(json_result)
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn execute_query(
     query: &str,
     graph_name: &str,
@@ -1314,34 +1316,49 @@ async fn execute_query(
     read_only: bool,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let connection_info: FalkorConnectionInfo = falkordb_connection
-        .try_into()
-        .map_err(|e| format!("Invalid connection info: {e}"))?;
+    // For read-only queries, we still need to use the blocking version
+    // since the shared core function doesn't support read-only mode yet
+    if read_only {
+        let connection_info: FalkorConnectionInfo = falkordb_connection
+            .try_into()
+            .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
-        .await
-        .map_err(|e| format!("Failed to build client: {e}"))?;
+        let client = FalkorClientBuilder::new_async()
+            .with_connection_info(connection_info)
+            .build()
+            .await
+            .map_err(|e| format!("Failed to build client: {e}"))?;
 
-    let graph_name = graph_name.to_string();
-    let query = query.to_string();
+        let graph_name = graph_name.to_string();
+        let query = query.to_string();
 
-    // Run the FalkorDB operations in a blocking context
-    let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
-        .await
-        .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
+        // Run the FalkorDB operations in a blocking context
+        let result =
+            tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
+                .await
+                .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
 
-    let formatted_result = match result {
-        Ok(records) => format_query_records(&records),
-        Err(e) => {
-            let error_msg = format!("Query execution failed: {e}");
-            try_send_boxed!(tx, Progress::Error(error_msg.clone()));
-            return Err(error_msg.into());
+        let formatted_result = match result {
+            Ok(records) => format_query_records(&records),
+            Err(e) => {
+                let error_msg = format!("Query execution failed: {e}");
+                try_send_boxed!(tx, Progress::Error(error_msg.clone()));
+                return Err(error_msg.into());
+            }
+        };
+
+        Ok(formatted_result)
+    } else {
+        // Use shared core function for regular queries
+        match crate::core::execute_graph_query(falkordb_connection, graph_name, query, 0).await {
+            Ok(records) => Ok(format_query_records(&records)),
+            Err(e) => {
+                let error_msg = format!("Query execution failed: {e}");
+                try_send_boxed!(tx, Progress::Error(error_msg.clone()));
+                Err(error_msg.into())
+            }
         }
-    };
-
-    Ok(formatted_result)
+    }
 }
 
 async fn get_graph_schema_string(
@@ -1896,17 +1913,7 @@ async fn discover_graph_schema(
     falkordb_connection: &str,
     graph_name: &str,
 ) -> Schema {
-    let connection_info: FalkorConnectionInfo = falkordb_connection.try_into().expect("Invalid connection info");
-
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
-        .await
-        .expect("Failed to build client");
-
-    // Select the specified graph
-    let mut graph = client.select_graph(graph_name);
-    let schema = Schema::discover_from_graph(&mut graph, 100)
+    let schema = crate::core::discover_graph_schema(falkordb_connection, graph_name)
         .await
         .expect("Failed to discover schema from graph");
 
