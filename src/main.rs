@@ -1332,9 +1332,10 @@ async fn execute_query(
         let query = query.to_string();
 
         // Run the FalkorDB operations in a blocking context
-        let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
-            .await
-            .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
+        let result =
+            tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
+                .await
+                .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
 
         let formatted_result = match result {
             Ok(records) => format_query_records(&records),

@@ -1,8 +1,8 @@
 //! Vercel serverless function for text to Cypher conversion
-//! 
+//!
 //! This endpoint accepts natural language queries and converts them to Cypher queries.
 
-use text_to_cypher::processor::{process, ProcessorRequest};
+use text_to_cypher::processor::{ProcessorRequest, process};
 use text_to_cypher::vercel::{VercelRequest, VercelResponse};
 
 #[tokio::main]
@@ -10,24 +10,22 @@ async fn main() {
     // Read request from stdin (Vercel's standard input method)
     let mut buffer = String::new();
     match std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer) {
-        Ok(_) => {
-            match serde_json::from_str::<VercelRequest>(&buffer) {
-                Ok(request) => {
-                    let response = handler(&request).await;
-                    match serde_json::to_string(&response) {
-                        Ok(json) => println!("{json}"),
-                        Err(e) => eprintln!("Failed to serialize response: {e}"),
-                    }
+        Ok(_) => match serde_json::from_str::<VercelRequest>(&buffer) {
+            Ok(request) => {
+                let response = handler(&request).await;
+                match serde_json::to_string(&response) {
+                    Ok(json) => println!("{json}"),
+                    Err(e) => eprintln!("Failed to serialize response: {e}"),
                 }
-                Err(e) => eprintln!("Failed to parse request: {e}"),
             }
-        }
+            Err(e) => eprintln!("Failed to parse request: {e}"),
+        },
         Err(e) => eprintln!("Failed to read from stdin: {e}"),
     }
 }
 
 /// Handler function for Vercel serverless deployment
-/// 
+///
 /// This is the entry point that Vercel will call when the function is invoked.
 async fn handler(request: &VercelRequest) -> VercelResponse {
     // Only accept POST requests

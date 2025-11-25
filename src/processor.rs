@@ -1,13 +1,13 @@
 //! Simple text-to-cypher processor for serverless functions
-//! 
+//!
 //! This module provides a simplified, non-streaming interface for text-to-cypher
 //! conversion that can be used in serverless environments.
 
 use crate::chat::{ChatRequest, ChatRole};
 use crate::formatter::format_query_records;
 use crate::template::TemplateEngine;
-use genai::resolver::{AuthData, AuthResolver};
 use genai::ModelIden;
+use genai::resolver::{AuthData, AuthResolver};
 use serde::{Deserialize, Serialize};
 
 /// Request structure for text-to-cypher conversion
@@ -74,10 +74,9 @@ pub async fn process(mut request: ProcessorRequest) -> ProcessorResponse {
         };
     }
 
-    let falkordb_connection = request
-        .falkordb_connection
-        .clone()
-        .unwrap_or_else(|| std::env::var("FALKORDB_CONNECTION").unwrap_or_else(|_| "falkor://127.0.0.1:6379".to_string()));
+    let falkordb_connection = request.falkordb_connection.clone().unwrap_or_else(|| {
+        std::env::var("FALKORDB_CONNECTION").unwrap_or_else(|_| "falkor://127.0.0.1:6379".to_string())
+    });
 
     // Discover schema
     let schema = match discover_schema(&falkordb_connection, &request.graph_name).await {
@@ -148,7 +147,10 @@ fn get_last_user_message(request: &ProcessorRequest) -> Option<&crate::chat::Cha
         .filter(|msg| matches!(msg.role, ChatRole::User))
 }
 
-async fn discover_schema(falkordb_connection: &str, graph_name: &str) -> Result<String, String> {
+async fn discover_schema(
+    falkordb_connection: &str,
+    graph_name: &str,
+) -> Result<String, String> {
     let schema = crate::core::discover_graph_schema(falkordb_connection, graph_name).await?;
     serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))
 }
@@ -173,10 +175,9 @@ async fn generate_query(
     }
 
     // Add system prompt with schema
-    chat_req = chat_req.with_system(
-        TemplateEngine::render_system_prompt(schema)
-            .unwrap_or_else(|e| format!("Generate OpenCypher statements using this ontology: {schema}\n\nError loading template: {e}")),
-    );
+    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(schema).unwrap_or_else(|e| {
+        format!("Generate OpenCypher statements using this ontology: {schema}\n\nError loading template: {e}")
+    }));
 
     // Process last user message if exists
     if let Some(last_msg) = get_last_user_message(request) {

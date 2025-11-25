@@ -1,5 +1,5 @@
 //! Vercel serverless function adapter module
-//! 
+//!
 //! This module provides utilities for adapting the application's functionality
 //! to work with Vercel's serverless function interface.
 
@@ -25,10 +25,13 @@ pub struct VercelResponse {
 }
 
 impl VercelResponse {
-    pub fn json(status_code: u16, body: impl Serialize) -> Self {
+    pub fn json(
+        status_code: u16,
+        body: impl Serialize,
+    ) -> Self {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
-        
+
         match serde_json::to_string(&body) {
             Ok(body_str) => Self {
                 status_code,
@@ -48,7 +51,10 @@ impl VercelResponse {
     }
 
     #[must_use]
-    pub fn error(status_code: u16, message: &str) -> Self {
+    pub fn error(
+        status_code: u16,
+        message: &str,
+    ) -> Self {
         let error = serde_json::json!({ "error": message });
         Self::json(status_code, error)
     }
@@ -61,7 +67,10 @@ pub fn parse_json_body<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, St
 
 /// Get environment variable with fallback
 #[must_use]
-pub fn get_env_or_default(key: &str, default: &str) -> String {
+pub fn get_env_or_default(
+    key: &str,
+    default: &str,
+) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
