@@ -168,12 +168,15 @@ impl Schema {
                 continue;
             }
 
+            // Use backtick escaping for property names and labels to prevent injection
+            // Even with validation, this provides defense-in-depth
+            let escaped_name = Self::escape_property_name(&attribute.name);
+            let escaped_label = Self::escape_property_name(label);
             let query = format!(
-                r"MATCH (n:{label})
-                WHERE n.{} IS NOT NULL
-                RETURN DISTINCT toString(n.{}) AS value
-                LIMIT {max_examples}",
-                attribute.name, attribute.name
+                r"MATCH (n:{escaped_label})
+                WHERE n.{escaped_name} IS NOT NULL
+                RETURN DISTINCT toString(n.{escaped_name}) AS value
+                LIMIT {max_examples}"
             );
 
             match graph.ro_query(&query).execute().await {
@@ -241,6 +244,15 @@ impl Schema {
         let no_backtick = !name.contains('`');
         let no_union = !name.to_ascii_lowercase().contains("union");
         allowed && no_sql_comments && no_cypher_comment && no_semicolon && no_backtick && no_union
+    }
+
+    /// Escapes a property name for safe use in Cypher queries using backtick notation
+    /// This provides defense-in-depth even with prior validation
+    fn escape_property_name(name: &str) -> String {
+        // For Cypher, we use backticks to escape property names
+        // Any internal backticks are escaped by doubling them
+        let escaped = name.replace('`', "``");
+        format!("`{escaped}`")
     }
 
     async fn get_entity_labels(graph: &mut AsyncGraph) -> Result<Vec<String>, FalkorDBError> {
@@ -458,5 +470,20 @@ mod tests {
         assert!(!Schema::is_valid_property_name("name'"));
         assert!(!Schema::is_valid_property_name("name\""));
         assert!(!Schema::is_valid_property_name("name;"));
+    }
+
+    #[test]
+    fn test_escape_property_name() {
+        // Normal property names get backticks added
+        assert_eq!(Schema::escape_property_name("name"), "`name`");
+        assert_eq!(Schema::escape_property_name("firstName"), "`firstName`");
+        assert_eq!(Schema::escape_property_name("first_name"), "`first_name`");
+        
+        // Backticks in names get escaped by doubling
+        assert_eq!(Schema::escape_property_name("na`me"), "`na``me`");
+        assert_eq!(Schema::escape_property_name("`test`"), "```test```");
+        
+        // Empty string
+        assert_eq!(Schema::escape_property_name(""), "``");
     }
 }
