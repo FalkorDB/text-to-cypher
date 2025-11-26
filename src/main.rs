@@ -230,6 +230,9 @@ struct TextToCypherRequest {
     model: Option<String>,
     key: Option<String>,
     falkordb_connection: Option<String>,
+    #[serde(default)]
+    #[schema(default = false)]
+    cypher_only: bool,
 }
 
 impl std::fmt::Debug for TextToCypherRequest {
@@ -241,7 +244,8 @@ impl std::fmt::Debug for TextToCypherRequest {
         debug_struct
             .field("graph_name", &self.graph_name)
             .field("chat_request", &self.chat_request)
-            .field("model", &self.model);
+            .field("model", &self.model)
+            .field("cypher_only", &self.cypher_only);
 
         if self.key.is_some() {
             debug_struct.field("key", &"***");
@@ -1071,6 +1075,13 @@ async fn process_text_to_cypher_request(
         return;
     };
     let mut executed_query = initial_query.clone();
+
+    // If cypher_only is true, stop here and return just the validated query
+    if request.cypher_only {
+        tracing::info!("cypher_only mode: returning query without execution");
+        send!(tx, Progress::Result(executed_query));
+        return;
+    }
 
     // Step 4: Execute the query and get results, with self-healing on failure
     let query_result = if let Ok(result) =
