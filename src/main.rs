@@ -1079,7 +1079,7 @@ async fn process_text_to_cypher_request(
 
     // If cypher_only is true, stop here and return just the validated query
     if request.cypher_only {
-        tracing::info!("cypher_only mode: returning query without execution");
+        tracing::info!("Query preview mode: returning generated query without execution");
         send!(tx, Progress::Result(executed_query));
         return;
     }
