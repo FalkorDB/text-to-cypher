@@ -230,6 +230,7 @@ struct TextToCypherRequest {
     model: Option<String>,
     key: Option<String>,
     falkordb_connection: Option<String>,
+    /// When true, returns only the generated Cypher query without executing it or generating a final answer
     #[serde(default)]
     #[schema(default = false)]
     cypher_only: bool,
