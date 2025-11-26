@@ -230,6 +230,10 @@ struct TextToCypherRequest {
     model: Option<String>,
     key: Option<String>,
     falkordb_connection: Option<String>,
+    /// When true, returns only the generated Cypher query without executing it or generating a final answer
+    #[serde(default)]
+    #[schema(default = false)]
+    cypher_only: bool,
 }
 
 impl std::fmt::Debug for TextToCypherRequest {
@@ -241,7 +245,8 @@ impl std::fmt::Debug for TextToCypherRequest {
         debug_struct
             .field("graph_name", &self.graph_name)
             .field("chat_request", &self.chat_request)
-            .field("model", &self.model);
+            .field("model", &self.model)
+            .field("cypher_only", &self.cypher_only);
 
         if self.key.is_some() {
             debug_struct.field("key", &"***");
@@ -1071,6 +1076,13 @@ async fn process_text_to_cypher_request(
         return;
     };
     let mut executed_query = initial_query.clone();
+
+    // If cypher_only is true, stop here and return just the validated query
+    if request.cypher_only {
+        tracing::info!("Query preview mode: returning generated query without execution");
+        send!(tx, Progress::Result(executed_query));
+        return;
+    }
 
     // Step 4: Execute the query and get results, with self-healing on failure
     let query_result = if let Ok(result) =
@@ -2196,4 +2208,104 @@ async fn process_chat_stream(
     tracing::info!("Final answer: {}", answer);
     send_or_empty!(tx, Progress::Result(answer.clone()));
     answer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that `cypher_only` defaults to `false` when not specified in the JSON
+    #[test]
+    fn test_cypher_only_defaults_to_false() {
+        let json = r#"{
+            "graph_name": "test_graph",
+            "chat_request": {
+                "messages": [{"role": "user", "content": "Test question"}]
+            }
+        }"#;
+
+        let request: TextToCypherRequest = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(
+            !request.cypher_only,
+            "cypher_only should default to false when not specified"
+        );
+    }
+
+    /// Test that `cypher_only` is correctly deserialized when explicitly set to `true`
+    #[test]
+    fn test_cypher_only_true_when_specified() {
+        let json = r#"{
+            "graph_name": "test_graph",
+            "chat_request": {
+                "messages": [{"role": "user", "content": "Test question"}]
+            },
+            "cypher_only": true
+        }"#;
+
+        let request: TextToCypherRequest = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(request.cypher_only, "cypher_only should be true when explicitly set");
+    }
+
+    /// Test that `cypher_only` is correctly deserialized when explicitly set to `false`
+    #[test]
+    fn test_cypher_only_false_when_specified() {
+        let json = r#"{
+            "graph_name": "test_graph",
+            "chat_request": {
+                "messages": [{"role": "user", "content": "Test question"}]
+            },
+            "cypher_only": false
+        }"#;
+
+        let request: TextToCypherRequest = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(
+            !request.cypher_only,
+            "cypher_only should be false when explicitly set to false"
+        );
+    }
+
+    /// Test that the request serializes correctly with `cypher_only` set to `true`
+    #[test]
+    fn test_cypher_only_serialization() {
+        let request = TextToCypherRequest {
+            graph_name: "test_graph".to_string(),
+            chat_request: ChatRequest {
+                messages: vec![ChatMessage {
+                    role: ChatRole::User,
+                    content: "Test question".to_string(),
+                }],
+            },
+            model: None,
+            key: None,
+            falkordb_connection: None,
+            cypher_only: true,
+        };
+
+        let json = serde_json::to_string(&request).expect("Failed to serialize");
+        assert!(
+            json.contains("\"cypher_only\":true"),
+            "Serialized JSON should contain cypher_only: true"
+        );
+    }
+
+    /// Test that optional fields work correctly with `cypher_only`
+    #[test]
+    fn test_cypher_only_with_optional_fields() {
+        let json = r#"{
+            "graph_name": "test_graph",
+            "chat_request": {
+                "messages": [{"role": "user", "content": "Test question"}]
+            },
+            "model": "gpt-4",
+            "key": "test-api-key",
+            "falkordb_connection": "falkor://localhost:6379",
+            "cypher_only": true
+        }"#;
+
+        let request: TextToCypherRequest = serde_json::from_str(json).expect("Failed to deserialize");
+        assert!(request.cypher_only, "cypher_only should be true");
+        assert_eq!(request.model, Some("gpt-4".to_string()));
+        assert_eq!(request.key, Some("test-api-key".to_string()));
+        assert_eq!(request.falkordb_connection, Some("falkor://localhost:6379".to_string()));
+    }
 }
