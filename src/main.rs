@@ -1090,7 +1090,6 @@ async fn process_text_to_cypher_request(
     let query_result = if let Ok(result) =
         execute_cypher_query(&executed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
     {
-        tracing::info!("first before query_result: {}", result);
         result  
     } else {
         // Try self-healing: regenerate query with error feedback
@@ -1318,16 +1317,6 @@ async fn generate_final_answer(
     tx: &mpsc::Sender<sse::Event>,
 ) {
     let sanitized_result = sanitize_query_result(query_result, QUERY_RESULT_MAX_PROPERTY_LENGTH);
-    if sanitized_result != query_result {
-        tracing::debug!("Query result sanitized before sending to AI model");
-    }
-    tracing::info!("query_result: {}", sanitized_result);
-    send!(
-        tx,
-        Progress::Status(String::from(
-            "Generating answer from chat history and Cypher output using AI model..."
-        ))
-    );
     let genai_chat_request = generate_answer_chat_request(&request.chat_request, query, &sanitized_result);
     execute_chat_stream(client, model, genai_chat_request, tx).await;
 }
@@ -2276,12 +2265,10 @@ async fn execute_chat(
         }
     };
 
-    let content = chat_response
+    chat_response
         .content_text_into_string()
-        .unwrap_or_else(|| String::from("NO ANSWER"));
+        .unwrap_or_else(|| String::from("NO ANSWER"))
 
-    tracing::info!("Generated chat response: {}", content);
-    content
 }
 
 async fn execute_chat_stream(
@@ -2290,12 +2277,6 @@ async fn execute_chat_stream(
     genai_chat_request: genai::chat::ChatRequest,
     tx: &mpsc::Sender<sse::Event>,
 ) -> String {
-    if let Ok(pretty_json) = serde_json::to_string_pretty(&genai_chat_request) {
-        tracing::info!("Streaming genai chat request:\n{}", pretty_json);
-    } else {
-        tracing::info!("Streaming genai chat request: {:?}", genai_chat_request);
-    }
-
     // Make the actual request to the model
     let chat_response = match client.exec_chat_stream(model, genai_chat_request, None).await {
         Ok(response) => response,
