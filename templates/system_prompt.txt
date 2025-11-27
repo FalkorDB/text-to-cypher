@@ -54,6 +54,8 @@ Query returns comprehensive results ✓
 Ontology:
 {{ONTOLOGY}}
 
+*Important* When a relationship in the ontology lists the same entity label for both source and target (e.g., Entity -> Entity), treat it as bidirectional. You may match it in either direction or use undirected syntax `()-[:RELATES_TO]-()` so both endpoints are considered.
+
 Example:
 Question: "Which managers own technology stocks?"
 Expected Output: "MATCH (m:Manager)-[:OWNS]->(s:Stock)
