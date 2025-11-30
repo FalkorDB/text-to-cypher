@@ -1090,7 +1090,7 @@ async fn process_text_to_cypher_request(
     let query_result = if let Ok(result) =
         execute_cypher_query(&executed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
     {
-        result  
+        result
     } else {
         // Try self-healing: regenerate query with error feedback
         tracing::info!("First query execution failed, attempting self-healing...");
@@ -1321,7 +1321,10 @@ async fn generate_final_answer(
     execute_chat_stream(client, model, genai_chat_request, tx).await;
 }
 
-fn sanitize_query_result(query_result: &str, max_len: usize) -> String {
+fn sanitize_query_result(
+    query_result: &str,
+    max_len: usize,
+) -> String {
     let truncate = |text: &str| -> String {
         if text.chars().count() <= max_len {
             text.to_string()
@@ -2254,7 +2257,6 @@ async fn execute_chat(
     genai_chat_request: genai::chat::ChatRequest,
     tx: &mpsc::Sender<sse::Event>,
 ) -> String {
-
     // Make the actual request to the model
     let chat_response = match client.exec_chat(model, genai_chat_request, None).await {
         Ok(response) => response,
@@ -2268,7 +2270,6 @@ async fn execute_chat(
     chat_response
         .content_text_into_string()
         .unwrap_or_else(|| String::from("NO ANSWER"))
-
 }
 
 async fn execute_chat_stream(
