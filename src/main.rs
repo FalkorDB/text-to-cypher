@@ -1350,14 +1350,18 @@ fn sanitize_query_result(
     query_result: &str,
     max_len: usize,
 ) -> String {
-    let truncate = |text: &str| -> String {
+    // Helper function to truncate text to max_len characters with "..." suffix
+    fn truncate_text(
+        text: &str,
+        max_len: usize,
+    ) -> String {
         if text.chars().count() <= max_len {
             text.to_string()
         } else {
             let truncated: String = text.chars().take(max_len).collect();
             format!("{truncated}...")
         }
-    };
+    }
 
     if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(query_result) {
         let mut stack = vec![&mut value];
@@ -1365,8 +1369,7 @@ fn sanitize_query_result(
             match current {
                 serde_json::Value::String(s) => {
                     if s.chars().count() > max_len {
-                        let truncated: String = s.chars().take(max_len).collect();
-                        *s = format!("{truncated}...");
+                        *s = truncate_text(s, max_len);
                     }
                 }
                 serde_json::Value::Array(arr) => stack.extend(arr.iter_mut()),
@@ -1374,7 +1377,7 @@ fn sanitize_query_result(
                 _ => {}
             }
         }
-        return serde_json::to_string(&value).unwrap_or_else(|_| truncate(query_result));
+        return serde_json::to_string(&value).unwrap_or_else(|_| truncate_text(query_result, max_len));
     }
 
     if query_result.is_empty() {
@@ -1386,14 +1389,11 @@ fn sanitize_query_result(
     let mut escape = false;
     let bytes = query_result.as_bytes();
 
-    // Use char_indices() to iterate once over the string efficiently
-    // This avoids repeatedly creating iterators and slicing the string
-    let char_indices: Vec<(usize, char)> = query_result.char_indices().collect();
-    let mut char_idx = 0;
+    // Use char_indices() iterator directly to avoid allocations
+    // This iterates once over the string efficiently
+    let mut chars_iter = query_result.char_indices().peekable();
 
-    while char_idx < char_indices.len() {
-        let (idx, ch) = char_indices[char_idx];
-
+    while let Some((idx, ch)) = chars_iter.next() {
         if ch == '\\' && !escape {
             escape = true;
         } else {
@@ -1411,6 +1411,7 @@ fn sanitize_query_result(
             if let Some(colon_pos) = window_bytes.iter().rposition(|b| *b == b':') {
                 let suffix_bytes = &window_bytes[colon_pos..];
                 if !suffix_bytes.contains(&b'\n') && !suffix_bytes.contains(&b'\r') {
+                    // depth starts at 1 because we've already seen the opening '['
                     let mut depth = 1usize;
                     let mut end = idx + 1;
                     let mut matched = false;
@@ -1435,18 +1436,18 @@ fn sanitize_query_result(
                     if matched {
                         let inner = &query_result[idx + 1..end];
                         if inner.chars().count() > max_len {
-                            let truncated: String = inner.chars().take(max_len).collect();
                             result.push('[');
-                            result.push_str(&truncated);
-                            result.push_str("...");
+                            result.push_str(&truncate_text(inner, max_len));
                             result.push(']');
                         } else {
                             result.push_str(&query_result[idx..=end]);
                         }
-                        // Skip to after the closing bracket
-                        // Find the char_idx corresponding to end+1
-                        while char_idx < char_indices.len() && char_indices[char_idx].0 <= end {
-                            char_idx += 1;
+                        // Skip characters in the iterator until we pass 'end'
+                        while let Some(&(next_idx, _)) = chars_iter.peek() {
+                            if next_idx > end {
+                                break;
+                            }
+                            chars_iter.next();
                         }
                         continue;
                     }
@@ -1455,11 +1456,10 @@ fn sanitize_query_result(
         }
 
         result.push(ch);
-        char_idx += 1;
     }
 
     if result.is_empty() {
-        truncate(query_result)
+        truncate_text(query_result, max_len)
     } else {
         result
     }
