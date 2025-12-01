@@ -1314,6 +1314,13 @@ async fn generate_final_answer(
     model: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) {
+    send!(
+        tx,
+        Progress::Status(String::from(
+            "Generating answer from chat history and Cypher output using AI model..."
+        ))
+    );
+
     let genai_chat_request = generate_answer_chat_request(&request.chat_request, query, query_result);
     execute_chat_stream(client, model, genai_chat_request, tx).await;
 }
@@ -2153,7 +2160,6 @@ async fn execute_chat(
             return String::from("NO ANSWER");
         }
     };
-
     chat_response
         .content_text_into_string()
         .unwrap_or_else(|| String::from("NO ANSWER"))
