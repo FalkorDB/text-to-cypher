@@ -1368,9 +1368,7 @@ fn sanitize_query_result(
         while let Some(current) = stack.pop() {
             match current {
                 serde_json::Value::String(s) => {
-                    if s.chars().count() > max_len {
-                        *s = truncate_text(s, max_len);
-                    }
+                    *s = truncate_text(s, max_len);
                 }
                 serde_json::Value::Array(arr) => stack.extend(arr.iter_mut()),
                 serde_json::Value::Object(map) => stack.extend(map.values_mut()),
@@ -1412,7 +1410,7 @@ fn sanitize_query_result(
                 let suffix_bytes = &window_bytes[colon_pos..];
                 if !suffix_bytes.contains(&b'\n') && !suffix_bytes.contains(&b'\r') {
                     // depth starts at 1 because we've already seen the opening '['
-                    let mut depth = 1usize;
+                    let mut depth = 1;
                     let mut end = idx + 1;
                     let mut matched = false;
 
