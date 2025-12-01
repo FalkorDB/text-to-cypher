@@ -166,8 +166,6 @@ struct AppConfig {
 
 static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
 
-const QUERY_RESULT_MAX_PROPERTY_LENGTH: usize = 100;
-
 impl AppConfig {
     fn load() -> Self {
         // Load .env file if it exists, but don't fail if it doesn't
@@ -1316,119 +1314,8 @@ async fn generate_final_answer(
     model: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) {
-    let sanitized_result = sanitize_query_result(query_result, QUERY_RESULT_MAX_PROPERTY_LENGTH);
-    let genai_chat_request = generate_answer_chat_request(&request.chat_request, query, &sanitized_result);
+    let genai_chat_request = generate_answer_chat_request(&request.chat_request, query, query_result);
     execute_chat_stream(client, model, genai_chat_request, tx).await;
-}
-
-fn sanitize_query_result(
-    query_result: &str,
-    max_len: usize,
-) -> String {
-    let truncate = |text: &str| -> String {
-        if text.chars().count() <= max_len {
-            text.to_string()
-        } else {
-            let truncated: String = text.chars().take(max_len).collect();
-            format!("{truncated}...")
-        }
-    };
-
-    if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(query_result) {
-        let mut stack = vec![&mut value];
-        while let Some(current) = stack.pop() {
-            match current {
-                serde_json::Value::String(s) => {
-                    if s.chars().count() > max_len {
-                        let truncated: String = s.chars().take(max_len).collect();
-                        *s = format!("{truncated}...");
-                    }
-                }
-                serde_json::Value::Array(arr) => stack.extend(arr.iter_mut()),
-                serde_json::Value::Object(map) => stack.extend(map.values_mut()),
-                _ => {}
-            }
-        }
-        return serde_json::to_string(&value).unwrap_or_else(|_| truncate(query_result));
-    }
-
-    if query_result.is_empty() {
-        return String::new();
-    }
-
-    let mut result = String::with_capacity(query_result.len());
-    let mut idx = 0;
-    let mut in_string = false;
-    let mut escape = false;
-    let bytes = query_result.as_bytes();
-
-    while idx < query_result.len() {
-        let ch = query_result[idx..].chars().next().unwrap();
-
-        if ch == '\\' && !escape {
-            escape = true;
-        } else {
-            if ch == '"' && !escape {
-                in_string = !in_string;
-            }
-            escape = false;
-        }
-
-        if ch == '[' && !in_string {
-            let window_start = idx.saturating_sub(256);
-            let window = &query_result[window_start..idx];
-            if let Some(colon_pos) = window.rfind(':') {
-                let suffix = &window[colon_pos..];
-                if !suffix.contains('\n') && !suffix.contains('\r') {
-                    let mut depth = 0usize;
-                    let mut end = idx;
-                    let mut matched = false;
-
-                    while end < bytes.len() {
-                        match bytes[end] {
-                            b'[' => depth += 1,
-                            b']' => {
-                                if depth == 0 {
-                                    break;
-                                }
-                                depth -= 1;
-                                if depth == 0 {
-                                    matched = true;
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                        end += 1;
-                    }
-
-                    if matched {
-                        let inner = &query_result[idx + 1..end];
-                        if inner.chars().count() > max_len {
-                            let truncated: String = inner.chars().take(max_len).collect();
-                            result.push('[');
-                            result.push_str(&truncated);
-                            result.push_str("...");
-                            result.push(']');
-                        } else {
-                            result.push_str(&query_result[idx..=end]);
-                        }
-                        idx = end + 1;
-                        continue;
-                    }
-                }
-            }
-        }
-
-        result.push(ch);
-        idx += ch.len_utf8();
-    }
-
-    if result.is_empty() {
-        truncate(query_result)
-    } else {
-        result
-    }
 }
 
 #[allow(dead_code)]

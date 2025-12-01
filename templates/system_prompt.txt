@@ -11,7 +11,11 @@ Query Construction Rules:
 2. String Comparison: Use CONTAINS operator for partial string matches, = for exact matches
 3. Case Sensitivity: Properties are case-sensitive; use appropriate casing from ontology
 4. Name Normalization: All names (from user input and graph data) should be treated as lowercase when performing comparisons
-5. Comprehensive Results: Return complete entity objects and relationships, not just requested attributes
+5. Selective Returns: ALWAYS prefer returning specific properties over full entities:
+   - Questions asking "which", "what", "show", "list" + property/name/identifier → RETURN only those fields
+   - Example: "which properties connect entities" → RETURN p.name (NOT RETURN p)
+   - Example: "what are the names" → RETURN e.name (NOT RETURN e)
+   - Only return full entities for exploratory "describe", "tell me about", or relationship visualization queries
 6. Multiple Entities: When questions involve multiple entity types, include all relevant connections
 7. Simple Queries: For declarative statements or single entity names, extract the relevant entity and return it with its direct relationships (1-hop only)
 
