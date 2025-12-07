@@ -116,21 +116,6 @@ fn format_falkor_value(value: &FalkorValue) -> String {
             // but clean it up for better readability
             let debug_str = format!("{value:?}");
 
-            // Check if this is a vector type (Vec32) and truncate it
-            if debug_str.contains("Vec32") {
-                // Extract just the first few values from the vector
-                if let Some(values_start) = debug_str.find("values: [") {
-                    let after_bracket = values_start + 9;
-                    if let Some(values_section) = debug_str.get(after_bracket..) {
-                        // Find the first few comma-separated values
-                        let parts: Vec<&str> = values_section.split(',').take(3).collect();
-                        let preview = parts.join(",");
-                        // Return just the vector type with truncated preview
-                        return format!("Vec32([{}...])", preview.trim());
-                    }
-                }
-            }
-
             // If it's a string-like value, try to extract just the content
             if debug_str.starts_with("SimpleString(") && debug_str.ends_with(')') {
                 let content = &debug_str[13..debug_str.len() - 1];
