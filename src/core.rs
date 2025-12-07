@@ -14,31 +14,39 @@ use genai::{Client as GenAiClient, ModelIden};
 use std::error::Error;
 
 /// Discovers the graph schema and returns it as a JSON string
+///
+/// # Errors
+///
+/// Returns an error if connection fails, schema discovery fails, or JSON serialization fails
 pub async fn discover_graph_schema(
     falkordb_connection: &str,
     graph_name: &str,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let connection_info: FalkorConnectionInfo = falkordb_connection
         .try_into()
-        .map_err(|e| format!("Invalid connection info: {}", e))?;
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
 
     let client = FalkorClientBuilder::new_async()
         .with_connection_info(connection_info)
         .build()
         .await
-        .map_err(|e| format!("Failed to build client: {}", e))?;
+        .map_err(|e| format!("Failed to build client: {e}"))?;
 
     let mut graph = client.select_graph(graph_name);
     let schema = Schema::discover_from_graph(&mut graph, 100)
         .await
-        .map_err(|e| format!("Failed to discover schema: {}", e))?;
+        .map_err(|e| format!("Failed to discover schema: {e}"))?;
 
-    let json_schema = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {}", e))?;
+    let json_schema = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))?;
 
     Ok(json_schema)
 }
 
 /// Generates a Cypher query from natural language using AI
+///
+/// # Errors
+///
+/// Returns an error if AI chat request fails, validation fails, or no query is generated
 pub async fn generate_cypher_query(
     chat_request: &ChatRequest,
     schema: &str,
@@ -50,7 +58,7 @@ pub async fn generate_cypher_query(
     let chat_response = client
         .exec_chat(model, genai_chat_request, None)
         .await
-        .map_err(|e| format!("Chat request failed: {}", e))?;
+        .map_err(|e| format!("Chat request failed: {e}"))?;
 
     let query = chat_response
         .content_text_into_string()
@@ -72,6 +80,10 @@ pub async fn generate_cypher_query(
 }
 
 /// Executes a Cypher query against the graph database
+///
+/// # Errors
+///
+/// Returns an error if connection fails, query execution fails, or task spawning fails
 pub async fn execute_cypher_query(
     query: &str,
     graph_name: &str,
@@ -80,26 +92,30 @@ pub async fn execute_cypher_query(
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
     let connection_info: FalkorConnectionInfo = falkordb_connection
         .try_into()
-        .map_err(|e| format!("Invalid connection info: {}", e))?;
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
 
     let client = FalkorClientBuilder::new_async()
         .with_connection_info(connection_info)
         .build()
         .await
-        .map_err(|e| format!("Failed to build client: {}", e))?;
+        .map_err(|e| format!("Failed to build client: {e}"))?;
 
     let graph_name = graph_name.to_string();
     let query = query.to_string();
 
     let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
         .await
-        .map_err(|e| format!("Failed to execute blocking task: {}", e))??;
+        .map_err(|e| format!("Failed to execute blocking task: {e}"))??;
 
     let formatted_result = format_query_records(&result);
     Ok(formatted_result)
 }
 
 /// Generates a final answer using AI based on the query and results
+///
+/// # Errors
+///
+/// Returns an error if the AI chat request fails
 pub async fn generate_final_answer(
     chat_request: &ChatRequest,
     cypher_query: &str,
@@ -112,7 +128,7 @@ pub async fn generate_final_answer(
     let chat_response = client
         .exec_chat(model, genai_chat_request, None)
         .await
-        .map_err(|e| format!("Chat request failed: {}", e))?;
+        .map_err(|e| format!("Chat request failed: {e}"))?;
 
     let answer = chat_response
         .content_text_into_string()
@@ -121,25 +137,23 @@ pub async fn generate_final_answer(
     Ok(answer)
 }
 
-/// Creates a GenAI client with optional custom API key
+/// Creates a `GenAI` client with optional custom API key
+#[must_use]
 pub fn create_genai_client(api_key: Option<&str>) -> GenAiClient {
-    match api_key {
-        Some(key) => {
-            let key = key.to_string();
-            let auth_resolver = AuthResolver::from_resolver_fn(
-                move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
-                    let ModelIden {
-                        adapter_kind,
-                        model_name,
-                    } = model_iden;
-                    tracing::info!("Using custom auth provider for {adapter_kind} (model: {model_name})");
-                    Ok(Some(AuthData::from_single(key.clone())))
-                },
-            );
-            GenAiClient::builder().with_auth_resolver(auth_resolver).build()
-        }
-        None => GenAiClient::default(),
-    }
+    api_key.map_or_else(GenAiClient::default, |key| {
+        let key = key.to_string();
+        let auth_resolver = AuthResolver::from_resolver_fn(
+            move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
+                let ModelIden {
+                    adapter_kind,
+                    model_name,
+                } = model_iden;
+                tracing::info!("Using custom auth provider for {adapter_kind} (model: {model_name})");
+                Ok(Some(AuthData::from_single(key.clone())))
+            },
+        );
+        GenAiClient::builder().with_auth_resolver(auth_resolver).build()
+    })
 }
 
 // Private helper functions
@@ -230,7 +244,7 @@ fn execute_query_blocking(
     query: &str,
     read_only: bool,
 ) -> Result<Vec<Vec<falkordb::FalkorValue>>, Box<dyn Error + Send + Sync>> {
-    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
 
     rt.block_on(async {
         let mut graph = client.select_graph(graph_name);
@@ -239,13 +253,13 @@ fn execute_query_blocking(
                 .ro_query(query)
                 .execute()
                 .await
-                .map_err(|e| format!("Query execution failed: {}", e))?
+                .map_err(|e| format!("Query execution failed: {e}"))?
         } else {
             graph
                 .query(query)
                 .execute()
                 .await
-                .map_err(|e| format!("Query execution failed: {}", e))?
+                .map_err(|e| format!("Query execution failed: {e}"))?
         };
 
         let mut records = Vec::new();

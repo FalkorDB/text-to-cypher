@@ -35,6 +35,7 @@ pub struct TextToCypherResponse {
 }
 
 impl TextToCypherResponse {
+    #[must_use]
     pub fn success(
         schema: String,
         cypher_query: String,
@@ -51,6 +52,7 @@ impl TextToCypherResponse {
         }
     }
 
+    #[must_use]
     pub fn error(error_message: String) -> Self {
         Self {
             status: "error".to_string(),
@@ -64,6 +66,10 @@ impl TextToCypherResponse {
 }
 
 /// Main processor function for non-streaming text-to-cypher conversion
+///
+/// # Panics
+///
+/// Panics if model is None after validation (which should never happen due to the validation check)
 pub async fn process_text_to_cypher(
     request: TextToCypherRequest,
     default_model: Option<String>,
@@ -89,7 +95,7 @@ pub async fn process_text_to_cypher(
     let service_target = match client.resolve_service_target(&model).await {
         Ok(target) => target,
         Err(e) => {
-            return TextToCypherResponse::error(format!("Failed to resolve service target: {}", e));
+            return TextToCypherResponse::error(format!("Failed to resolve service target: {e}"));
         }
     };
 
@@ -112,7 +118,7 @@ pub async fn process_text_to_cypher(
                 s
             }
             Err(e) => {
-                return TextToCypherResponse::error(format!("Failed to discover schema: {}", e));
+                return TextToCypherResponse::error(format!("Failed to discover schema: {e}"));
             }
         }
     };
@@ -121,7 +127,7 @@ pub async fn process_text_to_cypher(
     let cypher_query = match generate_cypher_query(&request.chat_request, &schema, &client, &model).await {
         Ok(q) => q,
         Err(e) => {
-            return TextToCypherResponse::error(format!("Failed to generate query: {}", e));
+            return TextToCypherResponse::error(format!("Failed to generate query: {e}"));
         }
     };
 
@@ -174,8 +180,7 @@ pub async fn process_text_to_cypher(
                 }
                 Err(heal_error) => {
                     return TextToCypherResponse::error(format!(
-                        "Query execution failed: {}. Self-healing also failed: {}",
-                        e, heal_error
+                        "Query execution failed: {e}. Self-healing also failed: {heal_error}"
                     ));
                 }
             }
@@ -220,8 +225,7 @@ async fn attempt_self_healing(
     retry_request.messages.push(ChatMessage {
         role: ChatRole::User,
         content: format!(
-            "The previous query failed with error: {}. Please generate a corrected Cypher query.",
-            error_message
+            "The previous query failed with error: {error_message}. Please generate a corrected Cypher query."
         ),
     });
 

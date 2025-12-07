@@ -1,7 +1,7 @@
 //! Vercel serverless function for text-to-cypher conversion
 //!
 //! This handler processes natural language queries and converts them to Cypher queries
-//! for FalkorDB graph databases. It runs as a serverless function on Vercel.
+//! for `FalkorDB` graph databases. It runs as a serverless function on Vercel.
 
 use serde_json::json;
 use std::env;
@@ -19,6 +19,11 @@ async fn main() -> Result<(), Error> {
     run(handler).await
 }
 
+/// Handles incoming HTTP requests for text-to-cypher conversion
+///
+/// # Errors
+///
+/// Returns an error if response building fails or JSON serialization fails
 pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     tracing::info!("Received request: {} {}", req.method(), req.uri().path());
 

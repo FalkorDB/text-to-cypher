@@ -23,6 +23,11 @@ pub struct VercelResponse {
 }
 
 impl VercelResponse {
+    /// Creates a JSON response
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails
     pub fn json(
         status_code: u16,
         body: impl Serialize,
@@ -38,6 +43,7 @@ impl VercelResponse {
         })
     }
 
+    #[must_use]
     pub fn error(
         status_code: u16,
         message: &str,
@@ -58,14 +64,21 @@ impl VercelResponse {
         }
     }
 
+    /// Creates a 200 OK response
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails
     pub fn ok(body: impl Serialize) -> Result<Self, serde_json::Error> {
         Self::json(200, body)
     }
 
+    #[must_use]
     pub fn bad_request(message: &str) -> Self {
         Self::error(400, message)
     }
 
+    #[must_use]
     pub fn internal_error(message: &str) -> Self {
         Self::error(500, message)
     }
