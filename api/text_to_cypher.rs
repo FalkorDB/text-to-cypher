@@ -63,17 +63,10 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     // Get default configuration from environment
     let default_model = env::var("DEFAULT_MODEL").ok();
     let default_key = env::var("DEFAULT_KEY").ok();
-    let default_connection = env::var("FALKORDB_CONNECTION")
-        .unwrap_or_else(|_| "falkor://127.0.0.1:6379".to_string());
+    let default_connection = env::var("FALKORDB_CONNECTION").unwrap_or_else(|_| "falkor://127.0.0.1:6379".to_string());
 
     // Process the request
-    let response = process_text_to_cypher(
-        request,
-        default_model,
-        default_key,
-        default_connection,
-    )
-    .await;
+    let response = process_text_to_cypher(request, default_model, default_key, default_connection).await;
 
     // Return response
     let status = if response.status == "success" {

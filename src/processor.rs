@@ -5,8 +5,7 @@
 
 use crate::chat::ChatRequest;
 use crate::core::{
-    create_genai_client, discover_graph_schema, execute_cypher_query, generate_cypher_query,
-    generate_final_answer,
+    create_genai_client, discover_graph_schema, execute_cypher_query, generate_cypher_query, generate_final_answer,
 };
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -74,16 +73,11 @@ pub async fn process_text_to_cypher(
     // Apply defaults
     let model = request.model.clone().or(default_model);
     let key = request.key.clone().or(default_key);
-    let falkordb_connection = request
-        .falkordb_connection
-        .clone()
-        .unwrap_or(default_connection);
+    let falkordb_connection = request.falkordb_connection.clone().unwrap_or(default_connection);
 
     // Validate required parameters
     if model.is_none() {
-        return TextToCypherResponse::error(
-            "Model must be provided either in request or as DEFAULT_MODEL".to_string(),
-        );
+        return TextToCypherResponse::error("Model must be provided either in request or as DEFAULT_MODEL".to_string());
     }
 
     let model = model.unwrap();
@@ -95,10 +89,7 @@ pub async fn process_text_to_cypher(
     let service_target = match client.resolve_service_target(&model).await {
         Ok(target) => target,
         Err(e) => {
-            return TextToCypherResponse::error(format!(
-                "Failed to resolve service target: {}",
-                e
-            ));
+            return TextToCypherResponse::error(format!("Failed to resolve service target: {}", e));
         }
     };
 
@@ -142,13 +133,7 @@ pub async fn process_text_to_cypher(
     }
 
     // Step 3: Execute query
-    let cypher_result = match execute_cypher_query(
-        &cypher_query,
-        &request.graph_name,
-        &falkordb_connection,
-        true,
-    )
-    .await
+    let cypher_result = match execute_cypher_query(&cypher_query, &request.graph_name, &falkordb_connection, true).await
     {
         Ok(r) => r,
         Err(e) => {
@@ -185,12 +170,7 @@ pub async fn process_text_to_cypher(
                         }
                     };
 
-                    return TextToCypherResponse::success(
-                        schema,
-                        healed_query,
-                        Some(healed_result),
-                        answer,
-                    );
+                    return TextToCypherResponse::success(schema, healed_query, Some(healed_result), answer);
                 }
                 Err(heal_error) => {
                     return TextToCypherResponse::error(format!(
@@ -205,21 +185,14 @@ pub async fn process_text_to_cypher(
     tracing::info!("Query executed successfully");
 
     // Step 4: Generate final answer
-    let answer = match generate_final_answer(
-        &request.chat_request,
-        &cypher_query,
-        &cypher_result,
-        &client,
-        &model,
-    )
-    .await
-    {
-        Ok(a) => Some(a),
-        Err(e) => {
-            tracing::error!("Failed to generate answer: {}", e);
-            None
-        }
-    };
+    let answer =
+        match generate_final_answer(&request.chat_request, &cypher_query, &cypher_result, &client, &model).await {
+            Ok(a) => Some(a),
+            Err(e) => {
+                tracing::error!("Failed to generate answer: {}", e);
+                None
+            }
+        };
 
     TextToCypherResponse::success(schema, cypher_query, Some(cypher_result), answer)
 }
@@ -258,13 +231,7 @@ async fn attempt_self_healing(
     tracing::info!("Self-healed query generated: {}", healed_query);
 
     // Try executing the healed query
-    let result = execute_cypher_query(
-        &healed_query,
-        &request.graph_name,
-        falkordb_connection,
-        true,
-    )
-    .await?;
+    let result = execute_cypher_query(&healed_query, &request.graph_name, falkordb_connection, true).await?;
 
     Ok((healed_query, result))
 }

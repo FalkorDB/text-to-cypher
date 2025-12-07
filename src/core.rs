@@ -9,8 +9,8 @@ use crate::schema::discovery::Schema;
 use crate::template::TemplateEngine;
 use crate::validator::CypherValidator;
 use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo};
-use genai::{Client as GenAiClient, ModelIden};
 use genai::resolver::{AuthData, AuthResolver};
+use genai::{Client as GenAiClient, ModelIden};
 use std::error::Error;
 
 /// Discovers the graph schema and returns it as a JSON string
@@ -33,8 +33,7 @@ pub async fn discover_graph_schema(
         .await
         .map_err(|e| format!("Failed to discover schema: {}", e))?;
 
-    let json_schema = serde_json::to_string(&schema)
-        .map_err(|e| format!("Failed to serialize schema: {}", e))?;
+    let json_schema = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {}", e))?;
 
     Ok(json_schema)
 }
@@ -66,11 +65,7 @@ pub async fn generate_cypher_query(
     // Validate the query
     let validation_result = CypherValidator::validate(&clean_query);
     if !validation_result.is_valid {
-        return Err(format!(
-            "Query validation failed: {}",
-            validation_result.errors.join("; ")
-        )
-        .into());
+        return Err(format!("Query validation failed: {}", validation_result.errors.join("; ")).into());
     }
 
     Ok(clean_query)
@@ -96,11 +91,9 @@ pub async fn execute_cypher_query(
     let graph_name = graph_name.to_string();
     let query = query.to_string();
 
-    let result = tokio::task::spawn_blocking(move || {
-        execute_query_blocking(&client, &graph_name, &query, read_only)
-    })
-    .await
-    .map_err(|e| format!("Failed to execute blocking task: {}", e))??;
+    let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
+        .await
+        .map_err(|e| format!("Failed to execute blocking task: {}", e))??;
 
     let formatted_result = format_query_records(&result);
     Ok(formatted_result)
@@ -158,8 +151,7 @@ fn create_cypher_query_chat_request(
     let mut chat_req = genai::chat::ChatRequest::default();
 
     for (index, message) in chat_request.messages.iter().enumerate() {
-        let is_last_user_message = index == chat_request.messages.len() - 1
-            && message.role == ChatRole::User;
+        let is_last_user_message = index == chat_request.messages.len() - 1 && message.role == ChatRole::User;
 
         let genai_message = match message.role {
             ChatRole::User => {
@@ -177,12 +169,10 @@ fn create_cypher_query_chat_request(
         chat_req = chat_req.append_message(genai_message);
     }
 
-    chat_req = chat_req.with_system(
-        TemplateEngine::render_system_prompt(ontology).unwrap_or_else(|e| {
-            tracing::error!("Failed to load system prompt template: {}", e);
-            format!("Generate OpenCypher statements using this ontology: {ontology}")
-        }),
-    );
+    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(ontology).unwrap_or_else(|e| {
+        tracing::error!("Failed to load system prompt template: {}", e);
+        format!("Generate OpenCypher statements using this ontology: {ontology}")
+    }));
 
     chat_req
 }
@@ -195,17 +185,12 @@ fn create_answer_chat_request(
     let mut chat_req = genai::chat::ChatRequest::default();
 
     for (index, message) in chat_request.messages.iter().enumerate() {
-        let is_last_user_message = index == chat_request.messages.len() - 1
-            && message.role == ChatRole::User;
+        let is_last_user_message = index == chat_request.messages.len() - 1 && message.role == ChatRole::User;
 
         let genai_message = match message.role {
             ChatRole::User => {
                 if is_last_user_message {
-                    let processed_content = process_last_request_prompt(
-                        &message.content,
-                        cypher_query,
-                        cypher_result,
-                    );
+                    let processed_content = process_last_request_prompt(&message.content, cypher_query, cypher_result);
                     genai::chat::ChatMessage::user(processed_content)
                 } else {
                     genai::chat::ChatMessage::user(message.content.clone())
@@ -233,11 +218,10 @@ fn process_last_request_prompt(
     cypher_query: &str,
     cypher_result: &str,
 ) -> String {
-    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result)
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to load last_request_prompt template: {}", e);
-            format!("Generate an answer for: {content}")
-        })
+    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result).unwrap_or_else(|e| {
+        tracing::error!("Failed to load last_request_prompt template: {}", e);
+        format!("Generate an answer for: {content}")
+    })
 }
 
 fn execute_query_blocking(
@@ -246,8 +230,7 @@ fn execute_query_blocking(
     query: &str,
     read_only: bool,
 ) -> Result<Vec<Vec<falkordb::FalkorValue>>, Box<dyn Error + Send + Sync>> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| format!("Failed to create runtime: {}", e))?;
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
 
     rt.block_on(async {
         let mut graph = client.select_graph(graph_name);

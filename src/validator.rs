@@ -176,9 +176,7 @@ impl CypherValidator {
             }
 
             // Missing WHERE keyword before condition
-            if query.contains('=')
-                && !query.to_uppercase().contains("WHERE")
-                && query.to_uppercase().contains("MATCH")
+            if query.contains('=') && !query.to_uppercase().contains("WHERE") && query.to_uppercase().contains("MATCH")
             {
                 if let Some(fixed) = Self::try_add_where_clause(query) {
                     return Some(fixed);

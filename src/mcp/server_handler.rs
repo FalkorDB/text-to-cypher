@@ -4,10 +4,11 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use rust_mcp_sdk::schema::TextContent;
 use rust_mcp_sdk::schema::{
-    CallToolRequest, CallToolResult, ListResourcesRequest, ListResourcesResult, ListToolsRequest, ListToolsResult,
-    ReadResourceRequest, ReadResourceResult, Resource, RpcError, TextResourceContents, schema_utils::CallToolError,
+    schema_utils::CallToolError, CallToolRequest, CallToolResult, ListResourcesRequest, ListResourcesResult,
+    ListToolsRequest, ListToolsResult, ReadResourceRequest, ReadResourceResult, Resource, RpcError,
+    TextResourceContents,
 };
-use rust_mcp_sdk::{McpServer, mcp_server::ServerHandler};
+use rust_mcp_sdk::{mcp_server::ServerHandler, McpServer};
 use std::fmt::Write;
 
 // Custom Handler to handle MCP Messages

@@ -23,13 +23,13 @@ pub struct VercelResponse {
 }
 
 impl VercelResponse {
-    pub fn json(status_code: u16, body: impl Serialize) -> Result<Self, serde_json::Error> {
+    pub fn json(
+        status_code: u16,
+        body: impl Serialize,
+    ) -> Result<Self, serde_json::Error> {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
-        headers.insert(
-            "Access-Control-Allow-Origin".to_string(),
-            "*".to_string(),
-        );
+        headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
 
         Ok(Self {
             status_code,
@@ -38,13 +38,13 @@ impl VercelResponse {
         })
     }
 
-    pub fn error(status_code: u16, message: &str) -> Self {
+    pub fn error(
+        status_code: u16,
+        message: &str,
+    ) -> Self {
         let mut headers = HashMap::new();
         headers.insert("Content-Type".to_string(), "application/json".to_string());
-        headers.insert(
-            "Access-Control-Allow-Origin".to_string(),
-            "*".to_string(),
-        );
+        headers.insert("Access-Control-Allow-Origin".to_string(), "*".to_string());
 
         let error_body = serde_json::json!({
             "error": message,

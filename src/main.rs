@@ -1,17 +1,17 @@
 #![allow(clippy::needless_for_each)]
 
 use actix_multipart::Multipart;
-use actix_web::HttpResponse;
 use actix_web::http::StatusCode;
-use actix_web::{App, HttpServer, Responder, Result, post};
+use actix_web::HttpResponse;
+use actix_web::{post, App, HttpServer, Responder, Result};
 use actix_web_lab::sse::{self, Sse};
 use falkordb::ConfigValue;
 use falkordb::FalkorClientBuilder;
 use falkordb::FalkorConnectionInfo;
 use futures_util::StreamExt;
-use genai::ModelIden;
 use genai::resolver::AuthData;
 use genai::resolver::AuthResolver;
+use genai::ModelIden;
 use moka::sync::Cache;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
