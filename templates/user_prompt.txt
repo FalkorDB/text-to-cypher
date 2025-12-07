@@ -3,7 +3,7 @@ Generate an OpenCypher statement to answer the following question using the prov
 Requirements:
 Use only entities, relationships, and properties from the ontology
 Maintain correct relationship directions (source -> target)
-Return all relevant entities and relationships, not just requested attributes
+Return specific properties when question asks for names, identifiers, or lists (e.g., RETURN p.name not RETURN p)
 Ensure syntactically valid OpenCypher
 
 Question: {{QUESTION}}
