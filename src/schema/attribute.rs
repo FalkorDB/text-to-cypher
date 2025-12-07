@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, strum::Display)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, strum::EnumString, strum::Display)]
 pub enum AttributeType {
     String,
     Number,
@@ -13,25 +13,6 @@ pub enum AttributeType {
     Map,
     Vector,
     Point,
-}
-
-impl std::str::FromStr for AttributeType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Match exact strings returned by FalkorDB's typeof() function
-        match s {
-            "String" => Ok(Self::String),
-            "Integer" => Ok(Self::Integer),
-            "Float" => Ok(Self::Float),
-            "Boolean" => Ok(Self::Boolean),
-            "List" => Ok(Self::List),
-            "Map" => Ok(Self::Map),
-            "Point" => Ok(Self::Point),
-            "Vectorf32" => Ok(Self::Vector),
-            _ => Err(format!("Unknown FalkorDB type: {s}")),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
