@@ -179,9 +179,10 @@ impl CypherValidator {
             if query.contains('=')
                 && !query.to_uppercase().contains("WHERE")
                 && query.to_uppercase().contains("MATCH")
-                && let Some(fixed) = Self::try_add_where_clause(query)
             {
-                return Some(fixed);
+                if let Some(fixed) = Self::try_add_where_clause(query) {
+                    return Some(fixed);
+                }
             }
         }
 
