@@ -166,6 +166,10 @@ struct AppConfig {
 
 static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
 
+/// Maximum character length for individual string properties in query results.
+/// Strings and array contents exceeding this limit will be truncated with "..." appended.
+const QUERY_RESULT_MAX_PROPERTY_LENGTH: usize = 100;
+
 impl AppConfig {
     fn load() -> Self {
         // Load .env file if it exists, but don't fail if it doesn't
@@ -1321,8 +1325,154 @@ async fn generate_final_answer(
         ))
     );
 
-    let genai_chat_request = generate_answer_chat_request(&request.chat_request, query, query_result);
+    let sanitized_result = sanitize_query_result(query_result, QUERY_RESULT_MAX_PROPERTY_LENGTH);
+    let genai_chat_request = generate_answer_chat_request(&request.chat_request, query, &sanitized_result);
     execute_chat_stream(client, model, genai_chat_request, tx).await;
+}
+
+/// Sanitizes query results by truncating long strings and array contents.
+///
+/// This function processes query results to prevent excessively long content from being
+/// sent to AI models. It uses two different sanitization strategies:
+///
+/// # Strategies
+///
+/// 1. **JSON Parsing (Primary)**: If the input is valid JSON, the function traverses
+///    the JSON structure and truncates all string values that exceed `max_len` characters.
+///    Arrays and objects are recursively processed to sanitize nested string values.
+///
+/// 2. **Text Parsing (Fallback)**: If JSON parsing fails, the function falls back to
+///    a character-by-character text parser that identifies array-like structures
+///    (e.g., `[...]`) following a colon (indicating a property value) and truncates
+///    their contents if they exceed `max_len` characters.
+///
+/// # Arguments
+///
+/// * `query_result` - The raw query result string to sanitize
+/// * `max_len` - Maximum number of characters allowed for individual string values
+///               or array contents before truncation occurs
+///
+/// # Returns
+///
+/// A sanitized string with long content truncated and "..." appended to indicate truncation.
+///
+/// # Examples
+///
+/// ```ignore
+/// let result = sanitize_query_result(r#"{"name": "very long string..."}"#, 10);
+/// // Long strings within the JSON will be truncated to 10 characters + "..."
+/// ```
+fn sanitize_query_result(
+    query_result: &str,
+    max_len: usize,
+) -> String {
+    let truncate = |text: &str| -> String {
+        if text.chars().count() <= max_len {
+            text.to_string()
+        } else {
+            let truncated: String = text.chars().take(max_len).collect();
+            format!("{truncated}...")
+        }
+    };
+
+    // Strategy 1: Try to parse as JSON and sanitize string values
+    if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(query_result) {
+        let mut stack = vec![&mut value];
+        while let Some(current) = stack.pop() {
+            match current {
+                serde_json::Value::String(s) => {
+                    if s.chars().count() > max_len {
+                        let truncated: String = s.chars().take(max_len).collect();
+                        *s = format!("{truncated}...");
+                    }
+                }
+                serde_json::Value::Array(arr) => stack.extend(arr.iter_mut()),
+                serde_json::Value::Object(map) => stack.extend(map.values_mut()),
+                _ => {}
+            }
+        }
+        return serde_json::to_string(&value).unwrap_or_else(|_| truncate(query_result));
+    }
+
+    // Strategy 2: Fallback text parsing for non-JSON content
+    if query_result.is_empty() {
+        return String::new();
+    }
+
+    let mut result = String::with_capacity(query_result.len());
+    let mut char_indices = query_result.char_indices().peekable();
+    let mut in_string = false;
+    let mut escape = false;
+
+    // Lookback window size for detecting property value arrays (e.g., "prop": [...])
+    const LOOKBACK_WINDOW_SIZE: usize = 256;
+
+    while let Some((idx, ch)) = char_indices.next() {
+        if ch == '\\' && !escape {
+            escape = true;
+        } else {
+            if ch == '"' && !escape {
+                in_string = !in_string;
+            }
+            escape = false;
+        }
+
+        if ch == '[' && !in_string {
+            // Look back to check if this array follows a colon (property value)
+            let window_start = idx.saturating_sub(LOOKBACK_WINDOW_SIZE);
+            let window = &query_result[window_start..idx];
+            if let Some(colon_pos) = window.rfind(':') {
+                let suffix = &window[colon_pos..];
+                if !suffix.contains('\n') && !suffix.contains('\r') {
+                    // Find the matching closing bracket
+                    let mut depth = 1usize;
+                    let mut end = idx + 1;
+                    for (offset, c) in query_result[idx + 1..].char_indices() {
+                        match c {
+                            '[' => depth += 1,
+                            ']' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    end = idx + 1 + offset;
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if depth == 0 {
+                        let inner = &query_result[idx + 1..end];
+                        if inner.chars().count() > max_len {
+                            let truncated: String = inner.chars().take(max_len).collect();
+                            result.push('[');
+                            result.push_str(&truncated);
+                            result.push_str("...");
+                            result.push(']');
+                        } else {
+                            result.push_str(&query_result[idx..=end]);
+                        }
+                        // Skip past the processed array content
+                        while let Some(&(next_idx, _)) = char_indices.peek() {
+                            if next_idx > end {
+                                break;
+                            }
+                            char_indices.next();
+                        }
+                        continue;
+                    }
+                }
+            }
+        }
+
+        result.push(ch);
+    }
+
+    if result.is_empty() {
+        truncate(query_result)
+    } else {
+        result
+    }
 }
 
 #[allow(dead_code)]
