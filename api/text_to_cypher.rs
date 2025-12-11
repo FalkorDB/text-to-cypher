@@ -27,11 +27,22 @@ async fn main() -> Result<(), Error> {
 pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     tracing::info!("Received request: {} {}", req.method(), req.uri().path());
 
+    // Handle CORS preflight
+    if req.method() == "OPTIONS" {
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Access-Control-Allow-Origin", "*")
+            .header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            .header("Access-Control-Allow-Headers", "Content-Type")
+            .body(Body::Empty)?);
+    }
+
     // Only accept POST requests
     if req.method() != "POST" {
         return Ok(Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .header("Content-Type", "application/json")
+            .header("Access-Control-Allow-Origin", "*")
             .body(
                 json!({
                     "error": "Method not allowed. Use POST.",
@@ -52,6 +63,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
+                .header("Access-Control-Allow-Origin", "*")
                 .body(
                     json!({
                         "error": format!("Invalid JSON: {}", e),
@@ -91,6 +103,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
+                .header("Access-Control-Allow-Origin", "*")
                 .body(
                     json!({
                         "error": format!("Failed to serialize response: {}", e),

@@ -5,15 +5,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Vercel request structure (simplified)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VercelRequest {
-    pub method: String,
-    pub path: String,
-    pub headers: HashMap<String, String>,
-    pub body: Option<String>,
-}
-
 /// Vercel response structure
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VercelResponse {
