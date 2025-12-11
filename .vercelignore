@@ -1,0 +1,38 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documentation
+docs/
+examples/
+*.md
+!readme.md
+
+# Docker related
+Dockerfile
+docker-build.sh
+.dockerignore
+supervisord.conf
+entrypoint.sh
+
+# CI/CD
+.github/
+.git/
+
+# Development files
+.env
+.env.*
+!.env.example
+
+# Cross compilation
+Cross.toml
+
+# Test files
+tests/

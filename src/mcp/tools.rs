@@ -1,4 +1,4 @@
-use rust_mcp_sdk::macros::{JsonSchema, mcp_tool};
+use rust_mcp_sdk::macros::{mcp_tool, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 #[mcp_tool(

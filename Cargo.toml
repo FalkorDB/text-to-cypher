@@ -1,7 +1,7 @@
 [package]
 name = "text-to-cypher"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "A REST API for translating natural language text to Cypher queries using AI models"
 license = "MIT"
 repository = "https://github.com/FalkorDB/text-to-cypher"
@@ -39,4 +39,15 @@ dotenvy = "0.15"
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "rustls-tls"] }
 regex = "1.0"
 moka = { version = "0.12.10", features = ["sync"] }
+vercel_runtime = "1.1.3"
+hyper = "0.14"
 
+# Main binary for standalone execution
+[[bin]]
+name = "text-to-cypher"
+path = "src/main.rs"
+
+# Serverless function handler for Vercel
+[[bin]]
+name = "text_to_cypher"
+path = "api/text_to_cypher.rs"
