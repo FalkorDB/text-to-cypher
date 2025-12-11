@@ -85,6 +85,9 @@ pub async fn process_text_to_cypher(
     // Apply defaults
     let model = request.model.clone().or(default_model);
     let key = request.key.clone().or(default_key);
+
+    // Track if user provided custom connection
+    let has_custom_connection = request.falkordb_connection.is_some();
     let falkordb_connection = request.falkordb_connection.clone().unwrap_or(default_connection);
 
     // Validate required parameters
@@ -112,8 +115,8 @@ pub async fn process_text_to_cypher(
         service_target.model.adapter_kind
     );
 
-    // Step 1: Discover schema (skip if cypher_only and no connection available)
-    let schema = if request.cypher_only && falkordb_connection == "falkor://127.0.0.1:6379" {
+    // Step 1: Discover schema (skip if cypher_only and no custom connection provided)
+    let schema = if request.cypher_only && !has_custom_connection {
         // Use empty schema for cypher_only mode without FalkorDB
         tracing::info!("Skipping schema discovery in cypher_only mode");
         "{}".to_string()
