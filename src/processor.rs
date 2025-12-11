@@ -67,9 +67,15 @@ impl TextToCypherResponse {
 
 /// Main processor function for non-streaming text-to-cypher conversion
 ///
+/// # Errors
+///
+/// This function does not return errors. All errors are captured and returned
+/// as `TextToCypherResponse::error` with appropriate error messages.
+///
 /// # Panics
 ///
-/// Panics if model is None after validation (which should never happen due to the validation check)
+/// This function does not panic. All errors are handled gracefully and returned
+/// as error responses within the `TextToCypherResponse` structure.
 pub async fn process_text_to_cypher(
     request: TextToCypherRequest,
     default_model: Option<String>,
