@@ -27,6 +27,7 @@ async fn main() -> Result<(), Error> {
 /// # Errors
 ///
 /// Returns an error if response building fails or JSON serialization fails
+#[allow(clippy::too_many_lines)]
 pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     tracing::info!("Received request: {} {}", req.method(), req.uri().path());
 
@@ -102,15 +103,17 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             key,
             connection,
             request.cypher_only,
-        )
-        .await;
+        );
 
         // Collect stream events into a single string
         let mut output = String::new();
         while let Some(result) = stream.next().await {
             match result {
                 Ok(event) => output.push_str(&event),
-                Err(e) => output.push_str(&format!("data: {{\"Error\": \"{}\"}}\n\n", e)),
+                Err(e) => {
+                    use std::fmt::Write;
+                    let _ = write!(output, "data: {{\"Error\": \"{e}\"}}\n\n");
+                }
             }
         }
 

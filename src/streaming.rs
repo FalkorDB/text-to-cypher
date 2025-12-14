@@ -6,10 +6,13 @@ use crate::chat::ChatRequest;
 use crate::core::{
     create_genai_client, discover_graph_schema, execute_cypher_query, generate_cypher_query, generate_final_answer,
 };
-use futures::stream::{self, Stream};
+use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::pin::Pin;
+
+/// Type alias for the stream returned by `process_text_to_cypher_stream`
+pub type ProgressStream = Pin<Box<dyn Stream<Item = Result<String, Box<dyn Error + Send + Sync>>> + Send>>;
 
 /// Progress update events (matching standalone server format)
 #[derive(Serialize, Deserialize, Clone)]
@@ -25,23 +28,25 @@ pub enum Progress {
 
 impl Progress {
     /// Format as SSE message
+    #[must_use]
     pub fn to_sse(&self) -> String {
         match serde_json::to_string(self) {
-            Ok(json) => format!("data: {}\n\n", json),
-            Err(e) => format!("data: {{\"Error\": \"{}\"}}\n\n", e),
+            Ok(json) => format!("data: {json}\n\n"),
+            Err(e) => format!("data: {{\"Error\": \"{e}\"}}\n\n"),
         }
     }
 }
 
 /// Process text-to-cypher with streaming progress updates
-pub async fn process_text_to_cypher_stream(
+#[must_use]
+pub fn process_text_to_cypher_stream(
     graph_name: String,
     chat_request: ChatRequest,
     model: Option<String>,
     key: Option<String>,
     falkordb_connection: String,
     cypher_only: bool,
-) -> Pin<Box<dyn Stream<Item = Result<String, Box<dyn Error + Send + Sync>>> + Send>> {
+) -> ProgressStream {
     let events = async_stream::stream! {
         // Step 1: Create AI client
         yield Ok(Progress::Status("Initializing AI client...".to_string()).to_sse());
@@ -63,7 +68,7 @@ pub async fn process_text_to_cypher_stream(
                     s
                 }
                 Err(e) => {
-                    yield Ok(Progress::Error(format!("Failed to discover schema: {}", e)).to_sse());
+                    yield Ok(Progress::Error(format!("Failed to discover schema: {e}")).to_sse());
                     return;
                 }
             }
@@ -78,7 +83,7 @@ pub async fn process_text_to_cypher_stream(
                 q
             }
             Err(e) => {
-                yield Ok(Progress::Error(format!("Failed to generate query: {}", e)).to_sse());
+                yield Ok(Progress::Error(format!("Failed to generate query: {e}")).to_sse());
                 return;
             }
         };
@@ -97,7 +102,7 @@ pub async fn process_text_to_cypher_stream(
                 r
             }
             Err(e) => {
-                yield Ok(Progress::Error(format!("Query execution failed: {}", e)).to_sse());
+                yield Ok(Progress::Error(format!("Query execution failed: {e}")).to_sse());
                 return;
             }
         };
@@ -110,8 +115,8 @@ pub async fn process_text_to_cypher_stream(
                 yield Ok(Progress::Result(answer).to_sse());
             }
             Err(e) => {
-                tracing::warn!("Failed to generate answer: {}", e);
-                // Don't fail here, we already have the results
+                yield Ok(Progress::Error(format!("Failed to generate answer: {e}")).to_sse());
+                return;
             }
         }
     };

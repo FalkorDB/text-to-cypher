@@ -30,10 +30,15 @@ pub struct TextToCypherRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TextToCypherResponse {
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cypher_query: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cypher_result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -206,8 +211,7 @@ pub async fn process_text_to_cypher(
         match generate_final_answer(&request.chat_request, &cypher_query, &cypher_result, &client, &model).await {
             Ok(a) => Some(a),
             Err(e) => {
-                tracing::error!("Failed to generate answer: {}", e);
-                None
+                return TextToCypherResponse::error(format!("Failed to generate answer: {e}"));
             }
         };
 
