@@ -2,10 +2,13 @@
 //!
 //! This handler processes natural language queries and converts them to Cypher queries
 //! for `FalkorDB` graph databases. It runs as a serverless function on Vercel.
+//! Supports both JSON responses and Server-Sent Events (SSE) streaming.
 
+use futures::StreamExt;
 use serde_json::json;
 use std::env;
 use text_to_cypher::processor::{process_text_to_cypher, TextToCypherRequest};
+use text_to_cypher::streaming::process_text_to_cypher_stream;
 use tracing_subscriber::fmt;
 use vercel_runtime::{run, Body, Error, Request, Response, StatusCode};
 
@@ -24,6 +27,7 @@ async fn main() -> Result<(), Error> {
 /// # Errors
 ///
 /// Returns an error if response building fails or JSON serialization fails
+#[allow(clippy::too_many_lines)]
 pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     tracing::info!("Received request: {} {}", req.method(), req.uri().path());
 
@@ -82,7 +86,48 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     let default_key = env::var("DEFAULT_KEY").ok();
     let default_connection = env::var("FALKORDB_CONNECTION").unwrap_or_else(|_| "falkor://127.0.0.1:6379".to_string());
 
-    // Process the request
+    // Check if streaming is requested
+    if request.stream {
+        tracing::info!("Starting SSE streaming mode");
+
+        // Apply defaults for streaming
+        let model = request.model.clone().or(default_model);
+        let key = request.key.clone().or(default_key);
+        let connection = request.falkordb_connection.clone().unwrap_or(default_connection);
+
+        // Create the stream
+        let mut stream = process_text_to_cypher_stream(
+            request.graph_name,
+            request.chat_request,
+            model,
+            key,
+            connection,
+            request.cypher_only,
+        );
+
+        // Collect stream events into a single string
+        let mut output = String::new();
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(event) => output.push_str(&event),
+                Err(e) => {
+                    use std::fmt::Write;
+                    let error_payload = serde_json::json!({ "Error": e.to_string() });
+                    let _ = write!(output, "data: {error_payload}\n\n");
+                }
+            }
+        }
+
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "text/event-stream")
+            .header("Cache-Control", "no-cache")
+            .header("Connection", "keep-alive")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(output.into())?);
+    }
+
+    // Non-streaming mode (original behavior)
     let response = process_text_to_cypher(request, default_model, default_key, default_connection).await;
 
     // Return response

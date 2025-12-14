@@ -1514,7 +1514,7 @@ async fn get_graph_schema_string(
     }
 
     // If not in cache, discover it
-    let schema = discover_graph_schema(falkordb_connection, graph_name).await;
+    let schema = discover_graph_schema(falkordb_connection, graph_name).await?;
     let schema_json = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))?;
 
     // Cache the result
@@ -2078,24 +2078,26 @@ struct GetSchemaQuery {
 async fn discover_graph_schema(
     falkordb_connection: &str,
     graph_name: &str,
-) -> Schema {
-    let connection_info: FalkorConnectionInfo = falkordb_connection.try_into().expect("Invalid connection info");
+) -> Result<Schema, Box<dyn std::error::Error + Send + Sync>> {
+    let connection_info: FalkorConnectionInfo = falkordb_connection
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
 
     let client = FalkorClientBuilder::new_async()
         .with_connection_info(connection_info)
         .build()
         .await
-        .expect("Failed to build client");
+        .map_err(|e| format!("Failed to build client: {e}"))?;
 
     // Select the specified graph
     let mut graph = client.select_graph(graph_name);
     let schema = Schema::discover_from_graph(&mut graph, 100)
         .await
-        .expect("Failed to discover schema from graph");
+        .map_err(|e| format!("Failed to discover schema from graph: {e}"))?;
 
     // Print the discovered schema
     tracing::info!("Discovered schema: {schema}");
-    schema
+    Ok(schema)
 }
 
 fn process_last_user_message(question: &str) -> String {
@@ -2116,7 +2118,14 @@ async fn discover_and_send_schema(
         Progress::Status(format!("Discovering schema for graph: {graph_name}"))
     );
 
-    let schema = discover_graph_schema(falkordb_connection, graph_name).await;
+    let schema = match discover_graph_schema(falkordb_connection, graph_name).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to discover schema: {}", e);
+            try_send!(tx, Progress::Error(format!("Failed to discover schema: {e}")));
+            return Err(());
+        }
+    };
 
     // Serialize and handle errors inline
     let Ok(json_schema) = serde_json::to_string(&schema) else {
