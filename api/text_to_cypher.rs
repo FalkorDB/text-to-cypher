@@ -111,8 +111,8 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             match result {
                 Ok(event) => output.push_str(&event),
                 Err(e) => {
-                    use std::fmt::Write;
-                    let _ = write!(output, "data: {{\"Error\": \"{e}\"}}\n\n");
+                    let error_payload = serde_json::json!({ "Error": e.to_string() });
+                    output.push_str(&format!("data: {error_payload}\n\n"));
                 }
             }
         }

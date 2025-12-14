@@ -32,7 +32,10 @@ impl Progress {
     pub fn to_sse(&self) -> String {
         match serde_json::to_string(self) {
             Ok(json) => format!("data: {json}\n\n"),
-            Err(e) => format!("data: {{\"Error\": \"{e}\"}}\n\n"),
+            Err(e) => {
+                let error_payload = serde_json::json!({ "Error": e.to_string() });
+                format!("data: {error_payload}\n\n")
+            }
         }
     }
 }
