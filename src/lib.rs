@@ -5,6 +5,7 @@ pub mod formatter;
 pub mod mcp;
 pub mod processor;
 pub mod schema;
+pub mod streaming;
 pub mod template;
 pub mod validator;
 pub mod vercel;

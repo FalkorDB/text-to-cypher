@@ -21,6 +21,9 @@ pub struct TextToCypherRequest {
     /// When true, returns only the generated Cypher query without executing it
     #[serde(default)]
     pub cypher_only: bool,
+    /// When true, returns Server-Sent Events (SSE) stream with progress updates
+    #[serde(default)]
+    pub stream: bool,
 }
 
 /// Response structure for text-to-cypher conversion

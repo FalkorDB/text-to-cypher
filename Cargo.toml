@@ -29,6 +29,7 @@ uuid = { version = "1.18.0", features = ["v4"] }
 dashmap = "6.1.0"
 tokio-stream = "0.1"
 futures-util = "0.3"
+async-stream = "0.3"
 genai = "0.3.5"
 falkordb = { version = "0.1.11", features = ["tokio"] }
 strum = { version = "0.27.2", features = ["derive"] }
