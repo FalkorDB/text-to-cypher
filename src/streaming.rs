@@ -45,7 +45,7 @@ pub async fn process_text_to_cypher_stream(
     let events = async_stream::stream! {
         // Step 1: Create AI client
         yield Ok(Progress::Status("Initializing AI client...".to_string()).to_sse());
-        
+
         let client = create_genai_client(key.as_deref());
         let model = model.unwrap_or_else(|| "gpt-4o-mini".to_string());
 
@@ -56,7 +56,7 @@ pub async fn process_text_to_cypher_stream(
         } else {
             yield Ok(Progress::Status("Connecting to database...".to_string()).to_sse());
             yield Ok(Progress::Status("Discovering graph schema...".to_string()).to_sse());
-            
+
             match discover_graph_schema(&falkordb_connection, &graph_name).await {
                 Ok(s) => {
                     yield Ok(Progress::Schema(s.clone()).to_sse());
@@ -71,7 +71,7 @@ pub async fn process_text_to_cypher_stream(
 
         // Step 3: Generate Cypher query
         yield Ok(Progress::Status("Generating Cypher query with AI...".to_string()).to_sse());
-        
+
         let cypher_query = match generate_cypher_query(&chat_request, &schema, &client, &model).await {
             Ok(q) => {
                 yield Ok(Progress::CypherQuery(q.clone()).to_sse());
@@ -90,7 +90,7 @@ pub async fn process_text_to_cypher_stream(
 
         // Step 4: Execute query
         yield Ok(Progress::Status("Executing Cypher query on database...".to_string()).to_sse());
-        
+
         let cypher_result = match execute_cypher_query(&cypher_query, &graph_name, &falkordb_connection, true).await {
             Ok(r) => {
                 yield Ok(Progress::CypherResult(r.clone()).to_sse());
@@ -104,7 +104,7 @@ pub async fn process_text_to_cypher_stream(
 
         // Step 5: Generate final answer
         yield Ok(Progress::Status("Generating natural language answer...".to_string()).to_sse());
-        
+
         match generate_final_answer(&chat_request, &cypher_query, &cypher_result, &client, &model).await {
             Ok(answer) => {
                 yield Ok(Progress::Result(answer).to_sse());

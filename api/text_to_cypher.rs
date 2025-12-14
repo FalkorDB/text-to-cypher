@@ -88,12 +88,12 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
     // Check if streaming is requested
     if request.stream {
         tracing::info!("Starting SSE streaming mode");
-        
+
         // Apply defaults for streaming
         let model = request.model.clone().or(default_model);
         let key = request.key.clone().or(default_key);
         let connection = request.falkordb_connection.clone().unwrap_or(default_connection);
-        
+
         // Create the stream
         let mut stream = process_text_to_cypher_stream(
             request.graph_name,
@@ -102,8 +102,9 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             key,
             connection,
             request.cypher_only,
-        ).await;
-        
+        )
+        .await;
+
         // Collect stream events into a single string
         let mut output = String::new();
         while let Some(result) = stream.next().await {
@@ -112,7 +113,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
                 Err(e) => output.push_str(&format!("data: {{\"Error\": \"{}\"}}\n\n", e)),
             }
         }
-        
+
         return Ok(Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "text/event-stream")
