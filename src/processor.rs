@@ -27,10 +27,9 @@ pub struct TextToCypherRequest {
 }
 
 /// Response structure for text-to-cypher conversion
-///
-/// TODO: Consider using an enum for status instead of String for better type safety
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TextToCypherResponse {
+    // Note: status is currently a String for simplicity. Future versions may use an enum.
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,

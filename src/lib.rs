@@ -281,8 +281,6 @@ impl TextToCypherClient {
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// TODO: Consider creating a specific error enum instead of Box<dyn Error>
     pub async fn text_to_cypher(
         &self,
         graph_name: impl Into<String>,
