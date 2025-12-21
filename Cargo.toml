@@ -70,8 +70,10 @@ hyper = { version = "0.14", optional = true }
 [[bin]]
 name = "text-to-cypher"
 path = "src/main.rs"
+required-features = ["server"]
 
 # Serverless function handler for Vercel
 [[bin]]
 name = "text_to_cypher"
 path = "api/text_to_cypher.rs"
+required-features = ["server"]

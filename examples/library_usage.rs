@@ -13,9 +13,7 @@ use text_to_cypher::{core, ChatMessage, ChatRequest, ChatRole, TextToCypherClien
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing for logging
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
+    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
 
     println!("=== Text-to-Cypher Library Usage Examples ===\n");
 
@@ -75,8 +73,7 @@ async fn example_with_client(
     let request = ChatRequest {
         messages: vec![ChatMessage {
             role: ChatRole::User,
-            content: "Create a simple example with 3 people nodes named Alice, Bob, and Charlie"
-                .to_string(),
+            content: "Create a simple example with 3 people nodes named Alice, Bob, and Charlie".to_string(),
         }],
     };
 

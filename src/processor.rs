@@ -27,6 +27,8 @@ pub struct TextToCypherRequest {
 }
 
 /// Response structure for text-to-cypher conversion
+///
+/// TODO: Consider using an enum for status instead of String for better type safety
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TextToCypherResponse {
     pub status: String,
@@ -43,6 +45,18 @@ pub struct TextToCypherResponse {
 }
 
 impl TextToCypherResponse {
+    /// Checks if the response represents a successful operation
+    #[must_use]
+    pub fn is_success(&self) -> bool {
+        self.status == "success"
+    }
+
+    /// Checks if the response represents an error
+    #[must_use]
+    pub fn is_error(&self) -> bool {
+        self.status == "error"
+    }
+
     #[must_use]
     pub fn success(
         schema: String,

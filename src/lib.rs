@@ -232,7 +232,11 @@ impl TextToCypherClient {
     /// );
     /// ```
     #[must_use]
-    pub fn new(model: impl Into<String>, api_key: impl Into<String>, falkordb_connection: impl Into<String>) -> Self {
+    pub fn new(
+        model: impl Into<String>,
+        api_key: impl Into<String>,
+        falkordb_connection: impl Into<String>,
+    ) -> Self {
         Self {
             model: model.into(),
             api_key: api_key.into(),
@@ -277,6 +281,8 @@ impl TextToCypherClient {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// TODO: Consider creating a specific error enum instead of Box<dyn Error>
     pub async fn text_to_cypher(
         &self,
         graph_name: impl Into<String>,
@@ -300,7 +306,7 @@ impl TextToCypherClient {
         )
         .await;
 
-        if response.status == "error" {
+        if response.is_error() {
             return Err(response.error.unwrap_or_else(|| "Unknown error".to_string()).into());
         }
 
@@ -365,7 +371,7 @@ impl TextToCypherClient {
         )
         .await;
 
-        if response.status == "error" {
+        if response.is_error() {
             return Err(response.error.unwrap_or_else(|| "Unknown error".to_string()).into());
         }
 
