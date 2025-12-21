@@ -3,6 +3,7 @@ use std::time::Instant;
 use falkordb::{AsyncGraph, FalkorDBError, FalkorValue};
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "server")]
 use utoipa::ToSchema;
 
 use crate::schema::{
@@ -11,7 +12,8 @@ use crate::schema::{
     relation::Relation,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(ToSchema))]
 pub struct Schema {
     pub entities: Vec<Entity>,
     pub relations: Vec<Relation>,

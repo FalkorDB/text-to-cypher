@@ -1,9 +1,12 @@
+#[cfg(feature = "server")]
 use actix_web::{HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+#[cfg(feature = "server")]
 use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(ToSchema))]
 pub struct ErrorResponse {
     pub error: String,
     pub message: String,
@@ -38,6 +41,7 @@ impl fmt::Display for ApiError {
     }
 }
 
+#[cfg(feature = "server")]
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         let (status_code, error_type, message) = match self {
