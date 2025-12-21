@@ -4,7 +4,7 @@
 //!
 //! This library provides both a programmatic API and a REST server for converting
 //! natural language questions into Cypher queries for graph databases, with built-in
-//! support for FalkorDB.
+//! support for `FalkorDB`.
 //!
 //! ## Features
 //!
@@ -177,7 +177,7 @@ pub mod vercel;
 /// A high-level client for text-to-cypher operations.
 ///
 /// This client provides a convenient interface for converting natural language
-/// to Cypher queries and executing them against a FalkorDB instance.
+/// to Cypher queries and executing them against a `FalkorDB` instance.
 ///
 /// # Example
 ///
@@ -218,7 +218,7 @@ impl TextToCypherClient {
     ///
     /// * `model` - The AI model to use (e.g., "gpt-4o-mini", "anthropic:claude-3")
     /// * `api_key` - API key for the AI service
-    /// * `falkordb_connection` - FalkorDB connection string (e.g., "falkor://127.0.0.1:6379")
+    /// * `falkordb_connection` - `FalkorDB` connection string (e.g., `falkor://127.0.0.1:6379`)
     ///
     /// # Example
     ///
