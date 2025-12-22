@@ -2,6 +2,20 @@
 
 This document provides detailed information about using text-to-cypher as a library in your Rust applications.
 
+## Testing
+
+The library includes comprehensive unit tests covering all public APIs. See:
+- [Library tests](../src/lib.rs#L409) - Tests for `TextToCypherClient` and core types
+- [Processor tests](../src/processor.rs#L273) - Tests for `TextToCypherRequest` and `TextToCypherResponse`
+- [Validator tests](../src/validator.rs) - Tests for Cypher query validation
+- [Formatter tests](../src/formatter.rs) - Tests for result formatting
+- [Schema tests](../src/schema/discovery.rs) - Tests for schema discovery
+
+Run tests with:
+```bash
+cargo test --lib
+```
+
 ## Installation
 
 Add to your `Cargo.toml`:

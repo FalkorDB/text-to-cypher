@@ -471,6 +471,28 @@ docker pull ghcr.io/falkordb/text-to-cypher:latest
 cargo build --release
 ```
 
+## Testing
+
+The library includes comprehensive unit tests with 33+ test cases covering:
+
+- **Library API tests** ([src/lib.rs](src/lib.rs#L409)): `TextToCypherClient` construction, request/response serialization, chat types
+- **Processor tests** ([src/processor.rs](src/processor.rs#L273)): Request/response handling, status checks, serialization
+- **Validator tests** ([src/validator.rs](src/validator.rs)): Cypher query validation and security checks
+- **Formatter tests** ([src/formatter.rs](src/formatter.rs)): Result formatting for various data types
+- **Schema tests** ([src/schema/discovery.rs](src/schema/discovery.rs)): Schema discovery and validation
+
+Run all tests:
+```bash
+# Run library tests only
+cargo test --lib
+
+# Run all tests including integration tests
+cargo test
+
+# Run with output
+cargo test -- --nocapture
+```
+
 ## Development
 
 ### Code Quality

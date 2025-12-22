@@ -405,3 +405,135 @@ impl TextToCypherClient {
         core::discover_graph_schema(&self.falkordb_connection, &graph_name.into()).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_creation() {
+        let client = TextToCypherClient::new(
+            "gpt-4o-mini",
+            "test-api-key",
+            "falkor://127.0.0.1:6379",
+        );
+
+        assert_eq!(client.model, "gpt-4o-mini");
+        assert_eq!(client.api_key, "test-api-key");
+        assert_eq!(client.falkordb_connection, "falkor://127.0.0.1:6379");
+    }
+
+    #[test]
+    fn test_client_creation_with_string() {
+        let client = TextToCypherClient::new(
+            "anthropic:claude-3".to_string(),
+            "key123".to_string(),
+            "falkor://localhost:6379".to_string(),
+        );
+
+        assert_eq!(client.model, "anthropic:claude-3");
+        assert_eq!(client.api_key, "key123");
+        assert_eq!(client.falkordb_connection, "falkor://localhost:6379");
+    }
+
+    #[test]
+    fn test_chat_request_construction() {
+        let request = ChatRequest {
+            messages: vec![
+                ChatMessage {
+                    role: ChatRole::User,
+                    content: "Hello".to_string(),
+                },
+                ChatMessage {
+                    role: ChatRole::Assistant,
+                    content: "Hi there".to_string(),
+                },
+            ],
+        };
+
+        assert_eq!(request.messages.len(), 2);
+        assert_eq!(request.messages[0].role, ChatRole::User);
+        assert_eq!(request.messages[1].role, ChatRole::Assistant);
+    }
+
+    #[test]
+    fn test_chat_role_serialization() {
+        let role = ChatRole::User;
+        let json = serde_json::to_string(&role).unwrap();
+        assert_eq!(json, r#""user""#);
+
+        let role = ChatRole::Assistant;
+        let json = serde_json::to_string(&role).unwrap();
+        assert_eq!(json, r#""assistant""#);
+
+        let role = ChatRole::System;
+        let json = serde_json::to_string(&role).unwrap();
+        assert_eq!(json, r#""system""#);
+    }
+
+    #[test]
+    fn test_chat_message_serialization() {
+        let message = ChatMessage {
+            role: ChatRole::User,
+            content: "Test message".to_string(),
+        };
+
+        let json = serde_json::to_string(&message).unwrap();
+        let deserialized: ChatMessage = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.role, ChatRole::User);
+        assert_eq!(deserialized.content, "Test message");
+    }
+
+    #[test]
+    fn test_chat_request_serialization() {
+        let request = ChatRequest {
+            messages: vec![ChatMessage {
+                role: ChatRole::User,
+                content: "Find all nodes".to_string(),
+            }],
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let deserialized: ChatRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.messages.len(), 1);
+        assert_eq!(deserialized.messages[0].content, "Find all nodes");
+    }
+
+    #[test]
+    fn test_error_response_structure() {
+        let error = ErrorResponse {
+            error: "Test error".to_string(),
+            message: "Detailed message".to_string(),
+            status_code: 500,
+        };
+
+        assert_eq!(error.error, "Test error");
+        assert_eq!(error.message, "Detailed message");
+        assert_eq!(error.status_code, 500);
+    }
+
+    #[test]
+    fn test_chat_role_equality() {
+        assert_eq!(ChatRole::User, ChatRole::User);
+        assert_eq!(ChatRole::Assistant, ChatRole::Assistant);
+        assert_eq!(ChatRole::System, ChatRole::System);
+        assert_ne!(ChatRole::User, ChatRole::Assistant);
+    }
+
+    #[test]
+    fn test_client_with_different_models() {
+        let models = vec![
+            "gpt-4o-mini",
+            "gpt-4o",
+            "anthropic:claude-3",
+            "gemini:gemini-2.0-flash-exp",
+        ];
+
+        for model in models {
+            let client = TextToCypherClient::new(model, "key", "falkor://localhost:6379");
+            assert_eq!(client.model, model);
+        }
+    }
+}
