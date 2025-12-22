@@ -631,32 +631,80 @@ This library is designed to be published to [crates.io](https://crates.io/), mak
 
 ### For Maintainers
 
-To publish a new version:
+To publish a new version to [crates.io](https://crates.io/):
 
-1. **Update the version** in `Cargo.toml`:
+1. **Ensure you have a crates.io account and are logged in**:
+   ```bash
+   # First time only: Create account at https://crates.io/ and get API token
+   cargo login
+   ```
+
+2. **Update the version** in `Cargo.toml` following [Semantic Versioning](https://semver.org/):
    ```toml
    [package]
    version = "0.1.1"  # Increment as needed
    ```
 
-2. **Ensure all tests pass**:
+3. **Update CHANGELOG** (if exists) with version changes and release notes.
+
+4. **Ensure all tests pass** (including doc tests):
    ```bash
    cargo test
+   cargo test --doc
    ```
 
-3. **Build and test both library and server modes**:
+5. **Run code quality checks**:
    ```bash
-   # Test library-only mode
+   # Format code
+   cargo fmt
+   
+   # Run clippy with pedantic lints
+   cargo clippy --lib -- -W clippy::pedantic -W clippy::nursery -D warnings
+   ```
+
+6. **Build and test both library and server modes**:
+   ```bash
+   # Test library-only mode (minimal dependencies)
    cargo build --lib --no-default-features
    
    # Test with server features (default)
    cargo build
+   
+   # Test the example
+   cargo run --example library_usage --no-default-features
    ```
 
-4. **Publish to crates.io**:
+7. **Do a dry-run publish** to verify package contents:
+   ```bash
+   cargo publish --dry-run
+   ```
+   
+   Review the output to ensure:
+   - All necessary files are included
+   - No sensitive files are accidentally included
+   - Package size is reasonable
+
+8. **Create a git tag** for the version:
+   ```bash
+   git tag -a v0.1.1 -m "Release version 0.1.1"
+   git push origin v0.1.1
+   ```
+
+9. **Publish to crates.io**:
    ```bash
    cargo publish
    ```
+   
+   Note: Publishing is **permanent** - you cannot delete or replace a published version.
+
+10. **Verify the published crate**:
+    ```bash
+    # Check on crates.io
+    open https://crates.io/crates/text-to-cypher
+    
+    # Test installing from crates.io
+    cargo install text-to-cypher --version 0.1.1
+    ```
 
 ### For Users
 
