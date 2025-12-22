@@ -29,7 +29,7 @@
 //! use text_to_cypher::{TextToCypherClient, ChatRequest, ChatMessage, ChatRole};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //!     // Create a client
 //!     let client = TextToCypherClient::new(
 //!         "gpt-4o-mini",
@@ -64,7 +64,7 @@
 //! use text_to_cypher::{TextToCypherClient, ChatRequest, ChatMessage, ChatRole};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //!     let client = TextToCypherClient::new(
 //!         "gpt-4o-mini",
 //!         "your-api-key",
@@ -96,7 +96,7 @@
 //! use text_to_cypher::{core, ChatRequest, ChatMessage, ChatRole};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //!     // Discover schema
 //!     let schema = core::discover_graph_schema(
 //!         "falkor://127.0.0.1:6379",
@@ -185,7 +185,7 @@ pub mod vercel;
 /// use text_to_cypher::{TextToCypherClient, ChatRequest, ChatMessage, ChatRole};
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 ///     let client = TextToCypherClient::new(
 ///         "gpt-4o-mini",
 ///         "your-api-key",
@@ -266,7 +266,7 @@ impl TextToCypherClient {
     /// ```no_run
     /// # use text_to_cypher::{TextToCypherClient, ChatRequest, ChatMessage, ChatRole};
     /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// # let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379");
     /// let request = ChatRequest {
     ///     messages: vec![
@@ -330,7 +330,7 @@ impl TextToCypherClient {
     /// ```no_run
     /// # use text_to_cypher::{TextToCypherClient, ChatRequest, ChatMessage, ChatRole};
     /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// # let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379");
     /// let request = ChatRequest {
     ///     messages: vec![
@@ -391,7 +391,7 @@ impl TextToCypherClient {
     /// ```no_run
     /// # use text_to_cypher::TextToCypherClient;
     /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// # let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379");
     /// let schema = client.discover_schema("movies").await?;
     /// println!("Schema: {}", schema);
