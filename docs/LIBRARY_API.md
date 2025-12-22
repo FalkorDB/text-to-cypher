@@ -2,6 +2,10 @@
 
 This document provides detailed information about using text-to-cypher as a library in your Rust applications.
 
+**For other languages:**
+- [TypeScript/JavaScript Usage Guide](TYPESCRIPT_USAGE.md)
+- [Python Usage Guide](PYTHON_USAGE.md)
+
 ## Testing
 
 The library includes comprehensive unit tests covering all public APIs. See:

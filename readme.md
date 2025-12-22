@@ -108,6 +108,14 @@ export OPENAI_API_KEY=your-key-here
 cargo run --example library_usage --no-default-features
 ```
 
+### Using from TypeScript/JavaScript
+
+See [TypeScript Usage Guide](docs/TYPESCRIPT_USAGE.md) for detailed instructions on using text-to-cypher from TypeScript/JavaScript applications via REST API, Node.js native bindings, or WebAssembly.
+
+### Using from Python
+
+See [Python Usage Guide](docs/PYTHON_USAGE.md) for detailed instructions on using text-to-cypher from Python applications via REST API or PyO3 bindings.
+
 ### Using Docker (Recommended for Server)
 
 The easiest way to get started is using our all-in-one Docker image that includes FalkorDB database, web browser interface, text-to-cypher API, and MCP server:
