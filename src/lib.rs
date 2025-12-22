@@ -412,11 +412,7 @@ mod tests {
 
     #[test]
     fn test_client_creation() {
-        let client = TextToCypherClient::new(
-            "gpt-4o-mini",
-            "test-api-key",
-            "falkor://127.0.0.1:6379",
-        );
+        let client = TextToCypherClient::new("gpt-4o-mini", "test-api-key", "falkor://127.0.0.1:6379");
 
         assert_eq!(client.model, "gpt-4o-mini");
         assert_eq!(client.api_key, "test-api-key");
@@ -524,12 +520,7 @@ mod tests {
 
     #[test]
     fn test_client_with_different_models() {
-        let models = vec![
-            "gpt-4o-mini",
-            "gpt-4o",
-            "anthropic:claude-3",
-            "gemini:gemini-2.0-flash-exp",
-        ];
+        let models = vec!["gpt-4o-mini", "gpt-4o", "anthropic:claude-3", "gemini:gemini-2.0-flash-exp"];
 
         for model in models {
             let client = TextToCypherClient::new(model, "key", "falkor://localhost:6379");

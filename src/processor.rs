@@ -387,9 +387,7 @@ mod tests {
     fn test_request_clone() {
         let request = TextToCypherRequest {
             graph_name: "test".to_string(),
-            chat_request: ChatRequest {
-                messages: vec![],
-            },
+            chat_request: ChatRequest { messages: vec![] },
             model: Some("gpt-4".to_string()),
             key: None,
             falkordb_connection: None,
