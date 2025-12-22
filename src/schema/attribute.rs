@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "server")]
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, strum::EnumString, strum::Display)]
+#[derive(Debug, Clone, Serialize, Deserialize, strum::EnumString, strum::Display)]
+#[cfg_attr(feature = "server", derive(ToSchema))]
 pub enum AttributeType {
     String,
     Number,
@@ -15,7 +17,8 @@ pub enum AttributeType {
     Point,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(ToSchema))]
 pub struct Attribute {
     pub name: String,
     #[serde(rename = "type")]

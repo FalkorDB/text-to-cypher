@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "server")]
 use utoipa::ToSchema;
 
-#[derive(Serialize, Deserialize, ToSchema, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "server", derive(ToSchema))]
 pub enum ChatRole {
     #[serde(rename = "user")]
     User,
@@ -11,13 +13,15 @@ pub enum ChatRole {
     System,
 }
 
-#[derive(Serialize, Deserialize, ToSchema, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "server", derive(ToSchema))]
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: String,
 }
 
-#[derive(Serialize, Deserialize, ToSchema, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "server", derive(ToSchema))]
 pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
 }

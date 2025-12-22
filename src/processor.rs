@@ -29,6 +29,7 @@ pub struct TextToCypherRequest {
 /// Response structure for text-to-cypher conversion
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TextToCypherResponse {
+    // Note: status is currently a String for simplicity. Future versions may use an enum.
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
@@ -43,6 +44,18 @@ pub struct TextToCypherResponse {
 }
 
 impl TextToCypherResponse {
+    /// Checks if the response represents a successful operation
+    #[must_use]
+    pub fn is_success(&self) -> bool {
+        self.status == "success"
+    }
+
+    /// Checks if the response represents an error
+    #[must_use]
+    pub fn is_error(&self) -> bool {
+        self.status == "error"
+    }
+
     #[must_use]
     pub fn success(
         schema: String,
@@ -254,4 +267,137 @@ async fn attempt_self_healing(
     let result = execute_cypher_query(&healed_query, &request.graph_name, falkordb_connection, true).await?;
 
     Ok((healed_query, result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::{ChatMessage, ChatRole};
+
+    #[test]
+    fn test_response_is_success() {
+        let response = TextToCypherResponse::success(
+            "schema".to_string(),
+            "MATCH (n) RETURN n".to_string(),
+            Some("result".to_string()),
+            Some("answer".to_string()),
+        );
+        assert!(response.is_success());
+        assert!(!response.is_error());
+    }
+
+    #[test]
+    fn test_response_is_error() {
+        let response = TextToCypherResponse::error("Something went wrong".to_string());
+        assert!(response.is_error());
+        assert!(!response.is_success());
+    }
+
+    #[test]
+    fn test_success_response_structure() {
+        let response = TextToCypherResponse::success(
+            "test_schema".to_string(),
+            "MATCH (n) RETURN n".to_string(),
+            Some("test_result".to_string()),
+            Some("test_answer".to_string()),
+        );
+
+        assert_eq!(response.status, "success");
+        assert_eq!(response.schema, Some("test_schema".to_string()));
+        assert_eq!(response.cypher_query, Some("MATCH (n) RETURN n".to_string()));
+        assert_eq!(response.cypher_result, Some("test_result".to_string()));
+        assert_eq!(response.answer, Some("test_answer".to_string()));
+        assert_eq!(response.error, None);
+    }
+
+    #[test]
+    fn test_error_response_structure() {
+        let response = TextToCypherResponse::error("Test error".to_string());
+
+        assert_eq!(response.status, "error");
+        assert_eq!(response.schema, None);
+        assert_eq!(response.cypher_query, None);
+        assert_eq!(response.cypher_result, None);
+        assert_eq!(response.answer, None);
+        assert_eq!(response.error, Some("Test error".to_string()));
+    }
+
+    #[test]
+    fn test_request_serialization() {
+        let request = TextToCypherRequest {
+            graph_name: "test_graph".to_string(),
+            chat_request: ChatRequest {
+                messages: vec![ChatMessage {
+                    role: ChatRole::User,
+                    content: "Find all nodes".to_string(),
+                }],
+            },
+            model: Some("gpt-4o-mini".to_string()),
+            key: Some("test-key".to_string()),
+            falkordb_connection: Some("falkor://localhost:6379".to_string()),
+            cypher_only: false,
+            stream: false,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let deserialized: TextToCypherRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.graph_name, "test_graph");
+        assert_eq!(deserialized.model, Some("gpt-4o-mini".to_string()));
+        assert!(!deserialized.cypher_only);
+        assert!(!deserialized.stream);
+    }
+
+    #[test]
+    fn test_request_default_values() {
+        let json = r#"{
+            "graph_name": "test",
+            "chat_request": {
+                "messages": []
+            }
+        }"#;
+
+        let request: TextToCypherRequest = serde_json::from_str(json).unwrap();
+
+        assert_eq!(request.graph_name, "test");
+        assert_eq!(request.model, None);
+        assert_eq!(request.key, None);
+        assert!(!request.cypher_only);
+        assert!(!request.stream);
+    }
+
+    #[test]
+    fn test_response_serialization() {
+        let response = TextToCypherResponse::success(
+            "schema".to_string(),
+            "MATCH (n) RETURN n".to_string(),
+            None,
+            Some("answer".to_string()),
+        );
+
+        let json = serde_json::to_string(&response).unwrap();
+        let deserialized: TextToCypherResponse = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.status, "success");
+        assert_eq!(deserialized.cypher_query, Some("MATCH (n) RETURN n".to_string()));
+        assert_eq!(deserialized.cypher_result, None);
+    }
+
+    #[test]
+    fn test_request_clone() {
+        let request = TextToCypherRequest {
+            graph_name: "test".to_string(),
+            chat_request: ChatRequest { messages: vec![] },
+            model: Some("gpt-4".to_string()),
+            key: None,
+            falkordb_connection: None,
+            cypher_only: true,
+            stream: false,
+        };
+
+        let cloned = request.clone();
+        assert_eq!(cloned.graph_name, request.graph_name);
+        assert_eq!(cloned.model, request.model);
+        assert_eq!(cloned.cypher_only, request.cypher_only);
+    }
 }

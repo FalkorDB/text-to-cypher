@@ -2,18 +2,18 @@
 
 [![build](https://github.com/FalkorDB/text-to-cypher/actions/workflows/build.yml/badge.svg)](https://github.com/FalkorDB/text-to-cypher/actions/workflows/build.yml)
 
-A high-performance Rust-based API service that translates natural language text to Cypher queries for graph databases, featuring integration with genai and FalkorDB. Complete all-in-one Docker solution with integrated FalkorDB database, web browser interface, text-to-cypher API, and Model Context Protocol (MCP) server support!
+A high-performance Rust library and API service that translates natural language text to Cypher queries for graph databases, featuring integration with genai and FalkorDB. Use as a library in your Rust applications or deploy the all-in-one Docker solution with integrated FalkorDB database, web browser interface, text-to-cypher API, and Model Context Protocol (MCP) server support!
 
 ## ✨ What's New
 
-**All-in-One Docker Solution**: Our latest Docker image now includes everything you need in a single container:
+**Library Support**: Now available as a Rust library! Use text-to-cypher directly in your Rust applications without the REST API overhead.
+
+**All-in-One Docker Solution**: Our Docker image includes everything you need in a single container:
 
 - 🗄️ **FalkorDB Database** (port 6379) - Full graph database with Redis protocol
 - 🌐 **FalkorDB Web Interface** (port 3000) - Interactive graph browser and query builder  
 - 🚀 **Text-to-Cypher API** (port 8080) - Natural language to Cypher conversion
 - 🤖 **MCP Server** (port 3001) - AI assistant integration support
-
-No more complex setup - just run one Docker command and get a complete graph database stack!
 
 ## Features
 
@@ -22,11 +22,13 @@ No more complex setup - just run one Docker command and get a complete graph dat
 - **Enhanced Schema Discovery**: Automatically discover and analyze graph database schemas with example values
 - **Query Validation**: Built-in validation system to catch syntax errors before execution
 - **Self-Healing Queries**: Automatic retry with error feedback when queries fail
+- **Library & API Modes**: Use as a Rust library or REST API
 - **RESTful API**: Clean HTTP API with comprehensive OpenAPI/Swagger documentation
 - **MCP Server**: Model Context Protocol server for AI assistant integrations
 - **Streaming Responses**: Real-time Server-Sent Events (SSE) streaming of query processing results
 
 ### Infrastructure
+- **Rust Library**: Integrate directly into your Rust applications
 - **Integrated FalkorDB**: Built-in FalkorDB graph database with web browser interface
 - **All-in-One Docker Solution**: Complete stack in a single container - database, web UI, API, and MCP server
 - **Multi-Platform Support**: Docker images available for both AMD64 and ARM64 architectures
@@ -39,7 +41,82 @@ No more complex setup - just run one Docker command and get a complete graph dat
 
 ## Quick Start
 
-### Using Docker (Recommended)
+### Using as a Rust Library
+
+Add text-to-cypher to your `Cargo.toml`:
+
+```toml
+[dependencies]
+# For library usage only (without REST server)
+text-to-cypher = { version = "0.1", default-features = false }
+
+# For full server capabilities
+text-to-cypher = "0.1"
+```
+
+**Basic Example:**
+
+```rust
+use text_to_cypher::{TextToCypherClient, ChatRequest, ChatMessage, ChatRole};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create a client
+    let client = TextToCypherClient::new(
+        "gpt-4o-mini",
+        "your-api-key",
+        "falkor://127.0.0.1:6379"
+    );
+
+    // Create a chat request
+    let request = ChatRequest {
+        messages: vec![
+            ChatMessage {
+                role: ChatRole::User,
+                content: "Find all actors who appeared in movies released after 2020".to_string(),
+            }
+        ]
+    };
+
+    // Convert text to Cypher and execute
+    let response = client.text_to_cypher("movies", request).await?;
+    
+    println!("Generated query: {}", response.cypher_query.unwrap());
+    println!("Result: {}", response.cypher_result.unwrap());
+    println!("Answer: {}", response.answer.unwrap());
+
+    Ok(())
+}
+```
+
+**More Examples:**
+
+See the [library usage example](examples/library_usage.rs) for comprehensive examples including:
+- Using the high-level `TextToCypherClient`
+- Using core functions directly for more control
+- Generating Cypher queries without execution
+
+Run the example:
+```bash
+# Ensure FalkorDB is running
+docker run -d -p 6379:6379 falkordb/falkordb:latest
+
+# Set your API key
+export OPENAI_API_KEY=your-key-here
+
+# Run the example (library mode - no server dependencies)
+cargo run --example library_usage --no-default-features
+```
+
+### Using from TypeScript/JavaScript
+
+See [TypeScript Usage Guide](docs/TYPESCRIPT_USAGE.md) for detailed instructions on using text-to-cypher from TypeScript/JavaScript applications via REST API, Node.js native bindings, or WebAssembly.
+
+### Using from Python
+
+See [Python Usage Guide](docs/PYTHON_USAGE.md) for detailed instructions on using text-to-cypher from Python applications via REST API or PyO3 bindings.
+
+### Using Docker (Recommended for Server)
 
 The easiest way to get started is using our all-in-one Docker image that includes FalkorDB database, web browser interface, text-to-cypher API, and MCP server:
 
@@ -402,6 +479,28 @@ docker pull ghcr.io/falkordb/text-to-cypher:latest
 cargo build --release
 ```
 
+## Testing
+
+The library includes comprehensive unit tests with 33+ test cases covering:
+
+- **Library API tests** ([src/lib.rs](src/lib.rs#L409)): `TextToCypherClient` construction, request/response serialization, chat types
+- **Processor tests** ([src/processor.rs](src/processor.rs#L273)): Request/response handling, status checks, serialization
+- **Validator tests** ([src/validator.rs](src/validator.rs)): Cypher query validation and security checks
+- **Formatter tests** ([src/formatter.rs](src/formatter.rs)): Result formatting for various data types
+- **Schema tests** ([src/schema/discovery.rs](src/schema/discovery.rs)): Schema discovery and validation
+
+Run all tests:
+```bash
+# Run library tests only
+cargo test --lib
+
+# Run all tests including integration tests
+cargo test
+
+# Run with output
+cargo test -- --nocapture
+```
+
 ## Development
 
 ### Code Quality
@@ -525,6 +624,104 @@ curl -X POST "http://localhost:8080/text_to_cypher" \
 # 4. Use MCP server for AI assistant integrations (port 3001)
 # Connect your AI assistant to http://localhost:3001
 ```
+
+## Publishing to crates.io
+
+This library is designed to be published to [crates.io](https://crates.io/), making it easy to use in any Rust project.
+
+### For Maintainers
+
+To publish a new version to [crates.io](https://crates.io/):
+
+1. **Ensure you have a crates.io account and are logged in**:
+   ```bash
+   # First time only: Create account at https://crates.io/ and get API token
+   cargo login
+   ```
+
+2. **Update the version** in `Cargo.toml` following [Semantic Versioning](https://semver.org/):
+   ```toml
+   [package]
+   version = "0.1.1"  # Increment as needed
+   ```
+
+3. **Update CHANGELOG** (if exists) with version changes and release notes.
+
+4. **Ensure all tests pass** (including doc tests):
+   ```bash
+   cargo test
+   cargo test --doc
+   ```
+
+5. **Run code quality checks**:
+   ```bash
+   # Format code
+   cargo fmt
+   
+   # Run clippy with pedantic lints
+   cargo clippy --lib -- -W clippy::pedantic -W clippy::nursery -D warnings
+   ```
+
+6. **Build and test both library and server modes**:
+   ```bash
+   # Test library-only mode (minimal dependencies)
+   cargo build --lib --no-default-features
+   
+   # Test with server features (default)
+   cargo build
+   
+   # Test the example
+   cargo run --example library_usage --no-default-features
+   ```
+
+7. **Do a dry-run publish** to verify package contents:
+   ```bash
+   cargo publish --dry-run
+   ```
+   
+   Review the output to ensure:
+   - All necessary files are included
+   - No sensitive files are accidentally included
+   - Package size is reasonable
+
+8. **Create a git tag** for the version:
+   ```bash
+   git tag -a v0.1.1 -m "Release version 0.1.1"
+   git push origin v0.1.1
+   ```
+
+9. **Publish to crates.io**:
+   ```bash
+   cargo publish
+   ```
+   
+   Note: Publishing is **permanent** - you cannot delete or replace a published version.
+
+10. **Verify the published crate**:
+    ```bash
+    # Check on crates.io
+    open https://crates.io/crates/text-to-cypher
+    
+    # Test installing from crates.io
+    cargo install text-to-cypher --version 0.1.1
+    ```
+
+### For Users
+
+Once published, users can easily add text-to-cypher to their projects:
+
+```toml
+[dependencies]
+# Library-only usage (no REST server)
+text-to-cypher = { version = "0.1", default-features = false }
+
+# With REST server capabilities
+text-to-cypher = "0.1"
+```
+
+The library is published with:
+- **default features**: Includes REST API server, Swagger UI, MCP server
+- **no-default-features**: Core library only (schema discovery, query generation, execution)
 
 ## Troubleshooting
 

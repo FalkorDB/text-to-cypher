@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "server")]
 use utoipa::ToSchema;
 
 pub use super::attribute::Attribute;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(ToSchema))]
 pub struct Entity {
     pub label: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
