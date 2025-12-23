@@ -627,11 +627,11 @@ curl -X POST "http://localhost:8080/text_to_cypher" \
 
 ## Publishing to crates.io
 
-This library is designed to be published to [crates.io](https://crates.io/), making it easy to use in any Rust project.
+This library is designed to be published to [crates.io](https://crates.io/crates/text-to-cypher), making it easy to use in any Rust project.
 
 ### For Maintainers
 
-To publish a new version to [crates.io](https://crates.io/):
+To publish a new version to [crates.io](https://crates.io/crates/text-to-cypher):
 
 1. **Ensure you have a crates.io account and are logged in**:
    ```bash
