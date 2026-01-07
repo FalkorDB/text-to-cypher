@@ -3,14 +3,10 @@ use std::collections::HashMap;
 pub struct TemplateEngine;
 
 impl TemplateEngine {
-    /// Load a template from a file path.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read.
-    pub fn load_template(template_path: &str) -> Result<String, std::io::Error> {
-        std::fs::read_to_string(template_path)
-    }
+    // Templates embedded at compile time
+    const SYSTEM_PROMPT: &'static str = include_str!("../templates/system_prompt.txt");
+    const USER_PROMPT: &'static str = include_str!("../templates/user_prompt.txt");
+    const LAST_REQUEST_PROMPT: &'static str = include_str!("../templates/last_request_prompt.txt");
 
     #[must_use]
     pub fn render(
@@ -28,47 +24,35 @@ impl TemplateEngine {
     }
 
     /// Render the system prompt template with the given ontology.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the template file cannot be read.
-    pub fn render_system_prompt(ontology: &str) -> Result<String, std::io::Error> {
-        let template = Self::load_template("templates/system_prompt.txt")?;
+    #[must_use]
+    pub fn render_system_prompt(ontology: &str) -> String {
         let mut variables = HashMap::new();
         variables.insert("ONTOLOGY", ontology);
 
-        Ok(Self::render(&template, &variables))
+        Self::render(Self::SYSTEM_PROMPT, &variables)
     }
 
     /// Render the user prompt template with the given question.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the template file cannot be read.
-    pub fn render_user_prompt(question: &str) -> Result<String, std::io::Error> {
-        let template = Self::load_template("templates/user_prompt.txt")?;
+    #[must_use]
+    pub fn render_user_prompt(question: &str) -> String {
         let mut variables = HashMap::new();
         variables.insert("QUESTION", question);
 
-        Ok(Self::render(&template, &variables))
+        Self::render(Self::USER_PROMPT, &variables)
     }
 
     /// Render the last request prompt template with the given parameters.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the template file cannot be read.
+    #[must_use]
     pub fn render_last_request_prompt(
         question: &str,
         cypher_query: &str,
         cypher_result: &str,
-    ) -> Result<String, std::io::Error> {
-        let template = Self::load_template("templates/last_request_prompt.txt")?;
+    ) -> String {
         let mut variables = HashMap::new();
         variables.insert("CYPHER_QUERY", cypher_query);
         variables.insert("CYPHER_RESULT", cypher_result);
         variables.insert("USER_QUESTION", question);
 
-        Ok(Self::render(&template, &variables))
+        Self::render(Self::LAST_REQUEST_PROMPT, &variables)
     }
 }
