@@ -1,6 +1,6 @@
 [package]
 name = "text-to-cypher"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "A library and REST API for translating natural language text to Cypher queries using AI models"
 license = "MIT"
