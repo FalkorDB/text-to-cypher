@@ -94,6 +94,150 @@ fn is_model_not_found_error(msg: &str) -> bool {
         || msg.contains("404")
 }
 
+/// Helper to check if error is authentication-related
+#[cfg(feature = "server")]
+fn is_auth_error(msg: &str) -> bool {
+    msg.contains("authentication")
+        || msg.contains("api key")
+        || msg.contains("unauthorized")
+        || msg.contains("invalid_api_key")
+        || msg.contains("invalid api key")
+}
+
+/// Helper to check if error is rate limit-related
+#[cfg(feature = "server")]
+fn is_rate_limit_error(msg: &str) -> bool {
+    msg.contains("rate limit") || msg.contains("quota") || msg.contains("too many requests") || msg.contains("429")
+}
+
+/// Helper to check if error is service unavailable
+#[cfg(feature = "server")]
+fn is_service_unavailable_error(msg: &str) -> bool {
+    msg.contains("service unavailable") || msg.contains("503") || msg.contains("temporarily unavailable")
+}
+
+/// Maps authentication errors to appropriate responses
+#[cfg(feature = "server")]
+fn map_auth_error(
+    provider: &Provider,
+    err: &genai::Error,
+) -> (u16, &'static str, String) {
+    match provider {
+        Provider::OpenAI => (
+            401,
+            "AUTHENTICATION_ERROR",
+            format!("OpenAI authentication failed. Please verify your API key: {err}"),
+        ),
+        Provider::Anthropic => (
+            401,
+            "AUTHENTICATION_ERROR",
+            format!("Anthropic authentication failed. Please verify your API key: {err}"),
+        ),
+        Provider::Gemini => (
+            401,
+            "AUTHENTICATION_ERROR",
+            format!("Google Gemini authentication failed. Please verify your API key: {err}"),
+        ),
+        Provider::Unknown => (401, "AUTHENTICATION_ERROR", format!("Authentication failed: {err}")),
+    }
+}
+
+/// Maps rate limit errors to appropriate responses
+#[cfg(feature = "server")]
+fn map_rate_limit_error(
+    provider: &Provider,
+    err: &genai::Error,
+) -> (u16, &'static str, String) {
+    match provider {
+        Provider::OpenAI => (
+            429,
+            "RATE_LIMITED",
+            format!("OpenAI rate limit exceeded. Please retry after a short delay: {err}"),
+        ),
+        Provider::Anthropic => (
+            429,
+            "RATE_LIMITED",
+            format!("Anthropic rate limit exceeded. Please retry after a short delay: {err}"),
+        ),
+        Provider::Gemini => (
+            429,
+            "RATE_LIMITED",
+            format!("Google Gemini rate limit exceeded. Please retry after a short delay: {err}"),
+        ),
+        Provider::Unknown => (429, "RATE_LIMITED", format!("Rate limit exceeded: {err}")),
+    }
+}
+
+/// Maps model not found errors to appropriate responses
+#[cfg(feature = "server")]
+fn map_model_not_found_error(
+    provider: &Provider,
+    err: &genai::Error,
+) -> (u16, &'static str, String) {
+    match provider {
+        Provider::OpenAI => (
+            404,
+            "MODEL_NOT_FOUND",
+            format!("OpenAI model not found or not available. Please check the model name: {err}"),
+        ),
+        Provider::Anthropic => (
+            404,
+            "MODEL_NOT_FOUND",
+            format!("Anthropic model not found or not available. Please check the model name: {err}"),
+        ),
+        Provider::Gemini => (
+            404,
+            "MODEL_NOT_FOUND",
+            format!("Google Gemini model not found or not available. Please check the model name: {err}"),
+        ),
+        Provider::Unknown => (404, "MODEL_NOT_FOUND", format!("Model not found: {err}")),
+    }
+}
+
+/// Maps service unavailable errors to appropriate responses
+#[cfg(feature = "server")]
+fn map_service_unavailable_error(
+    provider: &Provider,
+    err: &genai::Error,
+) -> (u16, &'static str, String) {
+    match provider {
+        Provider::OpenAI => (
+            503,
+            "SERVICE_UNAVAILABLE",
+            format!("OpenAI service is temporarily unavailable. Please retry later: {err}"),
+        ),
+        Provider::Anthropic => (
+            503,
+            "SERVICE_UNAVAILABLE",
+            format!("Anthropic service is temporarily unavailable. Please retry later: {err}"),
+        ),
+        Provider::Gemini => (
+            503,
+            "SERVICE_UNAVAILABLE",
+            format!("Google Gemini service is temporarily unavailable. Please retry later: {err}"),
+        ),
+        Provider::Unknown => (
+            503,
+            "SERVICE_UNAVAILABLE",
+            format!("AI service is temporarily unavailable: {err}"),
+        ),
+    }
+}
+
+/// Maps default errors to appropriate responses
+#[cfg(feature = "server")]
+fn map_default_error(
+    provider: &Provider,
+    err: &genai::Error,
+) -> (u16, &'static str, String) {
+    match provider {
+        Provider::OpenAI => (502, "GENAI_ERROR", format!("OpenAI service error: {err}")),
+        Provider::Anthropic => (502, "GENAI_ERROR", format!("Anthropic service error: {err}")),
+        Provider::Gemini => (502, "GENAI_ERROR", format!("Google Gemini service error: {err}")),
+        Provider::Unknown => (502, "GENAI_ERROR", format!("AI service error: {err}")),
+    }
+}
+
 /// Maps genai errors to appropriate HTTP status codes and messages based on provider
 #[cfg(feature = "server")]
 fn map_genai_error(
@@ -101,121 +245,25 @@ fn map_genai_error(
     err: &genai::Error,
 ) -> (u16, &'static str, String) {
     let msg_lower = msg.to_lowercase();
-
-    // Determine provider from error message
     let provider = detect_provider(&msg_lower);
 
-    // Authentication and API key errors
-    if msg_lower.contains("authentication")
-        || msg_lower.contains("api key")
-        || msg_lower.contains("unauthorized")
-        || msg_lower.contains("invalid_api_key")
-        || msg_lower.contains("invalid api key")
-    {
-        return match provider {
-            Provider::OpenAI => (
-                401,
-                "AUTHENTICATION_ERROR",
-                format!("OpenAI authentication failed. Please verify your API key: {err}"),
-            ),
-            Provider::Anthropic => (
-                401,
-                "AUTHENTICATION_ERROR",
-                format!("Anthropic authentication failed. Please verify your API key: {err}"),
-            ),
-            Provider::Gemini => (
-                401,
-                "AUTHENTICATION_ERROR",
-                format!("Google Gemini authentication failed. Please verify your API key: {err}"),
-            ),
-            Provider::Unknown => (401, "AUTHENTICATION_ERROR", format!("Authentication failed: {err}")),
-        };
+    if is_auth_error(&msg_lower) {
+        return map_auth_error(&provider, err);
     }
 
-    // Rate limiting and quota errors
-    if msg_lower.contains("rate limit")
-        || msg_lower.contains("quota")
-        || msg_lower.contains("too many requests")
-        || msg_lower.contains("429")
-    {
-        return match provider {
-            Provider::OpenAI => (
-                429,
-                "RATE_LIMITED",
-                format!("OpenAI rate limit exceeded. Please retry after a short delay: {err}"),
-            ),
-            Provider::Anthropic => (
-                429,
-                "RATE_LIMITED",
-                format!("Anthropic rate limit exceeded. Please retry after a short delay: {err}"),
-            ),
-            Provider::Gemini => (
-                429,
-                "RATE_LIMITED",
-                format!("Google Gemini rate limit exceeded. Please retry after a short delay: {err}"),
-            ),
-            Provider::Unknown => (429, "RATE_LIMITED", format!("Rate limit exceeded: {err}")),
-        };
+    if is_rate_limit_error(&msg_lower) {
+        return map_rate_limit_error(&provider, err);
     }
 
-    // Model not found errors
     if is_model_not_found_error(&msg_lower) {
-        return match provider {
-            Provider::OpenAI => (
-                404,
-                "MODEL_NOT_FOUND",
-                format!("OpenAI model not found or not available. Please check the model name: {err}"),
-            ),
-            Provider::Anthropic => (
-                404,
-                "MODEL_NOT_FOUND",
-                format!("Anthropic model not found or not available. Please check the model name: {err}"),
-            ),
-            Provider::Gemini => (
-                404,
-                "MODEL_NOT_FOUND",
-                format!("Google Gemini model not found or not available. Please check the model name: {err}"),
-            ),
-            Provider::Unknown => (404, "MODEL_NOT_FOUND", format!("Model not found: {err}")),
-        };
+        return map_model_not_found_error(&provider, err);
     }
 
-    // Service unavailable errors
-    if msg_lower.contains("service unavailable")
-        || msg_lower.contains("503")
-        || msg_lower.contains("temporarily unavailable")
-    {
-        return match provider {
-            Provider::OpenAI => (
-                503,
-                "SERVICE_UNAVAILABLE",
-                format!("OpenAI service is temporarily unavailable. Please retry later: {err}"),
-            ),
-            Provider::Anthropic => (
-                503,
-                "SERVICE_UNAVAILABLE",
-                format!("Anthropic service is temporarily unavailable. Please retry later: {err}"),
-            ),
-            Provider::Gemini => (
-                503,
-                "SERVICE_UNAVAILABLE",
-                format!("Google Gemini service is temporarily unavailable. Please retry later: {err}"),
-            ),
-            Provider::Unknown => (
-                503,
-                "SERVICE_UNAVAILABLE",
-                format!("AI service is temporarily unavailable: {err}"),
-            ),
-        };
+    if is_service_unavailable_error(&msg_lower) {
+        return map_service_unavailable_error(&provider, err);
     }
 
-    // Default error mapping
-    match provider {
-        Provider::OpenAI => (502, "GENAI_ERROR", format!("OpenAI service error: {err}")),
-        Provider::Anthropic => (502, "GENAI_ERROR", format!("Anthropic service error: {err}")),
-        Provider::Gemini => (502, "GENAI_ERROR", format!("Google Gemini service error: {err}")),
-        Provider::Unknown => (502, "GENAI_ERROR", format!("AI service error: {err}")),
-    }
+    map_default_error(&provider, err)
 }
 
 /// AI Provider enum for error categorization
