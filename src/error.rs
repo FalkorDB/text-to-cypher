@@ -5,6 +5,12 @@ use std::fmt;
 #[cfg(feature = "server")]
 use utoipa::ToSchema;
 
+// Constants for Ollama detection
+#[cfg(feature = "server")]
+const OLLAMA_DEFAULT_HOST: &str = "localhost:11434";
+#[cfg(feature = "server")]
+const OLLAMA_DEFAULT_HOST_IP: &str = "127.0.0.1:11434";
+
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(ToSchema))]
 pub struct ErrorResponse {
@@ -75,9 +81,17 @@ impl ResponseError for ApiError {
 #[cfg(feature = "server")]
 fn is_ollama_error(msg: &str) -> bool {
     let msg_lower = msg.to_lowercase();
-    msg_lower.contains("ollama") || 
-    msg_lower.contains("localhost:11434") || // Default Ollama port
-    msg_lower.contains("127.0.0.1:11434")
+    msg_lower.contains("ollama")
+        || msg_lower.contains(OLLAMA_DEFAULT_HOST)
+        || msg_lower.contains(OLLAMA_DEFAULT_HOST_IP)
+}
+
+/// Checks if an error message indicates a model not found error
+#[cfg(feature = "server")]
+fn is_model_not_found_error(msg: &str) -> bool {
+    msg.contains("not found")
+        || (msg.contains("model") && (msg.contains("does not exist") || msg.contains("not available")))
+        || msg.contains("404")
 }
 
 /// Maps genai errors to appropriate HTTP status codes and messages based on provider
@@ -145,11 +159,7 @@ fn map_genai_error(
     }
 
     // Model not found errors
-    if msg_lower.contains("not found")
-        || (msg_lower.contains("model")
-            && (msg_lower.contains("does not exist") || msg_lower.contains("not available")))
-        || msg_lower.contains("404")
-    {
+    if is_model_not_found_error(&msg_lower) {
         return match provider {
             Provider::OpenAI => (
                 404,
