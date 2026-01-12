@@ -369,7 +369,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "Requires valid API key"]
     async fn test_list_adapter_models_openai() {
         let client = create_genai_client(None);
         let result = list_adapter_models(AdapterKind::OpenAI, &client).await;
@@ -383,7 +383,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "Requires valid API key"]
     async fn test_list_all_models() {
         let client = create_genai_client(None);
         let result = list_all_models(&client).await;
