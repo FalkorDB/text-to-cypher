@@ -2,6 +2,7 @@
 name = "text-to-cypher"
 version = "0.1.7"
 edition = "2024"
+rust-version = "1.85"
 description = "A library and REST API for translating natural language text to Cypher queries using AI models"
 license = "MIT"
 repository = "https://github.com/FalkorDB/text-to-cypher"
