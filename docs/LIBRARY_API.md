@@ -205,7 +205,7 @@ println!("Schema: {}", schema);
 List all available AI models: 
 
 ```rust
-use text_to_cypher: :{core, AdapterKind};
+use text_to_cypher::{core, AdapterKind};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -213,10 +213,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // List models for a specific provider
     let openai_models = core::list_adapter_models(AdapterKind::OpenAI, &client).await?;
-    println!("OpenAI models: {: ?}", openai_models);
+    println!("OpenAI models: {:?}", openai_models);
     
     // List all models
-    let all_models = core:: list_all_models(&client).await?;
+    let all_models = core::list_all_models(&client).await?;
     for (kind, models) in all_models {
         println!("{kind}: {} models available", models.len());
     }
@@ -228,7 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Or using the high-level client:
 
 ```rust
-let client = TextToCypherClient:: new("gpt-4o-mini", "api-key", "falkor://localhost:6379");
+let client = TextToCypherClient::new("gpt-4o-mini", "api-key", "falkor://localhost:6379");
 let models = client.list_models(AdapterKind::OpenAI).await?;
 ```
 

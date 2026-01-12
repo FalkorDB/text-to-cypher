@@ -313,7 +313,9 @@ pub async fn list_adapter_models(
 ///
 /// # Errors
 ///
-/// Returns an error if any model listing request fails
+/// This function returns `Ok` with partial results even when individual adapters fail.
+/// Individual adapter failures are logged as warnings and skipped, allowing the function
+/// to continue and return results from successful adapters
 ///
 /// # Examples
 ///
@@ -367,6 +369,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore]
     async fn test_list_adapter_models_openai() {
         let client = create_genai_client(None);
         let result = list_adapter_models(AdapterKind::OpenAI, &client).await;
@@ -380,6 +383,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_list_all_models() {
         let client = create_genai_client(None);
         let result = list_all_models(&client).await;

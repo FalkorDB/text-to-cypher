@@ -155,7 +155,7 @@ impl CypherValidator {
     /// # Returns
     ///
     /// A suggested fixed query, if applicable
-    /// # Note
+    ///
     /// # Note
     ///
     /// This function is available for future use in direct query fixing.
