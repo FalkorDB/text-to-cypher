@@ -182,10 +182,7 @@ fn create_cypher_query_chat_request(
         chat_req = chat_req.append_message(genai_message);
     }
 
-    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(ontology).unwrap_or_else(|e| {
-        tracing::error!("Failed to load system prompt template: {}", e);
-        format!("Generate OpenCypher statements using this ontology: {ontology}")
-    }));
+    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(ontology));
 
     chat_req
 }
@@ -220,10 +217,7 @@ fn create_answer_chat_request(
 }
 
 fn process_last_user_message(question: &str) -> String {
-    TemplateEngine::render_user_prompt(question).unwrap_or_else(|e| {
-        tracing::error!("Failed to load user prompt template: {}", e);
-        format!("Generate an OpenCypher statement for: {question}")
-    })
+    TemplateEngine::render_user_prompt(question)
 }
 
 fn process_last_request_prompt(
@@ -231,10 +225,7 @@ fn process_last_request_prompt(
     cypher_query: &str,
     cypher_result: &str,
 ) -> String {
-    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result).unwrap_or_else(|e| {
-        tracing::error!("Failed to load last_request_prompt template: {}", e);
-        format!("Generate an answer for: {content}")
-    })
+    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result)
 }
 
 fn execute_query_blocking(
@@ -273,8 +264,8 @@ fn execute_query_blocking(
 ///
 /// # Arguments
 ///
-/// * `adapter_kind` - The AI provider (OpenAI, Ollama, Gemini, Anthropic, Groq, Cohere)
-/// * `client` - The GenAI client
+/// * `adapter_kind` - The AI provider (`OpenAI`, `Ollama`, `Gemini`, `Anthropic`, `Groq`, `Cohere`)
+/// * `client` - The `GenAI` client
 ///
 /// # Returns
 ///
@@ -314,7 +305,7 @@ pub async fn list_adapter_models(
 ///
 /// # Arguments
 ///
-/// * `client` - The GenAI client
+/// * `client` - The `GenAI` client
 ///
 /// # Returns
 ///
