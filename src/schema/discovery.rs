@@ -221,7 +221,8 @@ impl Schema {
 
         // First character must be letter or underscore
         if let Some(first) = chars.next()
-            && !first.is_alphabetic() && first != '_'
+            && !first.is_alphabetic()
+            && first != '_'
         {
             return false;
         }
