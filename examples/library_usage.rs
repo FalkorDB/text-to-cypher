@@ -8,11 +8,12 @@
 //! 2. Set your API key: export OPENAI_API_KEY=your-key-here
 //! 3. Run: cargo run --example library_usage --no-default-features
 
-use text_to_cypher::{core, ChatMessage, ChatRequest, ChatRole, TextToCypherClient};
+use text_to_cypher::{ChatMessage, ChatRequest, ChatRole, TextToCypherClient, core};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing for logging
+    // Initialize tracing for logging (only if tracing_subscriber is available)
+    #[cfg(feature = "server")]
     tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
 
     println!("=== Text-to-Cypher Library Usage Examples ===\n");

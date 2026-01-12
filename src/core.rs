@@ -9,6 +9,7 @@ use crate::schema::discovery::Schema;
 use crate::template::TemplateEngine;
 use crate::validator::CypherValidator;
 use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo};
+use genai::adapter::AdapterKind;
 use genai::resolver::{AuthData, AuthResolver};
 use genai::{Client as GenAiClient, ModelIden};
 use std::error::Error;
@@ -60,9 +61,7 @@ pub async fn generate_cypher_query(
         .await
         .map_err(|e| format!("Chat request failed: {e}"))?;
 
-    let query = chat_response
-        .content_text_into_string()
-        .unwrap_or_else(|| "NO ANSWER".to_string());
+    let query = chat_response.into_first_text().unwrap_or_else(|| "NO ANSWER".to_string());
 
     if query.trim().is_empty() || query.trim() == "NO ANSWER" {
         return Err("No valid query was generated".into());
@@ -131,7 +130,7 @@ pub async fn generate_final_answer(
         .map_err(|e| format!("Chat request failed: {e}"))?;
 
     let answer = chat_response
-        .content_text_into_string()
+        .into_first_text()
         .unwrap_or_else(|| "Unable to generate answer".to_string());
 
     Ok(answer)
@@ -183,7 +182,10 @@ fn create_cypher_query_chat_request(
         chat_req = chat_req.append_message(genai_message);
     }
 
-    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(ontology));
+    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(ontology).unwrap_or_else(|e| {
+        tracing::error!("Failed to load system prompt template: {}", e);
+        format!("Generate OpenCypher statements using this ontology: {ontology}")
+    }));
 
     chat_req
 }
@@ -218,7 +220,10 @@ fn create_answer_chat_request(
 }
 
 fn process_last_user_message(question: &str) -> String {
-    TemplateEngine::render_user_prompt(question)
+    TemplateEngine::render_user_prompt(question).unwrap_or_else(|e| {
+        tracing::error!("Failed to load user prompt template: {}", e);
+        format!("Generate an OpenCypher statement for: {question}")
+    })
 }
 
 fn process_last_request_prompt(
@@ -226,7 +231,10 @@ fn process_last_request_prompt(
     cypher_query: &str,
     cypher_result: &str,
 ) -> String {
-    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result)
+    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result).unwrap_or_else(|e| {
+        tracing::error!("Failed to load last_request_prompt template: {}", e);
+        format!("Generate an answer for: {content}")
+    })
 }
 
 fn execute_query_blocking(
@@ -259,4 +267,141 @@ fn execute_query_blocking(
         }
         Ok(records)
     })
+}
+
+/// Lists all available model names for a specific AI provider
+///
+/// # Arguments
+///
+/// * `adapter_kind` - The AI provider (OpenAI, Ollama, Gemini, Anthropic, Groq, Cohere)
+/// * `client` - The GenAI client
+///
+/// # Returns
+///
+/// A vector of model names supported by the adapter
+///
+/// # Errors
+///
+/// Returns an error if the model listing request fails
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use text_to_cypher::core;
+/// use genai::adapter::AdapterKind;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///     let client = core::create_genai_client(None);
+///     let models = core::list_adapter_models(AdapterKind::OpenAI, &client).await?;
+///     println!("OpenAI models: {:?}", models);
+///     Ok(())
+/// }
+/// ```
+pub async fn list_adapter_models(
+    adapter_kind: AdapterKind,
+    client: &GenAiClient,
+) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
+    let models = client
+        .all_model_names(adapter_kind)
+        .await
+        .map_err(|e| format!("Failed to fetch models for {adapter_kind}: {e}"))?;
+
+    Ok(models)
+}
+
+/// Lists all available models across all supported AI providers
+///
+/// # Arguments
+///
+/// * `client` - The GenAI client
+///
+/// # Returns
+///
+/// A hashmap mapping adapter kinds to their available model names
+///
+/// # Errors
+///
+/// Returns an error if any model listing request fails
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use text_to_cypher::core;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///     let client = core::create_genai_client(None);
+///     let all_models = core::list_all_models(&client).await?;
+///     for (kind, models) in all_models {
+///         println!("{kind}: {models:?}");
+///     }
+///     Ok(())
+/// }
+/// ```
+pub async fn list_all_models(
+    client: &GenAiClient
+) -> Result<std::collections::HashMap<AdapterKind, Vec<String>>, Box<dyn Error + Send + Sync>> {
+    use std::collections::HashMap;
+
+    const ADAPTERS: &[AdapterKind] = &[
+        AdapterKind::OpenAI,
+        AdapterKind::Ollama,
+        AdapterKind::Gemini,
+        AdapterKind::Anthropic,
+        AdapterKind::Groq,
+        AdapterKind::Cohere,
+        // Add DeepSeek, xAI/Grok if available in your version
+    ];
+
+    let mut results = HashMap::new();
+
+    for &adapter in ADAPTERS {
+        match client.all_model_names(adapter).await {
+            Ok(models) => {
+                results.insert(adapter, models);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch models for {adapter}: {e}");
+                // Continue with other adapters even if one fails
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_list_adapter_models_openai() {
+        let client = create_genai_client(None);
+        let result = list_adapter_models(AdapterKind::OpenAI, &client).await;
+
+        assert!(result.is_ok(), "Should successfully list OpenAI models");
+        let models = result.unwrap();
+        assert!(!models.is_empty(), "Should have at least one model");
+
+        // OpenAI should have common models
+        assert!(models.iter().any(|m| m.contains("gpt")), "Should contain GPT models");
+    }
+
+    #[tokio::test]
+    async fn test_list_all_models() {
+        let client = create_genai_client(None);
+        let result = list_all_models(&client).await;
+
+        assert!(result.is_ok(), "Should successfully list all models");
+        let all_models = result.unwrap();
+
+        // Should have at least some adapters
+        assert!(!all_models.is_empty(), "Should have at least one adapter");
+
+        // Each adapter should have models
+        for (kind, models) in &all_models {
+            assert!(!models.is_empty(), "{kind} should have models");
+        }
+    }
 }

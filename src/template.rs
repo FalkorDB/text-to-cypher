@@ -25,20 +25,20 @@ impl TemplateEngine {
 
     /// Render the system prompt template with the given ontology.
     #[must_use]
-    pub fn render_system_prompt(ontology: &str) -> String {
+    pub fn render_system_prompt(ontology: &str) -> Result<String, std::io::Error> {
         let mut variables = HashMap::new();
         variables.insert("ONTOLOGY", ontology);
 
-        Self::render(Self::SYSTEM_PROMPT, &variables)
+        Ok(Self::render(Self::SYSTEM_PROMPT, &variables))
     }
 
     /// Render the user prompt template with the given question.
     #[must_use]
-    pub fn render_user_prompt(question: &str) -> String {
+    pub fn render_user_prompt(question: &str) -> Result<String, std::io::Error> {
         let mut variables = HashMap::new();
         variables.insert("QUESTION", question);
 
-        Self::render(Self::USER_PROMPT, &variables)
+        Ok(Self::render(Self::USER_PROMPT, &variables))
     }
 
     /// Render the last request prompt template with the given parameters.
@@ -47,12 +47,12 @@ impl TemplateEngine {
         question: &str,
         cypher_query: &str,
         cypher_result: &str,
-    ) -> String {
+    ) -> Result<String, std::io::Error> {
         let mut variables = HashMap::new();
         variables.insert("CYPHER_QUERY", cypher_query);
         variables.insert("CYPHER_RESULT", cypher_result);
         variables.insert("USER_QUESTION", question);
 
-        Self::render(Self::LAST_REQUEST_PROMPT, &variables)
+        Ok(Self::render(Self::LAST_REQUEST_PROMPT, &variables))
     }
 }
