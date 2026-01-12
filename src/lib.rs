@@ -456,6 +456,13 @@ impl TextToCypherClient {
     ///
     /// Returns an error if the model listing fails
     ///
+    /// # Note
+    ///
+    /// This method uses the API key configured in the client. Different providers
+    /// require different API keys, so only the provider matching the configured key
+    /// will successfully return results. Other providers will be logged as warnings
+    /// and skipped.
+    ///
     /// # Example
     ///
     /// ```no_run
