@@ -164,8 +164,8 @@ pub mod validator;
 // Re-export commonly used types for easier access
 pub use chat::{ChatMessage, ChatRequest, ChatRole};
 pub use error::ErrorResponse;
+pub use genai::adapter::AdapterKind;
 pub use processor::{TextToCypherRequest, TextToCypherResponse};
-
 // Server-specific modules - only when server feature is enabled
 #[cfg(feature = "server")]
 pub mod mcp;
@@ -403,6 +403,84 @@ impl TextToCypherClient {
         graph_name: impl Into<String>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         core::discover_graph_schema(&self.falkordb_connection, &graph_name.into()).await
+    }
+
+    /// Lists all available model names for a specific AI provider
+    ///
+    /// # Arguments
+    ///
+    /// * `adapter_kind` - The AI provider to query
+    ///
+    /// # Returns
+    ///
+    /// A vector of model names supported by the adapter
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model listing request fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use text_to_cypher::TextToCypherClient;
+    /// use genai::adapter::AdapterKind;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let client = TextToCypherClient::new(
+    ///     "gpt-4o-mini",
+    ///     "your-api-key",
+    ///     "falkor://127.0.0.1:6379"
+    /// );
+    ///
+    /// let models = client.list_models(AdapterKind::OpenAI).await?;
+    /// println!("Available OpenAI models: {:?}", models);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_models(
+        &self,
+        adapter_kind: AdapterKind,
+    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let client = core::create_genai_client(Some(&self.api_key));
+        core::list_adapter_models(adapter_kind, &client).await
+    }
+
+    /// Lists all available models across all supported AI providers
+    ///
+    /// # Returns
+    ///
+    /// A hashmap mapping adapter kinds to their available model names
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model listing fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use text_to_cypher::TextToCypherClient;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error:: Error + Send + Sync>> {
+    /// let client = TextToCypherClient::new(
+    ///     "gpt-4o-mini",
+    ///     "your-api-key",
+    ///     "falkor://127.0.0.1:6379"
+    /// );
+    ///
+    /// let all_models = client.list_all_models().await?;
+    /// for (kind, models) in all_models {
+    ///     println!("{kind}: {} models", models.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_all_models(
+        &self
+    ) -> Result<std::collections::HashMap<AdapterKind, Vec<String>>, Box<dyn std::error::Error + Send + Sync>> {
+        let client = core::create_genai_client(Some(&self.api_key));
+        core::list_all_models(&client).await
     }
 }
 
