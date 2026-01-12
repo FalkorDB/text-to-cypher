@@ -146,7 +146,8 @@ fn map_genai_error(
 
     // Model not found errors
     if msg_lower.contains("not found")
-        || msg_lower.contains("model") && (msg_lower.contains("does not exist") || msg_lower.contains("not available"))
+        || (msg_lower.contains("model")
+            && (msg_lower.contains("does not exist") || msg_lower.contains("not available")))
         || msg_lower.contains("404")
     {
         return match provider {
@@ -223,7 +224,7 @@ fn detect_provider(msg: &str) -> Provider {
         Provider::OpenAI
     } else if msg.contains("anthropic") || msg.contains("claude") {
         Provider::Anthropic
-    } else if msg.contains("gemini") || msg.contains("google") {
+    } else if msg.contains("gemini") || (msg.contains("google") && msg.contains("ai")) {
         Provider::Gemini
     } else {
         Provider::Unknown
