@@ -469,7 +469,7 @@ impl TextToCypherClient {
     /// use text_to_cypher::TextToCypherClient;
     ///
     /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error:: Error + Send + Sync>> {
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// let client = TextToCypherClient::new(
     ///     "gpt-4o-mini",
     ///     "your-api-key",
