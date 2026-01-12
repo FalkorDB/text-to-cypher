@@ -106,6 +106,7 @@ impl Schema {
         Self::collect_attributes(graph, label, &query).await
     }
 
+    #[allow(clippy::collapsible_if)]
     async fn collect_attributes(
         graph: &mut AsyncGraph,
         label: &str,
@@ -213,6 +214,7 @@ impl Schema {
 
     /// Validates that an identifier (label, relationship type) is safe to use in queries
     /// Cypher identifiers must start with letter or underscore, followed by alphanumeric or underscore
+    #[allow(clippy::collapsible_if)]
     fn is_valid_identifier(name: &str) -> bool {
         if name.is_empty() {
             return false;

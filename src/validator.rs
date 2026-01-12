@@ -155,10 +155,12 @@ impl CypherValidator {
     /// # Returns
     ///
     /// A suggested fixed query, if applicable
+    /// # Note
     ///
-    /// Note: This function is available for future use in direct query fixing.
+    /// This function is available for future use in direct query fixing.
     /// Currently, self-healing uses LLM-based regeneration which is more flexible.
     #[allow(dead_code)]
+    #[allow(clippy::collapsible_if)]
     pub fn suggest_fix(
         query: &str,
         error: &str,

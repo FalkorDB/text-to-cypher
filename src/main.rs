@@ -1514,7 +1514,7 @@ async fn get_graph_schema_string(
     }
 
     // If not in cache, discover it
-    let schema = discover_graph_schema(falkordb_connection, graph_name).await;
+    let schema = discover_graph_schema(falkordb_connection, graph_name).await?;
     let schema_json = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))?;
 
     // Cache the result
@@ -1840,10 +1840,10 @@ async fn list_import_folder_files(
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
         let path = entry.path();
 
-        if path.is_file()
-            && let Some(file_name) = path.file_name().and_then(|name| name.to_str())
-        {
-            files.push(file_name.to_string());
+        if path.is_file() {
+            if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
+                files.push(file_name.to_string());
+            }
         }
     }
 
@@ -1903,10 +1903,7 @@ fn generate_create_cypher_query_chat_request(
         chat_req = chat_req.append_message(genai_message);
     }
 
-    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(ontology).unwrap_or_else(|e| {
-        tracing::error!("Failed to load system prompt template: {}", e);
-        format!("Generate OpenCypher statements using this ontology: {ontology}")
-    }));
+    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt(ontology));
 
     // Pretty print the chat request as JSON for logging
     if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
@@ -1957,10 +1954,7 @@ fn process_last_request_prompt(
     cypher_query: &str,
     cypher_result: &str,
 ) -> String {
-    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result).unwrap_or_else(|e| {
-        tracing::error!("Failed to load last_request_prompt template: {}", e);
-        format!("Generate an answer for: {content}")
-    })
+    TemplateEngine::render_last_request_prompt(content, cypher_query, cypher_result)
 }
 
 #[allow(clippy::pedantic)]
@@ -2078,31 +2072,30 @@ struct GetSchemaQuery {
 async fn discover_graph_schema(
     falkordb_connection: &str,
     graph_name: &str,
-) -> Schema {
-    let connection_info: FalkorConnectionInfo = falkordb_connection.try_into().expect("Invalid connection info");
+) -> Result<Schema, Box<dyn std::error::Error + Send + Sync>> {
+    let connection_info: FalkorConnectionInfo = falkordb_connection
+        .try_into()
+        .map_err(|e| format!("Invalid connection info: {e}"))?;
 
     let client = FalkorClientBuilder::new_async()
         .with_connection_info(connection_info)
         .build()
         .await
-        .expect("Failed to build client");
+        .map_err(|e| format!("Failed to build client: {e}"))?;
 
     // Select the specified graph
     let mut graph = client.select_graph(graph_name);
     let schema = Schema::discover_from_graph(&mut graph, 100)
         .await
-        .expect("Failed to discover schema from graph");
+        .map_err(|e| format!("Failed to discover schema from graph: {e}"))?;
 
     // Print the discovered schema
     tracing::info!("Discovered schema: {schema}");
-    schema
+    Ok(schema)
 }
 
 fn process_last_user_message(question: &str) -> String {
-    TemplateEngine::render_user_prompt(question).unwrap_or_else(|e| {
-        tracing::error!("Failed to load user prompt template: {}", e);
-        format!("Generate an OpenCypher statement for: {question}")
-    })
+    TemplateEngine::render_user_prompt(question)
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -2116,13 +2109,23 @@ async fn discover_and_send_schema(
         Progress::Status(format!("Discovering schema for graph: {graph_name}"))
     );
 
-    let schema = discover_graph_schema(falkordb_connection, graph_name).await;
+    let schema = match discover_graph_schema(falkordb_connection, graph_name).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to discover schema: {}", e);
+            try_send!(tx, Progress::Error(format!("Failed to discover schema: {e}")));
+            return Err(());
+        }
+    };
 
     // Serialize and handle errors inline
-    let Ok(json_schema) = serde_json::to_string(&schema) else {
-        tracing::error!("Failed to serialize schema to JSON");
-        try_send!(tx, Progress::Error("Failed to serialize schema".to_string()));
-        return Err(());
+    let json_schema = match serde_json::to_string(&schema) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to serialize schema to JSON: {}", e);
+            try_send!(tx, Progress::Error("Failed to serialize schema".to_string()));
+            return Err(());
+        }
     };
 
     tracing::info!("Discovered schema: {}", json_schema);

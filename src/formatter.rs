@@ -55,6 +55,7 @@ pub fn format_query_records(records: &[Vec<FalkorValue>]) -> String {
 }
 
 /// Formats a single `FalkorDB` value in a readable, compact format
+#[allow(clippy::collapsible_if)]
 fn format_falkor_value(value: &FalkorValue) -> String {
     match value {
         FalkorValue::Bool(b) => b.to_string(),

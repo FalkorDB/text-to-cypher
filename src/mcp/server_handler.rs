@@ -208,6 +208,7 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
 }
 
 // Process individual SSE event
+#[allow(clippy::collapsible_if)]
 fn process_sse_event(
     data: &str,
     result_buffer: &mut String,
