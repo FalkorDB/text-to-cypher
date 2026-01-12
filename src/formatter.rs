@@ -55,7 +55,6 @@ pub fn format_query_records(records: &[Vec<FalkorValue>]) -> String {
 }
 
 /// Formats a single `FalkorDB` value in a readable, compact format
-#[allow(clippy::collapsible_if)]
 fn format_falkor_value(value: &FalkorValue) -> String {
     match value {
         FalkorValue::Bool(b) => b.to_string(),
@@ -99,10 +98,10 @@ fn format_falkor_value(value: &FalkorValue) -> String {
         FalkorValue::Path(path) => {
             let mut path_str = String::new();
             for (i, node) in path.nodes.iter().enumerate() {
-                if i > 0 {
-                    if let Some(edge) = path.relationships.get(i - 1) {
-                        path_str.push_str(&format_falkor_value(&FalkorValue::Edge(edge.clone())));
-                    }
+                if i > 0
+                    && let Some(edge) = path.relationships.get(i - 1)
+                {
+                    path_str.push_str(&format_falkor_value(&FalkorValue::Edge(edge.clone())));
                 }
                 path_str.push_str(&format_falkor_value(&FalkorValue::Node(node.clone())));
             }

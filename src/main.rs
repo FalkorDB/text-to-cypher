@@ -1840,10 +1840,10 @@ async fn list_import_folder_files(
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
         let path = entry.path();
 
-        if path.is_file() {
-            if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
-                files.push(file_name.to_string());
-            }
+        if path.is_file()
+            && let Some(file_name) = path.file_name().and_then(|name| name.to_str())
+        {
+            files.push(file_name.to_string());
         }
     }
 
