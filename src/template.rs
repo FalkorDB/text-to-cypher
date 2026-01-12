@@ -28,7 +28,6 @@ impl TemplateEngine {
     pub fn render_system_prompt(ontology: &str) -> String {
         let mut variables = HashMap::new();
         variables.insert("ONTOLOGY", ontology);
-
         Self::render(Self::SYSTEM_PROMPT, &variables)
     }
 
@@ -37,7 +36,6 @@ impl TemplateEngine {
     pub fn render_user_prompt(question: &str) -> String {
         let mut variables = HashMap::new();
         variables.insert("QUESTION", question);
-
         Self::render(Self::USER_PROMPT, &variables)
     }
 
@@ -52,7 +50,6 @@ impl TemplateEngine {
         variables.insert("CYPHER_QUERY", cypher_query);
         variables.insert("CYPHER_RESULT", cypher_result);
         variables.insert("USER_QUESTION", question);
-
         Self::render(Self::LAST_REQUEST_PROMPT, &variables)
     }
 }

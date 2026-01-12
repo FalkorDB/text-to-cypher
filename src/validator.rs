@@ -156,7 +156,9 @@ impl CypherValidator {
     ///
     /// A suggested fixed query, if applicable
     ///
-    /// Note: This function is available for future use in direct query fixing.
+    /// # Note
+    ///
+    /// This function is available for future use in direct query fixing.
     /// Currently, self-healing uses LLM-based regeneration which is more flexible.
     #[allow(dead_code)]
     pub fn suggest_fix(
@@ -174,14 +176,16 @@ impl CypherValidator {
             if !query.to_uppercase().contains("RETURN") {
                 return Some(format!("{query}\nRETURN *"));
             }
+        }
 
-            // Missing WHERE keyword before condition
-            if query.contains('=') && !query.to_uppercase().contains("WHERE") && query.to_uppercase().contains("MATCH")
-            {
-                if let Some(fixed) = Self::try_add_where_clause(query) {
-                    return Some(fixed);
-                }
-            }
+        // Missing WHERE keyword before condition
+        if (error_lower.contains("syntax error") || error_lower.contains("invalid syntax"))
+            && query.contains('=')
+            && !query.to_uppercase().contains("WHERE")
+            && query.to_uppercase().contains("MATCH")
+            && let Some(fixed) = Self::try_add_where_clause(query)
+        {
+            return Some(fixed);
         }
 
         // Property not found - suggest using toLower() or different property

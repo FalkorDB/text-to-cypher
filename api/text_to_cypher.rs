@@ -7,10 +7,10 @@
 use futures::StreamExt;
 use serde_json::json;
 use std::env;
-use text_to_cypher::processor::{process_text_to_cypher, TextToCypherRequest};
+use text_to_cypher::processor::{TextToCypherRequest, process_text_to_cypher};
 use text_to_cypher::streaming::process_text_to_cypher_stream;
 use tracing_subscriber::fmt;
-use vercel_runtime::{run, Body, Error, Request, Response, StatusCode};
+use vercel_runtime::{Body, Error, Request, Response, StatusCode, run};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {

@@ -4,11 +4,10 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use rust_mcp_sdk::schema::TextContent;
 use rust_mcp_sdk::schema::{
-    schema_utils::CallToolError, CallToolRequest, CallToolResult, ListResourcesRequest, ListResourcesResult,
-    ListToolsRequest, ListToolsResult, ReadResourceRequest, ReadResourceResult, Resource, RpcError,
-    TextResourceContents,
+    CallToolRequest, CallToolResult, ListResourcesRequest, ListResourcesResult, ListToolsRequest, ListToolsResult,
+    ReadResourceRequest, ReadResourceResult, Resource, RpcError, TextResourceContents, schema_utils::CallToolError,
 };
-use rust_mcp_sdk::{mcp_server::ServerHandler, McpServer};
+use rust_mcp_sdk::{McpServer, mcp_server::ServerHandler};
 use std::fmt::Write;
 
 // Custom Handler to handle MCP Messages
@@ -214,18 +213,18 @@ fn process_sse_event(
     result_buffer: &mut String,
     final_result: &mut String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if let Ok(progress) = serde_json::from_str::<serde_json::Value>(data) {
-        if let Some(event_type) = progress.as_object().and_then(|obj| obj.keys().next()) {
-            match event_type.as_str() {
-                "Status" => handle_status_event(&progress, result_buffer),
-                "Schema" => handle_schema_event(result_buffer),
-                "CypherQuery" => handle_cypher_query_event(&progress, result_buffer),
-                "CypherResult" => handle_cypher_result_event(&progress, result_buffer),
-                "ModelOutputChunk" => handle_model_output_chunk(&progress, final_result),
-                "Result" => handle_result_event(&progress, final_result),
-                "Error" => return handle_error_event(&progress),
-                _ => tracing::debug!("Unknown event type: {}", event_type),
-            }
+    if let Ok(progress) = serde_json::from_str::<serde_json::Value>(data)
+        && let Some(event_type) = progress.as_object().and_then(|obj| obj.keys().next())
+    {
+        match event_type.as_str() {
+            "Status" => handle_status_event(&progress, result_buffer),
+            "Schema" => handle_schema_event(result_buffer),
+            "CypherQuery" => handle_cypher_query_event(&progress, result_buffer),
+            "CypherResult" => handle_cypher_result_event(&progress, result_buffer),
+            "ModelOutputChunk" => handle_model_output_chunk(&progress, final_result),
+            "Result" => handle_result_event(&progress, final_result),
+            "Error" => return handle_error_event(&progress),
+            _ => tracing::debug!("Unknown event type: {}", event_type),
         }
     }
     Ok(())

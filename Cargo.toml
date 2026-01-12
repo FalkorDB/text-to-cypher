@@ -1,7 +1,8 @@
 [package]
 name = "text-to-cypher"
 version = "0.1.7"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 description = "A library and REST API for translating natural language text to Cypher queries using AI models"
 license = "MIT"
 repository = "https://github.com/FalkorDB/text-to-cypher"
@@ -45,7 +46,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.143"
 tracing = { version = "0.1", features = ["default"] }
 tokio = { version = "1.47.1", features = ["full"] }
-genai = "0.3.5"
+genai = "0.5.0"
 falkordb = { version = "0.1.11", features = ["tokio"] }
 async-trait = "0.1.89"
 futures = "0.3.31"

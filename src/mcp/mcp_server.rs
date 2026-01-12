@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use rust_mcp_sdk::mcp_server::{hyper_server, HyperServerOptions};
+use rust_mcp_sdk::mcp_server::{HyperServerOptions, hyper_server};
 
 use crate::mcp::server_handler::MyServerHandler;
 use rust_mcp_sdk::schema::{
-    Implementation, InitializeResult, ServerCapabilities, ServerCapabilitiesResources, ServerCapabilitiesTools,
-    LATEST_PROTOCOL_VERSION,
+    Implementation, InitializeResult, LATEST_PROTOCOL_VERSION, ServerCapabilities, ServerCapabilitiesResources,
+    ServerCapabilitiesTools,
 };
 
 use rust_mcp_sdk::error::SdkResult;

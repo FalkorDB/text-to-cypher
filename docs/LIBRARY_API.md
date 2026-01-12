@@ -200,6 +200,38 @@ let schema = client.discover_schema("movies").await?;
 println!("Schema: {}", schema);
 ```
 
+## Model Discovery
+
+List all available AI models: 
+
+```rust
+use text_to_cypher::{core, AdapterKind};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = core::create_genai_client(None);
+    
+    // List models for a specific provider
+    let openai_models = core::list_adapter_models(AdapterKind::OpenAI, &client).await?;
+    println!("OpenAI models: {:?}", openai_models);
+    
+    // List all models
+    let all_models = core::list_all_models(&client).await?;
+    for (kind, models) in all_models {
+        println!("{kind}: {} models available", models.len());
+    }
+    
+    Ok(())
+}
+```
+
+Or using the high-level client:
+
+```rust
+let client = TextToCypherClient::new("gpt-4o-mini", "api-key", "falkor://localhost:6379");
+let models = client.list_models(AdapterKind::OpenAI).await?;
+```
+
 ### Core Functions
 
 For more control, you can use the core functions directly:
