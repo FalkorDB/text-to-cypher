@@ -156,11 +156,11 @@ impl CypherValidator {
     ///
     /// A suggested fixed query, if applicable
     /// # Note
+    /// # Note
     ///
     /// This function is available for future use in direct query fixing.
     /// Currently, self-healing uses LLM-based regeneration which is more flexible.
     #[allow(dead_code)]
-    #[allow(clippy::collapsible_if)]
     pub fn suggest_fix(
         query: &str,
         error: &str,
@@ -179,10 +179,9 @@ impl CypherValidator {
 
             // Missing WHERE keyword before condition
             if query.contains('=') && !query.to_uppercase().contains("WHERE") && query.to_uppercase().contains("MATCH")
+                && let Some(fixed) = Self::try_add_where_clause(query)
             {
-                if let Some(fixed) = Self::try_add_where_clause(query) {
-                    return Some(fixed);
-                }
+                return Some(fixed);
             }
         }
 
