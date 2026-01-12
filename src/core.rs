@@ -313,8 +313,9 @@ pub async fn list_adapter_models(
 ///
 /// # Errors
 ///
-/// This function does not fail; individual adapter failures are logged as warnings
-/// and skipped, allowing partial results to be returned
+/// This function returns `Ok` with partial results even when individual adapters fail.
+/// Individual adapter failures are logged as warnings and skipped, allowing the function
+/// to continue and return results from successful adapters
 ///
 /// # Examples
 ///
