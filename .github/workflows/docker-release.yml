@@ -37,12 +37,17 @@ jobs:
 
       - name: Extract release version
         id: extract_version
+        env:
+          # SECURITY: Store untrusted input in environment variable to prevent code injection
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
           echo "🔍 Debug: Event context information:"
           echo "  Event name: '${{ github.event_name }}'"
-          echo "  Head branch: '${{ github.event.workflow_run.head_branch }}'"
-          echo "  Head SHA: '${{ github.event.workflow_run.head_sha }}'"
-          echo "  Conclusion: '${{ github.event.workflow_run.conclusion }}'"
+          echo "  Head branch: '$HEAD_BRANCH'"
+          echo "  Head SHA: '$HEAD_SHA'"
+          echo "  Conclusion: '$WORKFLOW_CONCLUSION'"
           
           # Extract version from different trigger types
           if [ "${{ github.event_name }}" = "release" ]; then
@@ -51,7 +56,6 @@ jobs:
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
             # For workflow_run, we need to check if it was triggered by a tag
             # The head_branch might be the tag name, or we might need to look at the head_sha
-            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
             echo "🔍 Checking head_branch: '$HEAD_BRANCH'"
             
             if [[ "$HEAD_BRANCH" =~ ^v[0-9] ]]; then
@@ -59,7 +63,6 @@ jobs:
               echo "✅ Found tag in head_branch: $RELEASE_TAG"
             else
               # Try to get tag from GitHub API using the head SHA
-              HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
               echo "🔍 Checking if SHA $HEAD_SHA corresponds to a tag..."
               
               # Use GitHub API to find tags pointing to this SHA
@@ -95,7 +98,7 @@ jobs:
           fi
           
           # Only proceed if workflow_run was successful (when applicable)
-          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
+          if [ "${{ github.event_name }}" = "workflow_run" ] && [ "$WORKFLOW_CONCLUSION" != "success" ]; then
             echo "Build workflow did not complete successfully, skipping Docker build"
             exit 0
           fi
@@ -129,6 +132,9 @@ jobs:
         run: chmod +x ./docker-build.sh
 
       - name: Wait for release assets to be available
+        env:
+          # SECURITY: Store untrusted input in environment variable to prevent code injection
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
           echo "🚀 Starting asset availability check..."
           VERSION="${{ steps.extract_version.outputs.version }}"
@@ -154,7 +160,7 @@ jobs:
             
             # Check build workflow status first
             if [ "${{ github.event_name }}" = "workflow_run" ]; then
-              BUILD_STATUS="${{ github.event.workflow_run.conclusion }}"
+              BUILD_STATUS="$WORKFLOW_CONCLUSION"
               echo "📊 Build workflow status: $BUILD_STATUS"
               if [ "$BUILD_STATUS" = "failure" ] || [ "$BUILD_STATUS" = "cancelled" ]; then
                 echo "❌ Build workflow failed/cancelled - no assets will be available"
@@ -360,14 +366,17 @@ jobs:
     steps:
       - name: Extract release version
         id: extract_version
+        env:
+          # SECURITY: Store untrusted input in environment variable to prevent code injection
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           # Extract version from different trigger types
           if [ "${{ github.event_name }}" = "release" ]; then
             RELEASE_TAG="${{ github.event.release.tag_name }}"
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
             # For workflow_run, extract from the head branch if it's a tag
-            if [[ "${{ github.event.workflow_run.head_branch }}" =~ ^v[0-9] ]]; then
-              RELEASE_TAG="${{ github.event.workflow_run.head_branch }}"
+            if [[ "$HEAD_BRANCH" =~ ^v[0-9] ]]; then
+              RELEASE_TAG="$HEAD_BRANCH"
             else
               echo "Not a tag-triggered workflow run, skipping"
               exit 0
@@ -462,14 +471,17 @@ jobs:
     steps:
       - name: Extract release version
         id: extract_version
+        env:
+          # SECURITY: Store untrusted input in environment variable to prevent code injection
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           # Extract version from different trigger types
           if [ "${{ github.event_name }}" = "release" ]; then
             RELEASE_TAG="${{ github.event.release.tag_name }}"
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
             # For workflow_run, extract from the head branch if it's a tag
-            if [[ "${{ github.event.workflow_run.head_branch }}" =~ ^v[0-9] ]]; then
-              RELEASE_TAG="${{ github.event.workflow_run.head_branch }}"
+            if [[ "$HEAD_BRANCH" =~ ^v[0-9] ]]; then
+              RELEASE_TAG="$HEAD_BRANCH"
             else
               echo "Not a tag-triggered workflow run, skipping"
               exit 0
