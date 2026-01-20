@@ -142,7 +142,7 @@ jobs:
           cp -r templates release-artifacts/
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binary-${{ matrix.target }}
           path: release-artifacts/
@@ -220,7 +220,7 @@ jobs:
           cat checksums.txt
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-packages
           path: |
