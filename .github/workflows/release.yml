@@ -267,7 +267,7 @@ jobs:
     needs: release
     steps:
       - name: Cleanup old releases
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const { data: releases } = await github.rest.repos.listReleases({
