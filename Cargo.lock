@@ -1185,9 +1185,9 @@ dependencies = [
 
 [[package]]
 name = "genai"
-version = "0.5.1"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f4653c0eef0d7d96464d8bae40f683d4fc6b923371e0282904d2c7495b3d61"
+checksum = "98221799e645192a607502de51a6423ebb6f36729938a9351f1ca488a1a62d7e"
 dependencies = [
  "base64",
  "bytes",
@@ -3163,7 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "text-to-cypher"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "actix-multipart",
  "actix-web",
