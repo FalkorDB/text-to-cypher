@@ -50,7 +50,7 @@ genai = "0.5.3"
 falkordb = { version = "0.2.1", features = ["tokio"] }
 async-trait = "0.1.89"
 futures = "0.3.31"
-regex = "1.0"
+regex = "1.12"
 # Force aws-lc-rs 1.15.3 which uses aws-lc-sys 0.36.0 (fixes Alpine/ARM64 cross-compilation)
 aws-lc-rs = "1.15.3"
 
