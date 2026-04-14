@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 #![allow(clippy::needless_for_each)]
 
 use actix_multipart::Multipart;

@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! Vercel serverless function for text-to-cypher conversion
 //!
 //! This handler processes natural language queries and converts them to Cypher queries
