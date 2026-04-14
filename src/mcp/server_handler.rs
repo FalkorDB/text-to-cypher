@@ -9,6 +9,7 @@ use rust_mcp_sdk::schema::{
 };
 use rust_mcp_sdk::{McpServer, mcp_server::ServerHandler};
 use std::fmt::Write;
+use std::sync::Arc;
 
 // Custom Handler to handle MCP Messages
 pub struct MyServerHandler;
@@ -18,7 +19,7 @@ impl ServerHandler for MyServerHandler {
     async fn handle_list_tools_request(
         &self,
         _request: ListToolsRequest,
-        _runtime: &dyn McpServer,
+        _runtime: Arc<dyn McpServer>,
     ) -> std::result::Result<ListToolsResult, RpcError> {
         tracing::info!("Handling List Tools Request");
         Ok(ListToolsResult {
@@ -31,7 +32,7 @@ impl ServerHandler for MyServerHandler {
     async fn handle_list_resources_request(
         &self,
         _request: ListResourcesRequest,
-        _runtime: &dyn McpServer,
+        _runtime: Arc<dyn McpServer>,
     ) -> std::result::Result<ListResourcesResult, RpcError> {
         tracing::info!("Handling List Resources Request");
 
@@ -67,7 +68,7 @@ impl ServerHandler for MyServerHandler {
     async fn handle_read_resource_request(
         &self,
         request: ReadResourceRequest,
-        _runtime: &dyn McpServer,
+        _runtime: Arc<dyn McpServer>,
     ) -> std::result::Result<ReadResourceResult, RpcError> {
         tracing::info!("Handling Read Resource Request for URI: {}", request.params.uri);
 
@@ -99,7 +100,7 @@ impl ServerHandler for MyServerHandler {
     async fn handle_call_tool_request(
         &self,
         request: CallToolRequest,
-        _runtime: &dyn McpServer,
+        _runtime: Arc<dyn McpServer>,
     ) -> std::result::Result<CallToolResult, CallToolError> {
         tracing::info!("Handling Call Tool Request");
         if request.tool_name() == TextToCypherTool::tool_name() {
@@ -135,9 +136,9 @@ impl ServerHandler for MyServerHandler {
         }
     }
 
-    async fn on_server_started(
+    async fn on_initialized(
         &self,
-        _runtime: &dyn McpServer,
+        _runtime: Arc<dyn McpServer>,
     ) {
     }
 }
