@@ -6,12 +6,14 @@
 //! Supports both JSON responses and Server-Sent Events (SSE) streaming.
 
 use futures::StreamExt;
+use http_body_util::BodyExt;
+use hyper::StatusCode;
 use serde_json::json;
 use std::env;
 use text_to_cypher::processor::{TextToCypherRequest, process_text_to_cypher};
 use text_to_cypher::streaming::process_text_to_cypher_stream;
 use tracing_subscriber::fmt;
-use vercel_runtime::{Body, Error, Request, Response, StatusCode, run};
+use vercel_runtime::{Error, Request, Response, ResponseBody, run, service_fn};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -20,7 +22,7 @@ async fn main() -> Result<(), Error> {
 
     tracing::info!("Starting text-to-cypher serverless function");
 
-    run(handler).await
+    run(service_fn(handler)).await
 }
 
 /// Handles incoming HTTP requests for text-to-cypher conversion
@@ -29,7 +31,7 @@ async fn main() -> Result<(), Error> {
 ///
 /// Returns an error if response building fails or JSON serialization fails
 #[allow(clippy::too_many_lines)]
-pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
+pub async fn handler(req: Request) -> Result<Response<ResponseBody>, Error> {
     tracing::info!("Received request: {} {}", req.method(), req.uri().path());
 
     // Handle CORS preflight
@@ -39,7 +41,7 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             .header("Access-Control-Allow-Origin", "*")
             .header("Access-Control-Allow-Methods", "POST, OPTIONS")
             .header("Access-Control-Allow-Headers", "Content-Type")
-            .body(Body::Empty)?);
+            .body("".into())?);
     }
 
     // Only accept POST requests
@@ -58,10 +60,10 @@ pub async fn handler(req: Request) -> Result<Response<Body>, Error> {
             )?);
     }
 
-    // Parse request body - vercel_runtime provides the body as bytes
-    let body_bytes = req.body();
+    // Parse request body
+    let body_bytes = req.into_body().collect().await?.to_bytes();
 
-    let request: TextToCypherRequest = match serde_json::from_slice(body_bytes) {
+    let request: TextToCypherRequest = match serde_json::from_slice(&body_bytes) {
         Ok(req) => req,
         Err(e) => {
             tracing::error!("Failed to parse request JSON: {}", e);

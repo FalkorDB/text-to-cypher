@@ -677,7 +677,9 @@ async fn graph_query_upload_endpoint(
             item.map_err(|e| actix_web::error::ErrorBadRequest(format!("Failed to read multipart field: {e}")))?;
 
         // Get the field name
-        let field_name = field.content_disposition().get_name().map(ToString::to_string);
+        let field_name = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name().map(ToString::to_string));
 
         if let Some(field_name) = field_name {
             // Read the field data into bytes
