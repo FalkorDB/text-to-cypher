@@ -49,7 +49,7 @@ async-trait = "0.1.89"
 futures = "0.3.31"
 regex = "1.0"
 # Force aws-lc-rs 1.15.3 which uses aws-lc-sys 0.36.0 (fixes Alpine/ARM64 cross-compilation)
-aws-lc-rs = "1.15.3"
+aws-lc-rs = "1.16.3"
 
 # Server-specific dependencies (optional)
 actix-web = { version = "4", optional = true }
