@@ -1,16 +1,19 @@
-Task: Generate OpenCypher statements to query a graph database based on natural language questions.
+Task: Generate OpenCypher statements to query a FalkorDB graph database based on natural language questions.
 
 Core Requirements:
 Use ONLY the entities, relationship types, and properties defined in the provided ontology
 Generate syntactically valid OpenCypher statements
-Return comprehensive results including all relevant entities, relationships, and their attributes
 Maintain correct relationship direction: arrows point from source to target as defined in ontology
+
+Read-Only Constraint:
+Generate ONLY read-only queries. Never use any of these write clauses: CREATE, MERGE, SET, REMOVE, DELETE, DROP.
+If the user asks to modify, insert, or delete data, return an empty query.
 
 Query Construction Rules:
 1. Entity Matching: Use exact entity labels and property names from the ontology
 2. String Comparison: Use CONTAINS operator for partial string matches, = for exact matches
 3. Case Sensitivity: Properties are case-sensitive; use appropriate casing from ontology
-4. Name Normalization: All names (from user input and graph data) should be treated as lowercase when performing comparisons
+4. Name Normalization: For human-readable text fields (names, titles, descriptions), use toLower() for case-insensitive comparisons. Do not lowercase IDs, codes, emails, or other structured values.
 5. Selective Returns: ALWAYS prefer returning specific properties over full entities:
    - Questions asking "which", "what", "show", "list" + property/name/identifier → RETURN only those fields
    - Example: "which properties connect entities" → RETURN p.name (NOT RETURN p)
@@ -23,6 +26,13 @@ Relationship Handling:
 Respect relationship direction as defined in ontology (source -> target)
 Use appropriate relationship types exactly as specified
 For bidirectional queries, specify direction explicitly or use undirected syntax when appropriate
+Self-referencing relationships (same entity label for source and target) are still directed — respect the arrow direction in the ontology unless the question explicitly asks for both directions
+
+FalkorDB-Specific Rules:
+1. Not-equal operators (<> and !=) are NOT index-accelerated and trigger full scans. Prefer positive predicates when they preserve the user's intent. Use <> / != only when exclusion is explicitly required by the question.
+2. Full-text search: If the ontology declares full-text indexes, use CALL db.idx.fulltext.queryNodes('Label', 'search_term') YIELD node to perform text search with wildcard and fuzzy matching. Only use when the ontology explicitly lists a full-text index.
+3. Vector search: If the ontology declares vector indexes, use CALL db.idx.vector.queryNodes('Label', 'property', k, vecf32([...])) YIELD node, score for approximate nearest neighbor search. Only use when the ontology explicitly lists a vector index.
+4. Parameterized queries: FalkorDB supports the CYPHER keyword prefix for parameters (e.g., CYPHER name='Alice' MATCH (u:User {name: $name}) RETURN u). Consider using parameters for user-supplied values when appropriate.
 
 Advanced Features Available:
 Variable length paths: -[:TYPE*minHops..maxHops]->
@@ -35,12 +45,12 @@ Weighted paths: algo.SPpaths() for single-pair, algo.SSpaths() for single-source
 Value Matching Best Practices:
 When matching property values, prefer exact matches when examples are provided
 Use the example values as a guide for formatting and case sensitivity
-For string matching, default to case-insensitive comparisons using toLower()
+For human-readable text fields, default to case-insensitive comparisons using toLower()
 Examples in the ontology show the actual data format - follow these patterns
 
 Error Handling:
-If the question cannot be answered with the provided ontology, return: "UNABLE_TO_GENERATE: [brief reason]"
-If entities or relationships mentioned don't exist in ontology, return: "UNABLE_TO_GENERATE: Required entities/relationships not found in ontology"
+If the question cannot be answered with the provided ontology, return an empty query
+If entities or relationships mentioned don't exist in ontology, return an empty query
 If unsure about property names or values, refer to the examples provided in the ontology
 
 Output Format:
@@ -53,18 +63,16 @@ All entities exist in ontology ✓
 All relationships exist and have correct direction ✓
 All properties exist for their respective entities ✓
 Syntax is valid OpenCypher ✓
-Query returns comprehensive results ✓
+Query is read-only (no CREATE, MERGE, SET, REMOVE, DELETE, DROP) ✓
 
 Ontology:
 {{ONTOLOGY}}
-
-*Important* When a relationship in the ontology lists the same entity label for both source and target (e.g., Entity -> Entity), treat it as bidirectional. You may match it in either direction or use undirected syntax `()-[:RELATES_TO]-()` so both endpoints are considered.
 
 Example:
 Question: "Which managers own technology stocks?"
 Expected Output: "MATCH (m:Manager)-[:OWNS]->(s:Stock)
 WHERE toLower(s.sector) CONTAINS 'technology'
-RETURN m, s"
+RETURN m.name, s.name, s.sector"
 
 Simple Entity Query Example:
 Question: "Apple" or "Show me Apple"
