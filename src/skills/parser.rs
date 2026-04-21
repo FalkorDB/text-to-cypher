@@ -45,12 +45,12 @@ pub fn parse_skill(
     }
 
     // Find the closing --- delimiter (skip the opening one)
-    let after_open = &raw[3..];
+    let after_open = raw.strip_prefix("---").unwrap_or(raw);
     let close_pos = after_open
         .find("\n---")
         .ok_or_else(|| format!("Skill '{id}': missing closing frontmatter delimiter"))?;
 
-    let yaml_str = &after_open[..close_pos].trim();
+    let yaml_str = after_open[..close_pos].trim();
     let body_start = 3 + close_pos + 4; // skip opening "---" + yaml + "\n---"
     let content = if body_start < raw.len() {
         raw[body_start..].trim().to_string()
@@ -59,7 +59,7 @@ pub fn parse_skill(
     };
 
     let frontmatter: SkillFrontmatter =
-        serde_yaml::from_str(yaml_str).map_err(|e| format!("Skill '{id}': invalid YAML: {e}"))?;
+        serde_yaml_ng::from_str(yaml_str).map_err(|e| format!("Skill '{id}': invalid YAML: {e}"))?;
 
     Ok(Skill {
         id: id.to_string(),

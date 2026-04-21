@@ -141,7 +141,7 @@ pub async fn process_text_to_cypher_with_skills(
         return TextToCypherResponse::error("Model must be provided either in request or as DEFAULT_MODEL".to_string());
     }
 
-    let model = model.unwrap();
+    let model = model.expect("validated above");
 
     // Create GenAI client
     let client = create_genai_client(key.as_deref());

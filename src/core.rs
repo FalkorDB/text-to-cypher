@@ -237,6 +237,7 @@ pub fn create_genai_client(api_key: Option<&str>) -> GenAiClient {
 
 // Private helper functions
 
+#[must_use]
 fn create_cypher_query_chat_request_with_skills(
     chat_request: &ChatRequest,
     ontology: &str,

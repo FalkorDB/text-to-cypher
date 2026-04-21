@@ -36,6 +36,7 @@ impl TemplateEngine {
         let rendered = Self::render(Self::SYSTEM_PROMPT, &variables);
 
         // Collapse consecutive blank lines left by empty placeholder substitution
+        let had_trailing_newline = rendered.ends_with('\n');
         let mut result = String::with_capacity(rendered.len());
         let mut prev_blank = false;
         for line in rendered.lines() {
@@ -48,6 +49,9 @@ impl TemplateEngine {
             }
             result.push_str(line);
             prev_blank = is_blank;
+        }
+        if had_trailing_newline {
+            result.push('\n');
         }
         result
     }

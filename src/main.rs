@@ -1210,11 +1210,9 @@ async fn attempt_query_self_healing(
         ),
     });
 
-    // Generate new query (include skill catalog for consistent prompt generation)
+    // Generate new query using the same skill-loading path as the initial request.
     let skill_catalog = AppConfig::get().skill_catalog.as_ref();
-    let genai_chat_request =
-        generate_create_cypher_query_chat_request_with_skills(&retry_request, schema, skill_catalog, false);
-    let retry_query = execute_chat(client, model, genai_chat_request, tx).await;
+    let retry_query = execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx).await;
 
     if retry_query.trim().is_empty() || retry_query.trim() == "NO ANSWER" {
         tracing::warn!("Self-healing failed: no valid query generated");
@@ -1286,9 +1284,7 @@ async fn generate_cypher_query(
         let validation_result = CypherValidator::validate(&clean_query);
         let error_feedback = validation_result.errors.join("; ");
         let retry_request = append_validation_feedback(&request.chat_request, &clean_query, &error_feedback);
-        let genai_chat_request =
-            generate_create_cypher_query_chat_request_with_skills(&retry_request, schema, skill_catalog, false);
-        let retry_query = execute_chat(client, model, genai_chat_request, tx).await;
+        let retry_query = execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx).await;
 
         if !retry_query.trim().is_empty() && retry_query.trim() != "NO ANSWER" {
             let retry_clean = retry_query.replace('\n', " ").replace("```", "").trim().to_string();
@@ -1909,6 +1905,7 @@ fn append_validation_feedback(
     ChatRequest { messages }
 }
 
+#[must_use]
 fn generate_create_cypher_query_chat_request_with_skills(
     chat_request: &ChatRequest,
     ontology: &str,
@@ -2278,24 +2275,6 @@ fn resolve_skill_tool_call(
         || format!("Skill '{skill_id}' not found in catalog"),
         |s| format!("# {}\n\n{}", s.name, s.content),
     )
-}
-
-async fn execute_chat(
-    client: &genai::Client,
-    model: &str,
-    genai_chat_request: genai::chat::ChatRequest,
-    tx: &mpsc::Sender<sse::Event>,
-) -> String {
-    // Make the actual request to the model
-    let chat_response = match client.exec_chat(model, genai_chat_request, None).await {
-        Ok(response) => response,
-        Err(e) => {
-            let error_update = Progress::Error(format!("Chat request failed: {e}"));
-            send_or_empty!(tx, error_update);
-            return String::from("NO ANSWER");
-        }
-    };
-    chat_response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER"))
 }
 
 async fn execute_chat_stream(

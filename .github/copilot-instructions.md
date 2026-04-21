@@ -74,7 +74,7 @@ The system prompt (`templates/system_prompt.txt`) incorporates FalkorDB-specific
 - **Tier 2 (tool calling)**: For providers that support tool calling (OpenAI, Anthropic, Gemini, xAI, DeepSeek), the LLM can request full skill content on-demand via the `read_skill` tool. Providers without tool support (Groq, Ollama, Cohere) get all skill content injected directly into the prompt as a fallback.
 
 Skills are loaded from the `SKILLS_DIR` environment variable at startup. Expected directory structure:
-```
+```text
 skills_dir/
   skill-name/
     skill.md     # YAML frontmatter (name, description) + markdown body
