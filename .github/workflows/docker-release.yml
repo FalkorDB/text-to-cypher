@@ -441,7 +441,7 @@ jobs:
           set +e
           
           # Use timeout to prevent hanging and test if the binary exists and is executable
-          timeout 10s docker run --rm --platform="${PLATFORM}" "${TEST_IMAGE}" /bin/sh -c "ls -la /app/text-to-cypher && file /app/text-to-cypher && echo 'Binary test completed'"
+          timeout 10s docker run --rm --platform="${PLATFORM}" "${TEST_IMAGE}" /bin/sh -c "ls -la /app/text-to-cypher && file /app/text-to-cypher && echo 'Binary test completed' && echo 'Checking skills...' && test -d /app/skills && SKILL_COUNT=\$(find /app/skills -name skill.md | wc -l) && echo \"Found \${SKILL_COUNT} skill(s) in /app/skills\" && test \${SKILL_COUNT} -gt 0 && echo 'Skills verification completed'"
           TEST_EXIT=$?
           set -e
           

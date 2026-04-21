@@ -323,6 +323,7 @@ docker logs -f text-to-cypher-stack
 ### Docker Features
 
 - **All-in-One Solution**: Complete graph database stack in a single container
+- **Built-in Cypher Skills**: FalkorDB-specific Cypher best practices baked in from [FalkorDB/skills](https://github.com/FalkorDB/skills)
 - **Multi-Platform**: Support for both AMD64 and ARM64 architectures
 - **Minimal Size**: Optimized Alpine Linux base for efficient deployment
 - **Production Ready**: Includes supervisord for process management and logging
@@ -335,6 +336,7 @@ Configure the application using environment variables or `.env` file:
 - `DEFAULT_MODEL`: Default AI model (e.g., "gpt-4o-mini", "anthropic:claude-3")
 - `DEFAULT_KEY`: Default API key for the AI service
 - `FALKOR_URL`: FalkorDB connection URL (default: "falkor://127.0.0.1:6379")
+- `SKILLS_DIR`: Path to Cypher skills directory (default: `/app/skills` in Docker, see [Dynamic Cypher Skills](#dynamic-cypher-skills))
 
 ## MCP Server Usage
 
@@ -507,24 +509,72 @@ cargo test -- --nocapture
 
 ## Development
 
+### Prerequisites
+
+- [Rust](https://www.rust-lang.org/tools/install) (stable)
+- [just](https://github.com/casey/just#installation) (recommended task runner)
+
+### Quick Start with `just`
+
+```bash
+# List all available recipes
+just
+
+# Download FalkorDB Cypher skills + run lint + tests
+just check
+
+# Start development server (auto-downloads skills if missing)
+just dev
+
+# Download skills manually
+just download-skills
+
+# Download skills pinned to a specific version
+just download-skills-pinned v1.0.0
+
+# List loaded skills
+just list-skills
+```
+
+### Available Recipes
+
+| Recipe | Description |
+|--------|-------------|
+| `just download-skills` | Download latest FalkorDB Cypher skills |
+| `just download-skills-pinned <ref>` | Download skills at a specific branch/tag/commit |
+| `just build` | Build in debug mode |
+| `just build-release` | Build in release mode |
+| `just build-lib` | Build library only (no server deps) |
+| `just fmt` | Check formatting |
+| `just clippy` | Run clippy with CI-level strictness |
+| `just lint` | Run all lints (fmt + clippy) |
+| `just test` | Run all tests |
+| `just check` | Full CI check (lint + test) |
+| `just dev` | Start development server with skills |
+| `just run` | Start release server with skills |
+| `just docker-build [version]` | Build Docker image locally |
+| `just list-skills` | Show all loaded skills |
+| `just clean` | Clean build artifacts and skills |
+
 ### Code Quality
 
 The project maintains high code quality standards:
 
 ```bash
-# Format code
+# Using just (recommended)
+just lint    # fmt + clippy
+just test    # run all tests
+just check   # lint + test
+
+# Or with cargo directly
 cargo fmt
-
-# Run linting (with pedantic and nursery clippy rules)
-cargo clippy -- -W clippy::pedantic -W clippy::nursery -W clippy::cargo -A clippy::missing-errors-doc -A clippy::missing-panics-doc -A clippy::multiple-crate-versions
-
-# Run tests
+cargo clippy -- -W clippy::pedantic -W clippy::nursery -D warnings
 cargo test
 ```
 
 ### Project Structure
 
-```
+```text
 text-to-cypher/
 ├── src/
 │   ├── main.rs              # Main application and HTTP server
@@ -533,16 +583,22 @@ text-to-cypher/
 │   ├── formatter.rs         # Query result formatting
 │   ├── mcp/                 # Model Context Protocol server
 │   ├── schema/              # Graph schema discovery
+│   ├── skills/              # Dynamic Cypher skill loading
+│   │   ├── mod.rs           # Skill catalog, tool calling, provider gating
+│   │   ├── parser.rs        # YAML frontmatter + markdown parser
+│   │   └── loader.rs        # Directory-based skill loader
 │   └── template.rs          # Template engine for prompts
 ├── templates/               # AI prompt templates
 │   ├── system_prompt.txt    # System prompt for AI
 │   ├── user_prompt.txt      # User query template
 │   └── last_request_prompt.txt # Final response template
-├── Dockerfile               # All-in-one Docker image with FalkorDB
+├── skills/                  # Downloaded Cypher skills (gitignored)
+├── justfile                 # Development task recipes
+├── Dockerfile               # All-in-one Docker image with FalkorDB + skills
 ├── supervisord.conf         # Process management configuration
-├── entrypoint.sh           # Docker container startup script
-├── .dockerignore           # Docker build context filtering
-└── docker-build.sh         # Convenient Docker build script
+├── entrypoint.sh            # Docker container startup script
+├── .dockerignore            # Docker build context filtering
+└── docker-build.sh          # Convenient Docker build script
 ```
 
 ## API Usage Examples
@@ -835,27 +891,74 @@ For providers without tool support, the system automatically falls back to injec
 
 ### Setting Up Skills
 
-#### 1. Get the FalkorDB skill files
+#### Docker (zero setup required)
 
-Clone the official FalkorDB skills repository:
-
-```bash
-git clone https://github.com/FalkorDB/skills.git
-```
-
-Or use only the Cypher-specific skills:
+The Docker image comes with FalkorDB Cypher skills **pre-installed** at `/app/skills`. Skills are enabled by default — no configuration needed:
 
 ```bash
-git clone --depth 1 https://github.com/FalkorDB/skills.git
-# The skills are in skills/cypher-skills/
+# Skills are already baked in — just run!
+docker run -d \
+  -e DEFAULT_MODEL=gpt-4o-mini \
+  -e DEFAULT_KEY=your-api-key \
+  -p 8080:8080 \
+  ghcr.io/falkordb/text-to-cypher:latest
 ```
 
-#### 2. Skill file format
+To override with custom skills, mount your own directory:
+
+```bash
+docker run -d \
+  -e DEFAULT_MODEL=gpt-4o-mini \
+  -e DEFAULT_KEY=your-api-key \
+  -e SKILLS_DIR=/app/custom-skills \
+  -v /path/to/your/skills:/app/custom-skills:ro \
+  -p 8080:8080 \
+  ghcr.io/falkordb/text-to-cypher:latest
+```
+
+To pin Docker skills to a specific version, rebuild with `--build-arg SKILLS_REF=<tag-or-commit>`.
+
+#### Development (using `just`)
+
+The easiest way to set up skills locally:
+
+```bash
+# Install just: https://github.com/casey/just#installation
+
+# Download latest FalkorDB Cypher skills
+just download-skills
+
+# Or pin to a specific version
+just download-skills-pinned v1.0.0
+
+# Start dev server (auto-downloads skills if missing)
+just dev
+
+# List available skills
+just list-skills
+```
+
+#### Manual setup
+
+```bash
+# Download skills via curl
+mkdir -p /tmp/skills-extract
+curl -sL https://github.com/FalkorDB/skills/archive/main.tar.gz \
+  | tar -xz -C /tmp/skills-extract --strip-components=1
+mv /tmp/skills-extract/cypher-skills ./skills
+rm -rf /tmp/skills-extract
+
+# Point the server at them
+export SKILLS_DIR=./skills
+cargo run
+```
+
+#### Skill file format
 
 Each skill lives in its own directory with a `skill.md` file containing YAML frontmatter and markdown body:
 
-```
-cypher-skills/
+```text
+skills/
   apply-cypher-limitations/
     skill.md
   use-parameters/
@@ -882,31 +985,6 @@ description: Avoid FalkorDB-specific Cypher pitfalls and write optimized queries
 ## Example
 Instead of: `MATCH (n:Person) WHERE n.age <> 30 RETURN n`
 Prefer: `MATCH (n:Person) WHERE n.age > 30 OR n.age < 30 RETURN n`
-```
-
-#### 3. Configure the environment
-
-**Server mode** — set the `SKILLS_DIR` environment variable:
-
-```bash
-# In your .env file
-SKILLS_DIR=/path/to/skills/cypher-skills
-
-# Or via environment variable
-export SKILLS_DIR=/path/to/skills/cypher-skills
-cargo run
-```
-
-**Docker deployment:**
-
-```bash
-docker run -d \
-  -e DEFAULT_MODEL=gpt-4o-mini \
-  -e DEFAULT_KEY=your-api-key \
-  -e SKILLS_DIR=/app/skills \
-  -v /path/to/skills/cypher-skills:/app/skills:ro \
-  -p 8080:8080 \
-  ghcr.io/falkordb/text-to-cypher:latest
 ```
 
 ### Library Usage with Skills

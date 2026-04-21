@@ -105,6 +105,17 @@ This library is consumed by [FalkorDB/text-to-cypher-node](https://github.com/Fa
 
 ## Deployment Targets
 
-- **Standalone Docker**: All-in-one container (FalkorDB + web UI + API + MCP) via `supervisord.conf`
+- **Standalone Docker**: All-in-one container (FalkorDB + web UI + API + MCP + Cypher skills) via `supervisord.conf`. Skills are baked in from [FalkorDB/skills](https://github.com/FalkorDB/skills). Pin with `--build-arg SKILLS_REF=<tag>`.
 - **Rust library**: `default-features = false` for embedding in other Rust apps
 - **Cross-compilation**: ARM64 via `cross` tool (`Cross.toml`)
+
+## Development with `just`
+
+A `justfile` provides common development recipes. Install [just](https://github.com/casey/just) then:
+
+```bash
+just download-skills   # Fetch FalkorDB Cypher skills
+just check             # lint + test (CI equivalent)
+just dev               # Run server with skills (auto-downloads if missing)
+just list-skills       # Show loaded skills
+```
