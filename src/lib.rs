@@ -169,10 +169,6 @@ pub use processor::{TextToCypherRequest, TextToCypherResponse};
 // Server-specific modules - only when server feature is enabled
 #[cfg(feature = "server")]
 pub mod mcp;
-#[cfg(feature = "server")]
-pub mod streaming;
-#[cfg(feature = "server")]
-pub mod vercel;
 
 /// A high-level client for text-to-cypher operations.
 ///
@@ -293,7 +289,6 @@ impl TextToCypherClient {
             key: Some(self.api_key.clone()),
             falkordb_connection: Some(self.falkordb_connection.clone()),
             cypher_only: false,
-            stream: false,
         };
 
         let response = processor::process_text_to_cypher(
@@ -358,7 +353,6 @@ impl TextToCypherClient {
             key: Some(self.api_key.clone()),
             falkordb_connection: Some(self.falkordb_connection.clone()),
             cypher_only: true,
-            stream: false,
         };
 
         let response = processor::process_text_to_cypher(

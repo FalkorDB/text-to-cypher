@@ -1,7 +1,7 @@
-//! Non-streaming text-to-cypher processor for serverless deployments
+//! Text-to-cypher request/response processor
 //!
-//! This module provides a request/response interface for serverless functions
-//! that don't support streaming (unlike the SSE-based streaming in main.rs).
+//! This module provides the non-streaming request/response interface for
+//! text-to-cypher conversion, used by the library API and the standalone server.
 
 use crate::chat::ChatRequest;
 use crate::core::{
@@ -21,9 +21,6 @@ pub struct TextToCypherRequest {
     /// When true, returns only the generated Cypher query without executing it
     #[serde(default)]
     pub cypher_only: bool,
-    /// When true, returns Server-Sent Events (SSE) stream with progress updates
-    #[serde(default)]
-    pub stream: bool,
 }
 
 /// Response structure for text-to-cypher conversion
@@ -336,7 +333,6 @@ mod tests {
             key: Some("test-key".to_string()),
             falkordb_connection: Some("falkor://localhost:6379".to_string()),
             cypher_only: false,
-            stream: false,
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -345,7 +341,6 @@ mod tests {
         assert_eq!(deserialized.graph_name, "test_graph");
         assert_eq!(deserialized.model, Some("gpt-4o-mini".to_string()));
         assert!(!deserialized.cypher_only);
-        assert!(!deserialized.stream);
     }
 
     #[test]
@@ -363,7 +358,6 @@ mod tests {
         assert_eq!(request.model, None);
         assert_eq!(request.key, None);
         assert!(!request.cypher_only);
-        assert!(!request.stream);
     }
 
     #[test]
@@ -392,7 +386,6 @@ mod tests {
             key: None,
             falkordb_connection: None,
             cypher_only: true,
-            stream: false,
         };
 
         let cloned = request.clone();
