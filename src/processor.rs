@@ -5,8 +5,10 @@
 
 use crate::chat::ChatRequest;
 use crate::core::{
-    create_genai_client, discover_graph_schema, execute_cypher_query, generate_cypher_query, generate_final_answer,
+    create_genai_client, discover_graph_schema, execute_cypher_query, generate_cypher_query_with_skills,
+    generate_final_answer,
 };
+use crate::skills::SkillCatalog;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -100,6 +102,32 @@ pub async fn process_text_to_cypher(
     default_key: Option<String>,
     default_connection: String,
 ) -> TextToCypherResponse {
+    process_text_to_cypher_with_skills(request, default_model, default_key, default_connection, None).await
+}
+
+/// Process a text-to-cypher request with optional dynamic skill support.
+///
+/// When a `SkillCatalog` is provided, the AI model can access specialized `FalkorDB`
+/// Cypher skills for better query generation. Providers that support tool calling
+/// load skills on-demand; others get skill content injected into the prompt.
+///
+/// # Errors
+///
+/// This function does not return errors. All errors are captured and returned
+/// as `TextToCypherResponse::error` with appropriate error messages.
+///
+/// # Panics
+///
+/// This function does not panic. All errors are handled gracefully and returned
+/// as error responses within the `TextToCypherResponse` structure.
+#[allow(clippy::too_many_lines)]
+pub async fn process_text_to_cypher_with_skills(
+    request: TextToCypherRequest,
+    default_model: Option<String>,
+    default_key: Option<String>,
+    default_connection: String,
+    skill_catalog: Option<&SkillCatalog>,
+) -> TextToCypherResponse {
     // Apply defaults
     let model = request.model.clone().or(default_model);
     let key = request.key.clone().or(default_key);
@@ -151,12 +179,13 @@ pub async fn process_text_to_cypher(
     };
 
     // Step 2: Generate Cypher query
-    let cypher_query = match generate_cypher_query(&request.chat_request, &schema, &client, &model).await {
-        Ok(q) => q,
-        Err(e) => {
-            return TextToCypherResponse::error(format!("Failed to generate query: {e}"));
-        }
-    };
+    let cypher_query =
+        match generate_cypher_query_with_skills(&request.chat_request, &schema, &client, &model, skill_catalog).await {
+            Ok(q) => q,
+            Err(e) => {
+                return TextToCypherResponse::error(format!("Failed to generate query: {e}"));
+            }
+        };
 
     tracing::info!("Cypher query generated: {}", cypher_query);
 
@@ -181,6 +210,7 @@ pub async fn process_text_to_cypher(
                 &client,
                 &model,
                 &falkordb_connection,
+                skill_catalog,
             )
             .await
             {
@@ -229,6 +259,7 @@ pub async fn process_text_to_cypher(
 }
 
 /// Attempts to self-heal a failed query by regenerating with error context
+#[allow(clippy::too_many_arguments)]
 async fn attempt_self_healing(
     request: &TextToCypherRequest,
     schema: &str,
@@ -237,6 +268,7 @@ async fn attempt_self_healing(
     client: &genai::Client,
     model: &str,
     falkordb_connection: &str,
+    skill_catalog: Option<&SkillCatalog>,
 ) -> Result<(String, String), Box<dyn Error + Send + Sync>> {
     use crate::chat::{ChatMessage, ChatRole};
 
@@ -255,8 +287,8 @@ async fn attempt_self_healing(
         ),
     });
 
-    // Generate new query
-    let healed_query = generate_cypher_query(&retry_request, schema, client, model).await?;
+    // Generate new query (include skill catalog for consistent prompt)
+    let healed_query = generate_cypher_query_with_skills(&retry_request, schema, client, model, skill_catalog).await?;
 
     tracing::info!("Self-healed query generated: {}", healed_query);
 

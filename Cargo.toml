@@ -41,6 +41,7 @@ server = [
 # Core library dependencies (always included)
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.143"
+serde_yaml = "0.9"
 tracing = { version = "0.1", features = ["default"] }
 tokio = { version = "1.52.1", features = ["full"] }
 genai = "0.5.3"
@@ -73,3 +74,6 @@ moka = { version = "0.12.10", features = ["sync"], optional = true }
 name = "text-to-cypher"
 path = "src/main.rs"
 required-features = ["server"]
+
+[dev-dependencies]
+tempfile = "3"
