@@ -19,7 +19,6 @@ This implementation enables text-to-cypher to be used as a Rust library, not jus
   - utoipa, utoipa-swagger-ui
   - dashmap, tokio-stream
   - rust-mcp-sdk, dotenvy, moka
-  - vercel_runtime, hyper
 
 **Binary configuration:**
 - Added `required-features = ["server"]` to both binaries

@@ -1,7 +1,7 @@
-//! Core functionality shared between standalone and serverless deployments
+//! Core text-to-cypher pipeline logic
 //!
 //! This module contains the shared logic for text-to-cypher conversion that works
-//! in both streaming (standalone HTTP server) and non-streaming (serverless) contexts.
+//! in both the standalone HTTP server and library contexts.
 
 use crate::chat::{ChatRequest, ChatRole};
 use crate::formatter::format_query_records;
