@@ -6,6 +6,8 @@ A high-performance Rust library and API service that translates natural language
 
 ## ✨ What's New
 
+**Dynamic Cypher Skills**: Load FalkorDB-specific Cypher best practices at runtime from external skill files. The LLM can request detailed skill content on-demand via tool calling, keeping prompts compact while enabling deep expertise when needed. See [Dynamic Cypher Skills](#dynamic-cypher-skills) for details.
+
 **Library Support**: Now available as a Rust library! Use text-to-cypher directly in your Rust applications without the REST API overhead.
 
 **All-in-One Docker Solution**: Our Docker image includes everything you need in a single container:
@@ -35,6 +37,7 @@ A high-performance Rust library and API service that translates natural language
 
 ### AI & Quality
 - **AI Model Integration**: Powered by genai for natural language processing with support for multiple providers
+- **Dynamic Cypher Skills**: Load FalkorDB-specific best practices from external skill files with on-demand tool calling
 - **Schema-Aware Generation**: Uses schema with example values for better query accuracy
 - **Production Ready**: Comprehensive error handling, logging, and robust architecture
 - **Environment Configuration**: Flexible configuration via `.env` file with fallback to request parameters
@@ -199,6 +202,7 @@ The application supports flexible configuration via environment variables or `.e
 ### Optional Settings
 
 - `FALKORDB_CONNECTION`: FalkorDB connection string (default: "falkor://127.0.0.1:6379")
+- `SKILLS_DIR`: Path to a directory containing FalkorDB Cypher skill files (optional, see [Dynamic Cypher Skills](#dynamic-cypher-skills))
 
 Create a `.env` file from the provided example:
 
@@ -756,6 +760,241 @@ The library is published with:
 - **Web Interface**: `http://localhost:3000` for graph exploration
 - **Logs**: Use `docker logs -f <container-name>` to view all service logs
 - **Issues**: Report problems at [GitHub Issues](https://github.com/FalkorDB/text-to-cypher/issues)
+
+## Dynamic Cypher Skills
+
+Text-to-cypher supports loading FalkorDB-specific Cypher expertise from external skill files at runtime. This allows the LLM to generate better, more efficient Cypher queries by leveraging domain-specific knowledge about FalkorDB's query engine.
+
+### How It Works
+
+The system uses a **two-tier architecture** for skill loading:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     System Prompt                           │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Tier 1: Skill Catalog (compact)                      │  │
+│  │  - apply-cypher-limitations: Avoid FalkorDB pitfalls  │  │
+│  │  - use-parameters: Use parameterized queries          │  │
+│  │  - fulltext-search: Full-text search syntax           │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                    LLM decides it needs
+                    more detail on a skill
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Tier 2: Tool Call → read_skill("apply-cypher-limitations") │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Full skill content returned:                         │  │
+│  │  # Apply Cypher Limitations                           │  │
+│  │  - <> and != are NOT index-accelerated               │  │
+│  │  - Use positive predicates when possible              │  │
+│  │  - Self-referencing relationships are directed...     │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Tier 1 (Catalog)**: A compact list of skill names and descriptions is injected into the system prompt. This gives the LLM awareness of available expertise without bloating the context window.
+
+**Tier 2 (Tool Calling)**: When the LLM determines it needs detailed guidance for a particular query, it calls the `read_skill` tool to load the full skill content on-demand. This keeps prompts lean for simple queries while enabling deep expertise for complex ones.
+
+### Provider Support
+
+Tool calling (Tier 2) is supported by these providers:
+
+| Provider | Tool Calling | Behavior |
+|----------|:----------:|----------|
+| OpenAI | ✅ | On-demand skill loading via `read_skill` tool |
+| Anthropic | ✅ | On-demand skill loading via `read_skill` tool |
+| Gemini | ✅ | On-demand skill loading via `read_skill` tool |
+| xAI | ✅ | On-demand skill loading via `read_skill` tool |
+| DeepSeek | ✅ | On-demand skill loading via `read_skill` tool |
+| Groq | ❌ | All skill content injected directly into prompt |
+| Ollama | ❌ | All skill content injected directly into prompt |
+| Cohere | ❌ | All skill content injected directly into prompt |
+
+For providers without tool support, the system automatically falls back to injecting all skill content directly into the system prompt. Every provider benefits from skills — only the delivery mechanism differs.
+
+### Advantages & Limitations
+
+**Advantages:**
+- 🎯 **Smaller prompts** — Only skill names/descriptions in the base prompt; full content loaded on-demand
+- 🔧 **Maintainable** — Skills live in plain markdown files, easy to add/edit/remove without code changes
+- 🔌 **Pluggable** — Load different skill sets for different deployments or use cases
+- 🚀 **Better queries** — LLM generates FalkorDB-optimized Cypher by leveraging domain-specific knowledge
+- ⬇️ **Backward compatible** — Without `SKILLS_DIR`, behavior is identical to the base system
+- 🔄 **Universal fallback** — Providers without tool support still get all skill content (just via prompt injection)
+
+**Limitations:**
+- 📡 **Extra LLM round-trips** — Tool calling adds 1-3 additional API calls when skills are requested
+- 💰 **Increased token usage** — Skill content adds tokens to the context (either via tools or prompt injection)
+- 📁 **Requires skill files** — You need to provide/maintain the skill directory (see [FalkorDB/skills](https://github.com/FalkorDB/skills/tree/main/cypher-skills) for ready-made skills)
+- 🤖 **Provider-dependent** — Tool calling quality varies by provider; some models may over-request or under-request skills
+
+### Setting Up Skills
+
+#### 1. Get the FalkorDB skill files
+
+Clone the official FalkorDB skills repository:
+
+```bash
+git clone https://github.com/FalkorDB/skills.git
+```
+
+Or use only the Cypher-specific skills:
+
+```bash
+git clone --depth 1 https://github.com/FalkorDB/skills.git
+# The skills are in skills/cypher-skills/
+```
+
+#### 2. Skill file format
+
+Each skill lives in its own directory with a `skill.md` file containing YAML frontmatter and markdown body:
+
+```
+cypher-skills/
+  apply-cypher-limitations/
+    skill.md
+  use-parameters/
+    skill.md
+  fulltext-search/
+    skill.md
+```
+
+A `skill.md` file looks like:
+
+```markdown
+---
+name: Apply Cypher Limitations
+description: Avoid FalkorDB-specific Cypher pitfalls and write optimized queries
+---
+
+# Apply Cypher Limitations
+
+## Usage
+- The `<>` and `!=` operators are NOT index-accelerated in FalkorDB
+- Prefer positive predicates when they preserve the user's intent
+- Use `<>` / `!=` only when exclusion is explicitly required
+
+## Example
+Instead of: `MATCH (n:Person) WHERE n.age <> 30 RETURN n`
+Prefer: `MATCH (n:Person) WHERE n.age > 30 OR n.age < 30 RETURN n`
+```
+
+#### 3. Configure the environment
+
+**Server mode** — set the `SKILLS_DIR` environment variable:
+
+```bash
+# In your .env file
+SKILLS_DIR=/path/to/skills/cypher-skills
+
+# Or via environment variable
+export SKILLS_DIR=/path/to/skills/cypher-skills
+cargo run
+```
+
+**Docker deployment:**
+
+```bash
+docker run -d \
+  -e DEFAULT_MODEL=gpt-4o-mini \
+  -e DEFAULT_KEY=your-api-key \
+  -e SKILLS_DIR=/app/skills \
+  -v /path/to/skills/cypher-skills:/app/skills:ro \
+  -p 8080:8080 \
+  ghcr.io/falkordb/text-to-cypher:latest
+```
+
+### Library Usage with Skills
+
+**Basic — load skills from a directory:**
+
+```rust
+use text_to_cypher::{TextToCypherClient, SkillCatalog, ChatRequest, ChatMessage, ChatRole};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load skills from a directory
+    let catalog = SkillCatalog::from_directory(Path::new("./cypher-skills"))?;
+    println!("Loaded {} skills", catalog.len());
+
+    // Create a client with skills
+    let client = TextToCypherClient::new(
+        "gpt-4o-mini",
+        "your-api-key",
+        "falkor://127.0.0.1:6379"
+    ).with_skills(catalog);
+
+    // Use as normal — skills are automatically used during query generation
+    let request = ChatRequest {
+        messages: vec![
+            ChatMessage {
+                role: ChatRole::User,
+                content: "Find people older than 30 who are NOT named John".to_string(),
+            }
+        ]
+    };
+
+    let response = client.text_to_cypher("social", request).await?;
+    // The LLM may use the "apply-cypher-limitations" skill to avoid
+    // using <> operator and generate an optimized query instead
+    println!("Query: {}", response.cypher_query.unwrap());
+
+    Ok(())
+}
+```
+
+**Advanced — use the lower-level API with skills:**
+
+```rust
+use text_to_cypher::{core, SkillCatalog, ChatRequest, ChatMessage, ChatRole};
+use std::path::Path;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let catalog = SkillCatalog::from_directory(Path::new("./cypher-skills"))?;
+    let client = core::create_genai_client(Some("your-api-key"));
+
+    let schema = core::discover_graph_schema(
+        "falkor://127.0.0.1:6379",
+        "movies"
+    ).await?;
+
+    let chat_req = ChatRequest {
+        messages: vec![
+            ChatMessage {
+                role: ChatRole::User,
+                content: "Find actors who acted in sci-fi movies".to_string(),
+            }
+        ]
+    };
+
+    // Generate query with skills — tool calling happens automatically
+    let query = core::generate_cypher_query_with_skills(
+        &chat_req,
+        &schema,
+        &client,
+        "gpt-4o-mini",
+        Some(&catalog),
+    ).await?;
+
+    println!("Generated: {}", query);
+    Ok(())
+}
+```
+
+**Without skills — everything works exactly as before:**
+
+```rust
+// No skills, no changes needed
+let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379");
+let response = client.text_to_cypher("graph", request).await?;
+```
 
 ## Recent Improvements
 
