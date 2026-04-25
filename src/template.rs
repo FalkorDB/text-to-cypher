@@ -23,12 +23,37 @@ impl TemplateEngine {
         result
     }
 
-    /// Render the system prompt template with the given ontology.
+    /// Render the system prompt template with ontology and optional skills catalog.
+    /// When `skills_catalog` is empty, renders the prompt without any skills section.
     #[must_use]
-    pub fn render_system_prompt(ontology: &str) -> String {
+    pub fn render_system_prompt_with_skills(
+        ontology: &str,
+        skills_catalog: &str,
+    ) -> String {
         let mut variables = HashMap::new();
         variables.insert("ONTOLOGY", ontology);
-        Self::render(Self::SYSTEM_PROMPT, &variables)
+        variables.insert("SKILLS_CATALOG", skills_catalog);
+        let rendered = Self::render(Self::SYSTEM_PROMPT, &variables);
+
+        // Collapse consecutive blank lines left by empty placeholder substitution
+        let had_trailing_newline = rendered.ends_with('\n');
+        let mut result = String::with_capacity(rendered.len());
+        let mut prev_blank = false;
+        for line in rendered.lines() {
+            let is_blank = line.trim().is_empty();
+            if is_blank && prev_blank {
+                continue;
+            }
+            if !result.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(line);
+            prev_blank = is_blank;
+        }
+        if had_trailing_newline {
+            result.push('\n');
+        }
+        result
     }
 
     /// Render the user prompt template with the given question.

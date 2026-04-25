@@ -66,6 +66,25 @@ Uses the **`genai`** crate for multi-provider LLM support (OpenAI, Anthropic, Ge
 
 The system prompt (`templates/system_prompt.txt`) incorporates FalkorDB-specific Cypher best practices derived from the [FalkorDB/skills](https://github.com/FalkorDB/skills/tree/main/cypher-skills) repository. These include read-only constraints, index-awareness rules (e.g., `<>`/`!=` not index-accelerated), full-text and vector search syntax, and parameterized query support. Full-text and vector search guidance is conditional — it only applies when the ontology explicitly declares those indexes (schema discovery does not currently expose index metadata). When updating the system prompt, refer to the skills repo for authoritative FalkorDB Cypher guidance.
 
+### Dynamic Skill Loading
+
+`src/skills/` implements a two-tier dynamic skill loading system:
+
+- **Tier 1 (catalog)**: Skill names and descriptions are injected into the system prompt via the `{{SKILLS_CATALOG}}` placeholder. This gives the LLM awareness of available skills without bloating the context.
+- **Tier 2 (tool calling)**: For providers that support tool calling (OpenAI, Anthropic, Gemini, xAI, DeepSeek), the LLM can request full skill content on-demand via the `read_skill` tool. Providers without tool support (Groq, Ollama, Cohere) get all skill content injected directly into the prompt as a fallback.
+
+Skills are loaded from the `SKILLS_DIR` environment variable at startup. Expected directory structure:
+```text
+skills_dir/
+  skill-name/
+    skill.md     # YAML frontmatter (name, description) + markdown body
+```
+
+Key modules:
+- `src/skills/parser.rs` — Parses `skill.md` files (YAML frontmatter via `serde_yaml` + markdown body)
+- `src/skills/loader.rs` — Scans directories recursively for `skill.md` files, uses directory name as stable skill ID
+- `src/skills/mod.rs` — `SkillCatalog` (catalog rendering, tool definition, skill lookup), `supports_tool_calling()` provider gating
+
 ### Downstream Consumers
 
 This library is consumed by [FalkorDB/text-to-cypher-node](https://github.com/FalkorDB/text-to-cypher-node) (Node.js bindings), which in turn powers [FalkorDB/falkordb-browser](https://github.com/FalkorDB/falkordb-browser).
@@ -78,7 +97,7 @@ This library is consumed by [FalkorDB/text-to-cypher-node](https://github.com/Fa
 - **Formatting**: Rust edition 2024, `fn_params_layout = "Vertical"`, `max_width = 120`.
 - **`#[must_use]`** is applied to pure functions returning constructed values (builders, renderers).
 - **Regex patterns** use `OnceLock` for lazy-static initialization (see `validator.rs`, `main.rs`).
-- **Environment config**: `.env` file with `DEFAULT_MODEL`, `DEFAULT_KEY`, `FALKORDB_CONNECTION`, `REST_PORT` (8080), `MCP_PORT` (3001).
+- **Environment config**: `.env` file with `DEFAULT_MODEL`, `DEFAULT_KEY`, `FALKORDB_CONNECTION`, `REST_PORT` (8080), `MCP_PORT` (3001), `SKILLS_DIR` (optional, path to skill files).
 
 ## Workflow
 
@@ -86,6 +105,17 @@ This library is consumed by [FalkorDB/text-to-cypher-node](https://github.com/Fa
 
 ## Deployment Targets
 
-- **Standalone Docker**: All-in-one container (FalkorDB + web UI + API + MCP) via `supervisord.conf`
+- **Standalone Docker**: All-in-one container (FalkorDB + web UI + API + MCP + Cypher skills) via `supervisord.conf`. Skills are baked in from [FalkorDB/skills](https://github.com/FalkorDB/skills). Pin with `--build-arg SKILLS_REF=<tag>`.
 - **Rust library**: `default-features = false` for embedding in other Rust apps
 - **Cross-compilation**: ARM64 via `cross` tool (`Cross.toml`)
+
+## Development with `just`
+
+A `justfile` provides common development recipes. Install [just](https://github.com/casey/just) then:
+
+```bash
+just download-skills   # Fetch FalkorDB Cypher skills
+just check             # lint + test (CI equivalent)
+just dev               # Run server with skills (auto-downloads if missing)
+just list-skills       # Show loaded skills
+```

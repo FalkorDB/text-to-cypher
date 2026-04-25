@@ -158,6 +158,7 @@ pub mod error;
 pub mod formatter;
 pub mod processor;
 pub mod schema;
+pub mod skills;
 pub mod template;
 pub mod validator;
 
@@ -165,7 +166,8 @@ pub mod validator;
 pub use chat::{ChatMessage, ChatRequest, ChatRole};
 pub use error::ErrorResponse;
 pub use genai::adapter::AdapterKind;
-pub use processor::{TextToCypherRequest, TextToCypherResponse};
+pub use processor::{TextToCypherRequest, TextToCypherResponse, process_text_to_cypher_with_skills};
+pub use skills::{QueryContext, SkillCatalog};
 // Server-specific modules - only when server feature is enabled
 #[cfg(feature = "server")]
 pub mod mcp;
@@ -205,6 +207,7 @@ pub struct TextToCypherClient {
     model: String,
     api_key: String,
     falkordb_connection: String,
+    skill_catalog: Option<SkillCatalog>,
 }
 
 impl TextToCypherClient {
@@ -237,7 +240,33 @@ impl TextToCypherClient {
             model: model.into(),
             api_key: api_key.into(),
             falkordb_connection: falkordb_connection.into(),
+            skill_catalog: None,
         }
+    }
+
+    /// Sets the skill catalog for dynamic Cypher skill loading.
+    ///
+    /// When set, the AI model can access specialized `FalkorDB` Cypher skills
+    /// for better query generation. Providers that support tool calling load
+    /// skills on-demand; others get skill content injected into the prompt.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use text_to_cypher::{TextToCypherClient, SkillCatalog};
+    /// use std::path::Path;
+    ///
+    /// let catalog = SkillCatalog::from_directory(Path::new("./skills")).unwrap();
+    /// let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379")
+    ///     .with_skills(catalog);
+    /// ```
+    #[must_use]
+    pub fn with_skills(
+        mut self,
+        catalog: SkillCatalog,
+    ) -> Self {
+        self.skill_catalog = Some(catalog);
+        self
     }
 
     /// Converts natural language text to Cypher and executes the query.
@@ -291,11 +320,12 @@ impl TextToCypherClient {
             cypher_only: false,
         };
 
-        let response = processor::process_text_to_cypher(
+        let response = processor::process_text_to_cypher_with_skills(
             req,
             Some(self.model.clone()),
             Some(self.api_key.clone()),
             self.falkordb_connection.clone(),
+            self.skill_catalog.as_ref(),
         )
         .await;
 
@@ -355,11 +385,12 @@ impl TextToCypherClient {
             cypher_only: true,
         };
 
-        let response = processor::process_text_to_cypher(
+        let response = processor::process_text_to_cypher_with_skills(
             req,
             Some(self.model.clone()),
             Some(self.api_key.clone()),
             self.falkordb_connection.clone(),
+            self.skill_catalog.as_ref(),
         )
         .await;
 
@@ -509,6 +540,14 @@ mod tests {
         assert_eq!(client.model, "anthropic:claude-3");
         assert_eq!(client.api_key, "key123");
         assert_eq!(client.falkordb_connection, "falkor://localhost:6379");
+        assert!(client.skill_catalog.is_none());
+    }
+
+    #[test]
+    fn test_client_with_skills() {
+        let catalog = SkillCatalog::empty();
+        let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://localhost:6379").with_skills(catalog);
+        assert!(client.skill_catalog.is_some());
     }
 
     #[test]
