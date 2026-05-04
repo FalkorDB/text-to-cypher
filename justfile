@@ -84,12 +84,12 @@ run: _ensure-skills
 # ── Docker ────────────────────────────────────────────────────────────────────
 
 # Build Docker image locally
-docker-build version="v0.1.0-alpha.1":
-    ./docker-build.sh --version {{version}} --local
+docker-build version="v0.1.0-alpha.1" skills_ref="main":
+    ./docker-build.sh --version {{version}} --skills-ref {{skills_ref}} --local
 
-# Build Docker image and push to registry
-docker-push version registry:
-    ./docker-build.sh --version {{version}} --registry {{registry}} --push
+# Build Docker image and push to registry with a pinned skills commit SHA
+docker-push version registry skills_ref:
+    ./docker-build.sh --version {{version}} --registry {{registry}} --skills-ref {{skills_ref}} --push
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 

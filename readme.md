@@ -466,8 +466,8 @@ Once running, access the services at:
 # Build locally using the build script
 ./docker-build.sh
 
-# Or build manually
-docker build -t text-to-cypher:latest .
+# Or build manually with a pinned FalkorDB/skills ref
+docker build --build-arg SKILLS_REF=<falkordb-skills-commit-sha> -t text-to-cypher:latest .
 ```
 
 #### Using Pre-built Images
@@ -552,7 +552,8 @@ just list-skills
 | `just check` | Full CI check (lint + test) |
 | `just dev` | Start development server with skills |
 | `just run` | Start release server with skills |
-| `just docker-build [version]` | Build Docker image locally |
+| `just docker-build [version] [skills_ref]` | Build Docker image locally (defaults to latest skills from `main`) |
+| `just docker-push <version> <registry> <skills_ref>` | Build and push Docker image with a pinned skills ref |
 | `just list-skills` | Show all loaded skills |
 | `just clean` | Clean build artifacts and skills |
 
@@ -916,7 +917,7 @@ docker run -d \
   ghcr.io/falkordb/text-to-cypher:latest
 ```
 
-To pin Docker skills to a specific version, rebuild with `--build-arg SKILLS_REF=<tag-or-commit>`.
+Release Docker builds require a full `FalkorDB/skills` commit SHA. Use `./docker-build.sh --skills-ref <commit-sha>` or rebuild manually with `--build-arg SKILLS_REF=<commit-sha>`; reserve `SKILLS_REF=main` for local/dev builds only.
 
 #### Development (using `just`)
 

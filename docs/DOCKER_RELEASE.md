@@ -8,9 +8,10 @@ When a new release is published on GitHub, the Docker Release Build workflow aut
 
 1. **Builds multi-platform Docker images** for both `linux/amd64` and `linux/arm64`
 2. **Uses the published release binaries** instead of rebuilding from source
-3. **Pushes images to GitHub Container Registry** with proper versioning
-4. **Verifies the images work** on both platforms
-5. **Provides deployment instructions** in the workflow summary
+3. **Pins the baked-in FalkorDB Cypher skills** to a reproducible `FalkorDB/skills` commit
+4. **Pushes images to GitHub Container Registry** with proper versioning
+5. **Verifies the images work** on both platforms
+6. **Provides deployment instructions** in the workflow summary
 
 ## Triggered Events
 
@@ -60,6 +61,7 @@ Uses Docker Buildx with the enhanced `docker-build.sh` script:
 ```bash
 ./docker-build.sh \
   --version "v1.0.0" \
+  --skills-ref "172978316e493c48ca352a0be6fb668a9f728855" \
   --platforms "linux/amd64,linux/arm64" \
   --registry "ghcr.io/falkordb" \
   --push
@@ -84,6 +86,7 @@ You can also use the `docker-build.sh` script manually:
 ```bash
 ./docker-build.sh \
   --version v1.0.0 \
+  --skills-ref <falkordb-skills-commit-sha> \
   --registry my-registry.com/my-org \
   --push
 ```
@@ -92,6 +95,7 @@ You can also use the `docker-build.sh` script manually:
 ```bash
 ./docker-build.sh \
   --version v1.0.0 \
+  --skills-ref <falkordb-skills-commit-sha> \
   --platforms linux/amd64 \
   --push
 ```
@@ -102,6 +106,7 @@ The workflow requires:
 - **GITHUB_TOKEN**: Automatically provided (for GHCR access)
 - **Docker Buildx**: Automatically set up in the workflow
 - **Release binaries**: Must exist in the GitHub release assets
+- **CYPHER_SKILLS_REF**: Pinned `FalkorDB/skills` commit SHA baked into release images
 
 ## Troubleshooting
 

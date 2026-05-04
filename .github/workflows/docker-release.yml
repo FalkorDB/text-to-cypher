@@ -22,6 +22,8 @@ permissions:
 env:
   REGISTRY: docker.io
   OWNER_LOWER: $(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+  # FalkorDB/skills commit baked into release images for reproducible builds.
+  CYPHER_SKILLS_REF: 172978316e493c48ca352a0be6fb668a9f728855
 
 jobs:
   docker-build:
@@ -290,6 +292,7 @@ jobs:
           echo "🔧 Building image locally for current platform (linux/amd64)..."
           ./docker-build.sh \
             --version "${{ steps.extract_version.outputs.release_tag }}" \
+            --skills-ref "${{ env.CYPHER_SKILLS_REF }}" \
             --platforms "linux/amd64" \
             --image-name "text-to-cypher"
           
@@ -299,6 +302,7 @@ jobs:
             set +e  # Don't exit on error
             ./docker-build.sh \
               --version "${{ steps.extract_version.outputs.release_tag }}" \
+              --skills-ref "${{ env.CYPHER_SKILLS_REF }}" \
               --platforms "linux/amd64,linux/arm64" \
               --image-name "text-to-cypher" \
               --registry "${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}" \
@@ -318,6 +322,7 @@ jobs:
             set +e  # Don't exit on error
             ./docker-build.sh \
               --version "${{ steps.extract_version.outputs.release_tag }}" \
+              --skills-ref "${{ env.CYPHER_SKILLS_REF }}" \
               --platforms "linux/amd64,linux/arm64" \
               --image-name "text-to-cypher" \
               --registry "${{ env.OWNER_LOWER }}" \
