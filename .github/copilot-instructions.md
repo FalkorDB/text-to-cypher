@@ -81,8 +81,8 @@ skills_dir/
 ```
 
 Key modules:
-- `src/skills/parser.rs` — Parses `skill.md` files (YAML frontmatter via `serde_yaml` + markdown body)
-- `src/skills/loader.rs` — Scans directories recursively for `skill.md` files, uses directory name as stable skill ID
+- `src/skills/parser.rs` — Parses `skill.md` files (YAML frontmatter via `serde_yaml_ng` + markdown body)
+- `src/skills/loader.rs` — Scans immediate child directories for `skill.md` files, uses directory name as stable skill ID
 - `src/skills/mod.rs` — `SkillCatalog` (catalog rendering, tool definition, skill lookup), `supports_tool_calling()` provider gating
 
 ### Downstream Consumers

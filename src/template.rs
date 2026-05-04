@@ -23,6 +23,12 @@ impl TemplateEngine {
         result
     }
 
+    /// Render the system prompt template with ontology.
+    #[must_use]
+    pub fn render_system_prompt(ontology: &str) -> String {
+        Self::render_system_prompt_with_skills(ontology, "")
+    }
+
     /// Render the system prompt template with ontology and optional skills catalog.
     /// When `skills_catalog` is empty, renders the prompt without any skills section.
     #[must_use]
@@ -35,7 +41,16 @@ impl TemplateEngine {
         variables.insert("SKILLS_CATALOG", skills_catalog);
         let rendered = Self::render(Self::SYSTEM_PROMPT, &variables);
 
+        if !skills_catalog.trim().is_empty() {
+            return rendered;
+        }
+
         // Collapse consecutive blank lines left by empty placeholder substitution
+        Self::collapse_consecutive_blank_lines(&rendered)
+    }
+
+    #[must_use]
+    fn collapse_consecutive_blank_lines(rendered: &str) -> String {
         let had_trailing_newline = rendered.ends_with('\n');
         let mut result = String::with_capacity(rendered.len());
         let mut prev_blank = false;

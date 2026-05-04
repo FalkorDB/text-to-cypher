@@ -455,8 +455,8 @@ jobs:
           elif [ $TEST_EXIT -eq 124 ]; then
             echo "⚠️ Image test timed out (expected for server applications) but binary exists for ${PLATFORM}"
           else
-            echo "⚠️ Image test failed for ${PLATFORM}, but image exists"
-            echo "This might be a platform compatibility issue"
+            echo "❌ Image verification failed for ${PLATFORM} - binary or skills missing"
+            exit 1
           fi
 
   # Update deployment configurations (optional)

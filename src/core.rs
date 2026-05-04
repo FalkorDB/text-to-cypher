@@ -11,7 +11,7 @@ use crate::template::TemplateEngine;
 use crate::validator::CypherValidator;
 use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo};
 use genai::adapter::AdapterKind;
-use genai::chat::{ChatMessage as GenAiChatMessage, ToolCall, ToolResponse};
+use genai::chat::ChatMessage as GenAiChatMessage;
 use genai::resolver::{AuthData, AuthResolver};
 use genai::{Client as GenAiClient, ModelIden};
 use std::error::Error;
@@ -108,10 +108,8 @@ pub async fn generate_cypher_query_with_skills(
         tracing::info!("LLM requested {} skill(s)", tool_calls.len());
         genai_chat_request = genai_chat_request.append_message(GenAiChatMessage::from(tool_calls.clone()));
 
-        for tc in &tool_calls {
-            let content = resolve_skill_tool_call(tc, skill_catalog);
-            genai_chat_request =
-                genai_chat_request.append_message(GenAiChatMessage::from(ToolResponse::new(&tc.call_id, content)));
+        for tool_response in skills::resolve_skill_tool_calls(&tool_calls, skill_catalog) {
+            genai_chat_request = genai_chat_request.append_message(GenAiChatMessage::from(tool_response));
         }
     }
 
@@ -139,23 +137,6 @@ fn validate_generated_query(query: &str) -> Result<String, Box<dyn Error + Send 
     }
 
     Ok(clean_query)
-}
-
-/// Resolve a `read_skill` tool call by looking up skill content in the catalog.
-fn resolve_skill_tool_call(
-    tc: &ToolCall,
-    catalog: Option<&SkillCatalog>,
-) -> String {
-    if tc.fn_name != "read_skill" {
-        return format!("Unknown tool: {}", tc.fn_name);
-    }
-
-    let skill_id = tc.fn_arguments.get("id").and_then(|v| v.as_str()).unwrap_or("");
-
-    catalog.and_then(|c| c.get_skill(skill_id)).map_or_else(
-        || format!("Skill '{skill_id}' not found in catalog"),
-        |s| format!("# {}\n\n{}", s.name, s.content),
-    )
 }
 
 /// Executes a Cypher query against the graph database
@@ -279,7 +260,12 @@ fn create_cypher_query_chat_request_with_skills(
         _ => String::new(),
     };
 
-    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt_with_skills(ontology, &skills_text));
+    let system_prompt = if skills_text.is_empty() {
+        TemplateEngine::render_system_prompt(ontology)
+    } else {
+        TemplateEngine::render_system_prompt_with_skills(ontology, &skills_text)
+    };
+    chat_req = chat_req.with_system(system_prompt);
 
     chat_req
 }

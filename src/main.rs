@@ -12,7 +12,7 @@ use falkordb::FalkorClientBuilder;
 use falkordb::FalkorConnectionInfo;
 use futures_util::StreamExt;
 use genai::ModelIden;
-use genai::chat::{ChatMessage as GenAiChatMessage, ToolCall, ToolResponse};
+use genai::chat::ChatMessage as GenAiChatMessage;
 use genai::resolver::AuthData;
 use genai::resolver::AuthResolver;
 use moka::sync::Cache;
@@ -1945,7 +1945,12 @@ fn generate_create_cypher_query_chat_request_with_skills(
         _ => String::new(),
     };
 
-    chat_req = chat_req.with_system(TemplateEngine::render_system_prompt_with_skills(ontology, &skills_text));
+    let system_prompt = if skills_text.is_empty() {
+        TemplateEngine::render_system_prompt(ontology)
+    } else {
+        TemplateEngine::render_system_prompt_with_skills(ontology, &skills_text)
+    };
+    chat_req = chat_req.with_system(system_prompt);
 
     // Pretty print the chat request as JSON for logging
     if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
@@ -2227,7 +2232,7 @@ async fn execute_chat_with_skills(
             }
         };
 
-        let tool_calls: Vec<ToolCall> = chat_response.tool_calls().into_iter().cloned().collect();
+        let tool_calls = chat_response.tool_calls().into_iter().cloned().collect::<Vec<_>>();
 
         if tool_calls.is_empty() {
             return chat_response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER"));
@@ -2242,10 +2247,8 @@ async fn execute_chat_with_skills(
 
         genai_request = genai_request.append_message(GenAiChatMessage::from(tool_calls.clone()));
 
-        for tc in &tool_calls {
-            let content = resolve_skill_tool_call(tc, skill_catalog);
-            genai_request =
-                genai_request.append_message(GenAiChatMessage::from(ToolResponse::new(&tc.call_id, content)));
+        for tool_response in skills::resolve_skill_tool_calls(&tool_calls, skill_catalog) {
+            genai_request = genai_request.append_message(GenAiChatMessage::from(tool_response));
         }
     }
 
@@ -2258,23 +2261,6 @@ async fn execute_chat_with_skills(
             String::from("NO ANSWER")
         }
     }
-}
-
-/// Resolve a `read_skill` tool call by looking up skill content in the catalog.
-fn resolve_skill_tool_call(
-    tc: &ToolCall,
-    catalog: Option<&SkillCatalog>,
-) -> String {
-    if tc.fn_name != "read_skill" {
-        return format!("Unknown tool: {}", tc.fn_name);
-    }
-
-    let skill_id = tc.fn_arguments.get("id").and_then(|v| v.as_str()).unwrap_or("");
-
-    catalog.and_then(|c| c.get_skill(skill_id)).map_or_else(
-        || format!("Skill '{skill_id}' not found in catalog"),
-        |s| format!("# {}\n\n{}", s.name, s.content),
-    )
 }
 
 async fn execute_chat_stream(

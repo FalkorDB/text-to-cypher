@@ -4,11 +4,14 @@ mod parser;
 pub use loader::SkillCatalog;
 pub use parser::Skill;
 
-use genai::chat::Tool;
+use genai::chat::{Tool, ToolCall, ToolResponse};
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::Path;
+
+/// Maximum number of skill tool calls answered in a single LLM round.
+pub const MAX_SKILL_TOOL_CALLS_PER_ROUND: usize = 4;
 
 /// Configuration for query generation, replacing positional parameters.
 pub struct QueryContext<'a> {
@@ -163,6 +166,52 @@ pub fn supports_tool_calling(model: &str) -> bool {
     AdapterKind::from_model(model).is_ok_and(is_tool_capable_adapter)
 }
 
+/// Resolve `read_skill` tool calls with per-round caps and duplicate suppression.
+#[must_use]
+pub fn resolve_skill_tool_calls(
+    tool_calls: &[ToolCall],
+    catalog: Option<&SkillCatalog>,
+) -> Vec<ToolResponse> {
+    let mut seen_skill_ids = HashSet::new();
+
+    tool_calls
+        .iter()
+        .enumerate()
+        .map(|(index, tool_call)| {
+            let content = if index >= MAX_SKILL_TOOL_CALLS_PER_ROUND {
+                format!(
+                    "Too many read_skill calls in one round. Request at most {MAX_SKILL_TOOL_CALLS_PER_ROUND} skills at a time."
+                )
+            } else {
+                resolve_skill_tool_call(tool_call, catalog, &mut seen_skill_ids)
+            };
+
+            ToolResponse::new(&tool_call.call_id, content)
+        })
+        .collect()
+}
+
+fn resolve_skill_tool_call(
+    tool_call: &ToolCall,
+    catalog: Option<&SkillCatalog>,
+    seen_skill_ids: &mut HashSet<String>,
+) -> String {
+    if tool_call.fn_name != "read_skill" {
+        return format!("Unknown tool: {}", tool_call.fn_name);
+    }
+
+    let skill_id = tool_call.fn_arguments.get("id").and_then(|value| value.as_str()).unwrap_or("");
+
+    if !seen_skill_ids.insert(skill_id.to_string()) {
+        return format!("Skill '{skill_id}' was already provided in this round; reuse the previous tool response.");
+    }
+
+    catalog.and_then(|c| c.get_skill(skill_id)).map_or_else(
+        || format!("Skill '{skill_id}' not found in catalog"),
+        |skill| format!("# {}\n\n{}", skill.name, skill.content),
+    )
+}
+
 const fn is_tool_capable_adapter(kind: genai::adapter::AdapterKind) -> bool {
     use genai::adapter::AdapterKind;
 
@@ -261,6 +310,58 @@ mod tests {
         assert!(supports_tool_calling("claude-3-sonnet-20241022"));
         assert!(supports_tool_calling("gemini-2.0-flash-exp"));
         assert!(supports_tool_calling("grok-2"));
+    }
+
+    #[test]
+    fn test_resolve_skill_tool_calls_caps_round_size() {
+        let calls = (0..=MAX_SKILL_TOOL_CALLS_PER_ROUND)
+            .map(|index| ToolCall {
+                call_id: format!("call-{index}"),
+                fn_name: "read_skill".to_string(),
+                fn_arguments: json!({ "id": format!("skill-{index}") }),
+                thought_signatures: None,
+            })
+            .collect::<Vec<_>>();
+
+        let responses = resolve_skill_tool_calls(&calls, None);
+
+        assert_eq!(responses.len(), calls.len());
+        assert!(responses.last().unwrap().content.contains("Too many read_skill calls"));
+    }
+
+    #[test]
+    fn test_resolve_skill_tool_calls_suppresses_duplicates() {
+        let mut skills = HashMap::new();
+        skills.insert(
+            "skill-a".to_string(),
+            Skill {
+                id: "skill-a".to_string(),
+                name: "Skill A".to_string(),
+                description: "First skill".to_string(),
+                content: "Content A".to_string(),
+            },
+        );
+        let catalog = SkillCatalog { skills };
+        let calls = vec![
+            ToolCall {
+                call_id: "call-1".to_string(),
+                fn_name: "read_skill".to_string(),
+                fn_arguments: json!({ "id": "skill-a" }),
+                thought_signatures: None,
+            },
+            ToolCall {
+                call_id: "call-2".to_string(),
+                fn_name: "read_skill".to_string(),
+                fn_arguments: json!({ "id": "skill-a" }),
+                thought_signatures: None,
+            },
+        ];
+
+        let responses = resolve_skill_tool_calls(&calls, Some(&catalog));
+
+        assert!(responses[0].content.contains("Content A"));
+        assert!(responses[1].content.contains("already provided"));
+        assert!(!responses[1].content.contains("Content A"));
     }
 
     #[test]

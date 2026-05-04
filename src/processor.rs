@@ -136,12 +136,9 @@ pub async fn process_text_to_cypher_with_skills(
     let has_custom_connection = request.falkordb_connection.is_some();
     let falkordb_connection = request.falkordb_connection.clone().unwrap_or(default_connection);
 
-    // Validate required parameters
-    if model.is_none() {
+    let Some(model) = model else {
         return TextToCypherResponse::error("Model must be provided either in request or as DEFAULT_MODEL".to_string());
-    }
-
-    let model = model.expect("validated above");
+    };
 
     // Create GenAI client
     let client = create_genai_client(key.as_deref());
