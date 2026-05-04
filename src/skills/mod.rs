@@ -27,7 +27,8 @@ impl SkillCatalog {
     ///
     /// # Errors
     ///
-    /// Returns an error if the directory cannot be read or skill files fail to parse.
+    /// Returns an error if the directory cannot be read. Individual skill read
+    /// or parse failures are logged and skipped.
     pub fn from_directory(path: &Path) -> Result<Self, Box<dyn Error + Send + Sync>> {
         let skills = loader::load_skills_from_directory(path)?;
         Ok(Self { skills })

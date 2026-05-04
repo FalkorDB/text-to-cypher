@@ -1953,16 +1953,17 @@ fn generate_create_cypher_query_chat_request_with_skills(
     };
     let system_prompt_len = system_prompt.len();
     let should_summarize_log = !skills_text.is_empty() || system_prompt_len > 4096;
+    let expected_tool_count = usize::from(use_tools);
     chat_req = chat_req.with_system(system_prompt);
 
     if should_summarize_log {
         tracing::info!(
-            "Generated genai chat request: model={}, messages={}, system_prompt_len={}, use_tools={}, tools={}",
+            "Generated genai chat request: model={}, messages={}, system_prompt_len={}, use_tools={}, expected_tools={}",
             model,
             chat_req.messages.len(),
             system_prompt_len,
             use_tools,
-            chat_req.tools.as_ref().map_or(0, Vec::len)
+            expected_tool_count
         );
     } else if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
         tracing::info!("Generated genai chat request:\n{}", pretty_json);
