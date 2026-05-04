@@ -91,10 +91,21 @@ pub async fn generate_cypher_query_with_skills(
     }
 
     for _round in 0..MAX_TOOL_ROUNDS {
-        let chat_response = client
-            .exec_chat(model, genai_chat_request.clone(), None)
-            .await
-            .map_err(|e| format!("Chat request failed: {e}"))?;
+        let chat_response = match client.exec_chat(model, genai_chat_request.clone(), None).await {
+            Ok(response) => response,
+            Err(err) if use_tools => {
+                tracing::warn!("Tool-enabled chat request failed; retrying without tools: {err}");
+                let fallback_request =
+                    create_cypher_query_chat_request_with_skills(chat_request, schema, skill_catalog, false);
+                let fallback_response = client
+                    .exec_chat(model, fallback_request, None)
+                    .await
+                    .map_err(|fallback_err| format!("Chat request failed: {err}; fallback failed: {fallback_err}"))?;
+                let query = fallback_response.into_first_text().unwrap_or_else(|| "NO ANSWER".to_string());
+                return validate_generated_query(&query);
+            }
+            Err(err) => return Err(format!("Chat request failed: {err}").into()),
+        };
 
         let tool_calls = chat_response.tool_calls().into_iter().cloned().collect::<Vec<_>>();
 

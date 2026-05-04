@@ -6,7 +6,7 @@ show_usage() {
     echo ""
     echo "OPTIONS:"
     echo "  --version VERSION       Set the version tag (default: v0.1.0-alpha.1)"
-    echo "  --platforms PLATFORMS   Set target platforms (default: linux/amd64,linux/arm64)"
+    echo "  --platforms PLATFORMS   Set target platforms (default: linux/amd64,linux/arm64; local --load uses the first platform)"
     echo "  --skills-ref REF        FalkorDB/skills ref to bake in (default: main for local builds; --push requires full commit SHA)"
     echo "  --image-name NAME       Set image name (default: text-to-cypher)"
     echo "  --registry REGISTRY     Set registry prefix (e.g., ghcr.io/owner/repo)"
@@ -93,6 +93,11 @@ if [ "$PUSH" = "true" ]; then
         echo "Received: '${SKILLS_REF}'"
         exit 1
     fi
+elif [[ "$PLATFORMS" == *,* ]]; then
+    LOCAL_PLATFORM="${PLATFORMS%%,*}"
+    echo -e "${YELLOW}Local Docker loads support one platform; using ${LOCAL_PLATFORM} from '${PLATFORMS}'.${NC}"
+    echo "Use --push for multi-platform images."
+    PLATFORMS="${LOCAL_PLATFORM}"
 fi
 
 echo -e "${YELLOW}Building Docker image with buildx...${NC}"

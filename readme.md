@@ -826,7 +826,7 @@ Text-to-cypher supports loading FalkorDB-specific Cypher expertise from external
 
 The system uses a **two-tier architecture** for skill loading:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                     System Prompt                           │
 │  ┌───────────────────────────────────────────────────────┐  │

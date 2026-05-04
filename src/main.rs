@@ -1911,6 +1911,7 @@ fn generate_create_cypher_query_chat_request_with_skills(
     ontology: &str,
     skill_catalog: Option<&SkillCatalog>,
     use_tools: bool,
+    model: &str,
 ) -> genai::chat::ChatRequest {
     let mut chat_req = genai::chat::ChatRequest::default();
     for (index, message) in chat_request.messages.iter().enumerate() {
@@ -1950,10 +1951,20 @@ fn generate_create_cypher_query_chat_request_with_skills(
     } else {
         TemplateEngine::render_system_prompt_with_skills(ontology, &skills_text)
     };
+    let system_prompt_len = system_prompt.len();
+    let should_summarize_log = !skills_text.is_empty() || system_prompt_len > 4096;
     chat_req = chat_req.with_system(system_prompt);
 
-    // Pretty print the chat request as JSON for logging
-    if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
+    if should_summarize_log {
+        tracing::info!(
+            "Generated genai chat request: model={}, messages={}, system_prompt_len={}, use_tools={}, tools={}",
+            model,
+            chat_req.messages.len(),
+            system_prompt_len,
+            use_tools,
+            chat_req.tools.as_ref().map_or(0, Vec::len)
+        );
+    } else if let Ok(pretty_json) = serde_json::to_string_pretty(&chat_req) {
         tracing::info!("Generated genai chat request:\n{}", pretty_json);
     } else {
         tracing::info!("Generated genai chat request: {:?}", chat_req);
@@ -2213,7 +2224,7 @@ async fn execute_chat_with_skills(
     let use_tools = skill_catalog.is_some_and(|c| !c.is_empty()) && skills::supports_tool_calling(model);
 
     let mut genai_request =
-        generate_create_cypher_query_chat_request_with_skills(chat_request, schema, skill_catalog, use_tools);
+        generate_create_cypher_query_chat_request_with_skills(chat_request, schema, skill_catalog, use_tools, model);
 
     // Register the read_skill tool if supported
     if use_tools {
@@ -2225,6 +2236,29 @@ async fn execute_chat_with_skills(
     for _round in 0..MAX_TOOL_ROUNDS {
         let chat_response = match client.exec_chat(model, genai_request.clone(), None).await {
             Ok(response) => response,
+            Err(e) if use_tools => {
+                tracing::warn!("Tool-enabled chat request failed; retrying without tools: {}", e);
+                send_or_empty!(
+                    tx,
+                    Progress::Status("Tool calling failed; retrying query generation without tools...".to_string())
+                );
+                let fallback_request = generate_create_cypher_query_chat_request_with_skills(
+                    chat_request,
+                    schema,
+                    skill_catalog,
+                    false,
+                    model,
+                );
+                match client.exec_chat(model, fallback_request, None).await {
+                    Ok(response) => return response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER")),
+                    Err(fallback_err) => {
+                        let error_update =
+                            Progress::Error(format!("Chat request failed: {e}; fallback failed: {fallback_err}"));
+                        send_or_empty!(tx, error_update);
+                        return String::from("NO ANSWER");
+                    }
+                }
+            }
             Err(e) => {
                 let error_update = Progress::Error(format!("Chat request failed: {e}"));
                 send_or_empty!(tx, error_update);
