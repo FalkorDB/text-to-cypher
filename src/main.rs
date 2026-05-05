@@ -2210,9 +2210,6 @@ async fn send_processing_status(
     );
 }
 
-/// Maximum number of tool-calling rounds for skill resolution.
-const MAX_TOOL_ROUNDS: usize = 3;
-
 /// Execute a chat request with optional skill tool-calling support.
 ///
 /// If skills are present and the model supports tool calling, registers a `read_skill`
@@ -2237,7 +2234,7 @@ async fn execute_chat_with_skills(
         }
     }
 
-    for round in 0..MAX_TOOL_ROUNDS {
+    for round in 0..skills::MAX_TOOL_ROUNDS {
         let chat_response = match client.exec_chat(model, genai_request.clone(), None).await {
             Ok(response) => response,
             Err(e) if use_tools => {
@@ -2282,7 +2279,7 @@ async fn execute_chat_with_skills(
         tracing::info!(
             "Round {}/{}: LLM requested {} skill(s)",
             round + 1,
-            MAX_TOOL_ROUNDS,
+            skills::MAX_TOOL_ROUNDS,
             tool_call_count
         );
         send_or_empty!(

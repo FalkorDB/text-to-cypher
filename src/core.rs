@@ -45,9 +45,6 @@ pub async fn discover_graph_schema(
     Ok(json_schema)
 }
 
-/// Maximum number of tool-calling rounds before giving up.
-const MAX_TOOL_ROUNDS: usize = 3;
-
 /// Generates a Cypher query from natural language using AI
 ///
 /// # Errors
@@ -90,7 +87,7 @@ pub async fn generate_cypher_query_with_skills(
         }
     }
 
-    for _round in 0..MAX_TOOL_ROUNDS {
+    for _round in 0..skills::MAX_TOOL_ROUNDS {
         let chat_response = match client.exec_chat(model, genai_chat_request.clone(), None).await {
             Ok(response) => response,
             Err(err) if use_tools => {

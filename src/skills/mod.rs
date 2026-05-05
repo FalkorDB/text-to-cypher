@@ -13,6 +13,9 @@ use std::path::Path;
 /// Maximum number of skill tool calls answered in a single LLM round.
 pub const MAX_SKILL_TOOL_CALLS_PER_ROUND: usize = 4;
 
+/// Maximum number of `read_skill` tool-call rounds before forcing a final answer.
+pub const MAX_TOOL_ROUNDS: usize = 3;
+
 impl SkillCatalog {
     /// Load all skill.md files from a directory.
     ///
@@ -117,7 +120,7 @@ impl SkillCatalog {
 
         for id in ids {
             if let Some(skill) = self.skills.get(id) {
-                sections.push(format!("\n### {}\n{}", skill.name, skill.content));
+                sections.push(format!("\n{}", render_skill_content(skill, "###")));
             }
         }
 
@@ -203,8 +206,20 @@ fn resolve_skill_tool_call(
 
     catalog.and_then(|c| c.get_skill(skill_id)).map_or_else(
         || format!("Skill '{skill_id}' not found in catalog"),
-        |skill| format!("# {}\n\n{}", skill.name, skill.content),
+        |skill| render_skill_content(skill, "#"),
     )
+}
+
+fn render_skill_content(
+    skill: &Skill,
+    heading_prefix: &str,
+) -> String {
+    let content = skill.content.trim();
+    if content.starts_with('#') {
+        content.to_string()
+    } else {
+        format!("{heading_prefix} {}\n\n{content}", skill.name)
+    }
 }
 
 const fn is_tool_capable_adapter(kind: genai::adapter::AdapterKind) -> bool {
@@ -360,7 +375,55 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_skill_tool_calls_preserves_existing_heading() {
+        let mut skills = HashMap::new();
+        skills.insert(
+            "skill-a".to_string(),
+            Skill {
+                id: "skill-a".to_string(),
+                name: "Skill A".to_string(),
+                description: "First skill".to_string(),
+                content: "# Skill A\n\nContent A".to_string(),
+            },
+        );
+        let catalog = SkillCatalog { skills };
+        let calls = vec![ToolCall {
+            call_id: "call-1".to_string(),
+            fn_name: "read_skill".to_string(),
+            fn_arguments: json!({ "id": "skill-a" }),
+            thought_signatures: None,
+        }];
+
+        let responses = resolve_skill_tool_calls(&calls, Some(&catalog));
+
+        assert!(responses[0].content.starts_with("# Skill A"));
+        assert!(!responses[0].content.contains("# Skill A\n\n# Skill A"));
+        assert!(responses[0].content.contains("Content A"));
+    }
+
+    #[test]
     fn test_render_all_content() {
+        let mut skills = HashMap::new();
+        skills.insert(
+            "my-skill".to_string(),
+            Skill {
+                id: "my-skill".to_string(),
+                name: "My Skill".to_string(),
+                description: "Does things".to_string(),
+                content: "# My Skill\n\nDetailed instructions here".to_string(),
+            },
+        );
+        let catalog = SkillCatalog { skills };
+        let rendered = catalog.render_all_content();
+
+        assert!(rendered.contains("FalkorDB Cypher Skills:"));
+        assert!(rendered.contains("# My Skill"));
+        assert!(!rendered.contains("### My Skill\n# My Skill"));
+        assert!(rendered.contains("Detailed instructions here"));
+    }
+
+    #[test]
+    fn test_render_all_content_adds_heading_for_unheaded_skill() {
         let mut skills = HashMap::new();
         skills.insert(
             "my-skill".to_string(),
@@ -374,7 +437,6 @@ mod tests {
         let catalog = SkillCatalog { skills };
         let rendered = catalog.render_all_content();
 
-        assert!(rendered.contains("FalkorDB Cypher Skills:"));
         assert!(rendered.contains("### My Skill"));
         assert!(rendered.contains("Detailed instructions here"));
     }
