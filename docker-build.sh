@@ -141,7 +141,7 @@ if [ "$PUSH" = "true" ]; then
         --push \
         .
 else
-    echo -e "${GREEN}Building multi-platform Docker image (local only)...${NC}"
+    echo -e "${GREEN}Building Docker image for local load (${PLATFORMS})...${NC}"
     docker buildx build \
         --platform "${PLATFORMS}" \
         --build-arg "VERSION=${VERSION}" \
