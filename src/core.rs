@@ -124,7 +124,8 @@ pub async fn generate_cypher_query_with_skills(
         }
     }
 
-    // If we exhausted tool rounds, try one final extraction
+    // If we exhausted tool rounds, force one final text response without allowing another tool call.
+    genai_chat_request.tools = None;
     let final_response = client
         .exec_chat(model, genai_chat_request, None)
         .await

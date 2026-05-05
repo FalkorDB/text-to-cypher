@@ -170,6 +170,9 @@ struct AppConfig {
 
 static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
 
+/// System prompt size above which the genai chat request log is summarized instead of pretty-printed.
+const CHAT_REQUEST_LOG_SUMMARY_THRESHOLD: usize = 4096;
+
 impl AppConfig {
     fn load() -> Self {
         // Load .env file if it exists, but don't fail if it doesn't
@@ -193,7 +196,7 @@ impl AppConfig {
                     Some(catalog)
                 }
                 Ok(_) => {
-                    tracing::info!("SKILLS_DIR set but no skills found in {dir}");
+                    tracing::warn!("SKILLS_DIR set to '{dir}' but no skills were found");
                     None
                 }
                 Err(e) => {
@@ -1952,7 +1955,7 @@ fn generate_create_cypher_query_chat_request_with_skills(
         TemplateEngine::render_system_prompt_with_skills(ontology, &skills_text)
     };
     let system_prompt_len = system_prompt.len();
-    let should_summarize_log = !skills_text.is_empty() || system_prompt_len > 4096;
+    let should_summarize_log = !skills_text.is_empty() || system_prompt_len > CHAT_REQUEST_LOG_SUMMARY_THRESHOLD;
     let expected_tool_count = usize::from(use_tools);
     chat_req = chat_req.with_system(system_prompt);
 
@@ -2234,7 +2237,7 @@ async fn execute_chat_with_skills(
         }
     }
 
-    for _round in 0..MAX_TOOL_ROUNDS {
+    for round in 0..MAX_TOOL_ROUNDS {
         let chat_response = match client.exec_chat(model, genai_request.clone(), None).await {
             Ok(response) => response,
             Err(e) if use_tools => {
@@ -2273,21 +2276,30 @@ async fn execute_chat_with_skills(
             return chat_response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER"));
         }
 
+        let tool_call_count = tool_calls.len();
+
         // Handle tool calls: append assistant turn, then each tool response
-        tracing::info!("LLM requested {} skill(s)", tool_calls.len());
+        tracing::info!(
+            "Round {}/{}: LLM requested {} skill(s)",
+            round + 1,
+            MAX_TOOL_ROUNDS,
+            tool_call_count
+        );
         send_or_empty!(
             tx,
-            Progress::Status(format!("Loading {} skill(s) for query generation...", tool_calls.len()))
+            Progress::Status(format!("Loading {tool_call_count} skill(s) for query generation..."))
         );
 
-        genai_request = genai_request.append_message(GenAiChatMessage::from(tool_calls.clone()));
+        let tool_responses = skills::resolve_skill_tool_calls(&tool_calls, skill_catalog);
+        genai_request = genai_request.append_message(GenAiChatMessage::from(tool_calls));
 
-        for tool_response in skills::resolve_skill_tool_calls(&tool_calls, skill_catalog) {
+        for tool_response in tool_responses {
             genai_request = genai_request.append_message(GenAiChatMessage::from(tool_response));
         }
     }
 
     // Final attempt after exhausting tool rounds
+    genai_request.tools = None;
     match client.exec_chat(model, genai_request, None).await {
         Ok(response) => response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER")),
         Err(e) => {
