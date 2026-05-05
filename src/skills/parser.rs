@@ -44,19 +44,13 @@ pub fn parse_skill(
         return Err(format!("Skill '{id}': missing YAML frontmatter delimiter").into());
     }
 
-    // Find the closing --- delimiter (skip the opening one)
-    let after_open = raw.strip_prefix("---").unwrap_or(raw);
-    let close_pos = after_open
-        .find("\n---")
-        .ok_or_else(|| format!("Skill '{id}': missing closing frontmatter delimiter"))?;
+    let after_open = raw
+        .strip_prefix("---\n")
+        .or_else(|| raw.strip_prefix("---\r\n"))
+        .ok_or_else(|| format!("Skill '{id}': missing YAML frontmatter delimiter"))?;
 
-    let yaml_str = after_open[..close_pos].trim();
-    let body_start = 3 + close_pos + 4; // skip opening "---" + yaml + "\n---"
-    let content = if body_start < raw.len() {
-        raw[body_start..].trim().to_string()
-    } else {
-        String::new()
-    };
+    let (yaml_str, content) = split_frontmatter_body(after_open)
+        .ok_or_else(|| format!("Skill '{id}': missing closing frontmatter delimiter"))?;
 
     let frontmatter: SkillFrontmatter =
         serde_yaml_ng::from_str(yaml_str).map_err(|e| format!("Skill '{id}': invalid YAML: {e}"))?;
@@ -65,8 +59,26 @@ pub fn parse_skill(
         id: id.to_string(),
         name: frontmatter.name,
         description: frontmatter.description,
-        content,
+        content: content.to_string(),
     })
+}
+
+fn split_frontmatter_body(after_open: &str) -> Option<(&str, &str)> {
+    let mut offset = 0;
+
+    for line in after_open.split_inclusive('\n') {
+        let line_without_lf = line.strip_suffix('\n').unwrap_or(line);
+        let line_without_ending = line_without_lf.strip_suffix('\r').unwrap_or(line_without_lf);
+
+        if line_without_ending.trim_end() == "---" {
+            let body_start = offset + line.len();
+            return Some((after_open[..offset].trim(), after_open[body_start..].trim()));
+        }
+
+        offset += line.len();
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -135,6 +147,22 @@ MATCH (n:Person) WHERE n.age > 30 RETURN n
         let raw = "---\nname: Extended Skill\ndescription: Has extra fields\ntags: [cypher, index]\n---\n# Body";
         let skill = parse_skill("extended", raw).unwrap();
         assert_eq!(skill.name, "Extended Skill");
+        assert!(skill.content.contains("# Body"));
+    }
+
+    #[test]
+    fn test_parse_closing_delimiter_requires_full_line() {
+        let raw = "---\nname: Delimiter-like YAML\ndescription: Has a delimiter-like key\n---foo: bar\n---\n# Body";
+        let skill = parse_skill("delimiter-like-yaml", raw).unwrap();
+        assert_eq!(skill.name, "Delimiter-like YAML");
+        assert!(skill.content.contains("# Body"));
+    }
+
+    #[test]
+    fn test_parse_crlf_frontmatter() {
+        let raw = "---\r\nname: CRLF Skill\r\ndescription: Uses CRLF delimiters\r\n---\r\n# Body";
+        let skill = parse_skill("crlf", raw).unwrap();
+        assert_eq!(skill.name, "CRLF Skill");
         assert!(skill.content.contains("# Body"));
     }
 }

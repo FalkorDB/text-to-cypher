@@ -466,7 +466,10 @@ Once running, access the services at:
 # Build locally using the build script
 ./docker-build.sh
 
-# Or build manually with a pinned FalkorDB/skills ref
+# Or build manually (defaults to SKILLS_REF=main for local/dev builds)
+docker build -t text-to-cypher:latest .
+
+# For reproducible production builds, pass a pinned FalkorDB/skills ref
 docker build --build-arg SKILLS_REF=<falkordb-skills-commit-sha> -t text-to-cypher:latest .
 ```
 

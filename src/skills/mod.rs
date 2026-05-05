@@ -13,12 +13,6 @@ use std::path::Path;
 /// Maximum number of skill tool calls answered in a single LLM round.
 pub const MAX_SKILL_TOOL_CALLS_PER_ROUND: usize = 4;
 
-/// Configuration for query generation, replacing positional parameters.
-pub struct QueryContext<'a> {
-    pub schema: &'a str,
-    pub skills: Option<&'a SkillCatalog>,
-}
-
 impl SkillCatalog {
     /// Load all skill.md files from a directory.
     ///

@@ -167,7 +167,7 @@ pub use chat::{ChatMessage, ChatRequest, ChatRole};
 pub use error::ErrorResponse;
 pub use genai::adapter::AdapterKind;
 pub use processor::{TextToCypherRequest, TextToCypherResponse, process_text_to_cypher_with_skills};
-pub use skills::{QueryContext, SkillCatalog};
+pub use skills::SkillCatalog;
 // Server-specific modules - only when server feature is enabled
 #[cfg(feature = "server")]
 pub mod mcp;

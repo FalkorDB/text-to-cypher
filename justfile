@@ -18,9 +18,11 @@ download-skills:
     echo "📥 Downloading FalkorDB Cypher skills (ref: {{skills_ref}})..."
     rm -rf "{{skills_dir}}"
     tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
     curl -sL "{{skills_repo}}/archive/{{skills_ref}}.tar.gz" | tar -xz -C "$tmpdir" --strip-components=1
     mv "$tmpdir/cypher-skills" "{{skills_dir}}"
     rm -rf "$tmpdir"
+    trap - EXIT
     count=$(ls "{{skills_dir}}" | wc -l | tr -d ' ')
     echo "✅ Downloaded ${count} skills to ./{{skills_dir}}/"
 
@@ -31,9 +33,11 @@ download-skills-pinned ref:
     echo "📥 Downloading FalkorDB Cypher skills (ref: {{ref}})..."
     rm -rf "{{skills_dir}}"
     tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
     curl -sL "{{skills_repo}}/archive/{{ref}}.tar.gz" | tar -xz -C "$tmpdir" --strip-components=1
     mv "$tmpdir/cypher-skills" "{{skills_dir}}"
     rm -rf "$tmpdir"
+    trap - EXIT
     count=$(ls "{{skills_dir}}" | wc -l | tr -d ' ')
     echo "✅ Downloaded ${count} skills to ./{{skills_dir}}/"
 

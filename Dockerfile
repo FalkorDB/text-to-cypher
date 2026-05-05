@@ -7,8 +7,8 @@ ARG TARGETPLATFORM
 ARG TARGETOS=linux
 ARG TARGETARCH
 
-# FalkorDB Cypher skills version. Release builds must pass an immutable commit SHA.
-ARG SKILLS_REF
+# FalkorDB Cypher skills version. Local builds default to main; release builds pass an immutable commit SHA.
+ARG SKILLS_REF=main
 
 # Install download dependencies
 RUN apk add --no-cache wget tar
@@ -16,7 +16,7 @@ RUN apk add --no-cache wget tar
 # Download FalkorDB Cypher skills
 RUN set -eu; \
     if [ -z "${SKILLS_REF:-}" ]; then \
-      echo "SKILLS_REF build arg is required. Use a pinned commit SHA for release builds; use branch refs only for local/dev builds."; \
+      echo "SKILLS_REF build arg must not be empty. Use a pinned commit SHA for release builds; use branch refs only for local/dev builds."; \
       exit 1; \
     fi; \
     echo "Downloading FalkorDB Cypher skills (ref: ${SKILLS_REF})" && \

@@ -37,7 +37,7 @@ The PR changes 18 files. The functional changes are concentrated in `src/skills`
 | `src/skills/mod.rs` | Defines `SkillCatalog`, renders catalogs/content, builds the `read_skill` tool definition, and gates model provider tool support. |
 | `src/core.rs` | Adds `generate_cypher_query_with_skills()` and a non-streaming tool-call loop for query generation. |
 | `src/processor.rs` | Adds `process_text_to_cypher_with_skills()` and passes the catalog through query generation and self-healing. |
-| `src/lib.rs` | Exports `skills`, `SkillCatalog`, `QueryContext`, and adds `TextToCypherClient::with_skills()`. |
+| `src/lib.rs` | Exports `skills` and `SkillCatalog`, and adds `TextToCypherClient::with_skills()`. |
 | `src/main.rs` | Loads `SKILLS_DIR` in server config and uses skill-aware query generation in the SSE server path. |
 | `src/template.rs` | Adds `render_system_prompt_with_skills()` and collapses extra blank lines when no skills are present. |
 | `templates/system_prompt.txt` | Adds `{{SKILLS_CATALOG}}` after the static FalkorDB-specific rules. |
