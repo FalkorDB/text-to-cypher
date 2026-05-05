@@ -43,7 +43,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.143"
 serde_yaml_ng = "0.10"
 tracing = { version = "0.1", features = ["default"] }
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.52.2", features = ["full"] }
 genai = "0.5.3"
 falkordb = { version = "0.2.1", features = ["tokio"] }
 async-trait = "0.1.89"
@@ -56,7 +56,7 @@ aws-lc-rs = "1.16.3"
 actix-web = { version = "4", optional = true }
 actix-multipart = { version = "0.7", optional = true }
 actix-web-lab = { version = "0.24.3", optional = true }
-utoipa = { version = "5.4.0", optional = true }
+utoipa = { version = "5.5.0", optional = true }
 utoipa-swagger-ui = { version = "9.0.2", features = ["actix-web"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 uuid = { version = "1.23.1", features = ["v4"], optional = true }
