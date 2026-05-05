@@ -170,20 +170,13 @@ pub fn resolve_skill_tool_calls(
     tool_calls: &[ToolCall],
     catalog: Option<&SkillCatalog>,
 ) -> Vec<ToolResponse> {
-    let mut seen_skill_ids = HashSet::new();
+    let mut served_skill_ids = HashSet::new();
+    let mut served_skill_count = 0;
 
     tool_calls
         .iter()
-        .enumerate()
-        .map(|(index, tool_call)| {
-            let content = if index >= MAX_SKILL_TOOL_CALLS_PER_ROUND {
-                format!(
-                    "Too many read_skill calls in one round. Request at most {MAX_SKILL_TOOL_CALLS_PER_ROUND} skills at a time."
-                )
-            } else {
-                resolve_skill_tool_call(tool_call, catalog, &mut seen_skill_ids)
-            };
-
+        .map(|tool_call| {
+            let content = resolve_skill_tool_call(tool_call, catalog, &mut served_skill_ids, &mut served_skill_count);
             ToolResponse::new(&tool_call.call_id, content)
         })
         .collect()
@@ -192,22 +185,40 @@ pub fn resolve_skill_tool_calls(
 fn resolve_skill_tool_call(
     tool_call: &ToolCall,
     catalog: Option<&SkillCatalog>,
-    seen_skill_ids: &mut HashSet<String>,
+    served_skill_ids: &mut HashSet<String>,
+    served_skill_count: &mut usize,
 ) -> String {
     if tool_call.fn_name != "read_skill" {
         return format!("Unknown tool: {}", tool_call.fn_name);
     }
 
-    let skill_id = tool_call.fn_arguments.get("id").and_then(|value| value.as_str()).unwrap_or("");
+    let Some(skill_id) = tool_call
+        .fn_arguments
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    else {
+        return "Missing required argument: id".to_string();
+    };
 
-    if !seen_skill_ids.insert(skill_id.to_string()) {
+    let Some(skill) = catalog.and_then(|c| c.get_skill(skill_id)) else {
+        return format!("Skill '{skill_id}' not found in catalog");
+    };
+
+    if served_skill_ids.contains(skill_id) {
         return format!("Skill '{skill_id}' was already provided in this round; reuse the previous tool response.");
     }
 
-    catalog.and_then(|c| c.get_skill(skill_id)).map_or_else(
-        || format!("Skill '{skill_id}' not found in catalog"),
-        |skill| render_skill_content(skill, "#"),
-    )
+    if *served_skill_count >= MAX_SKILL_TOOL_CALLS_PER_ROUND {
+        return format!(
+            "Too many read_skill calls in one round. Request at most {MAX_SKILL_TOOL_CALLS_PER_ROUND} skills at a time."
+        );
+    }
+
+    served_skill_ids.insert(skill_id.to_string());
+    *served_skill_count += 1;
+    render_skill_content(skill, "#")
 }
 
 fn render_skill_content(
@@ -324,6 +335,20 @@ mod tests {
 
     #[test]
     fn test_resolve_skill_tool_calls_caps_round_size() {
+        let mut skills = HashMap::new();
+        for index in 0..=MAX_SKILL_TOOL_CALLS_PER_ROUND {
+            let id = format!("skill-{index}");
+            skills.insert(
+                id.clone(),
+                Skill {
+                    id,
+                    name: format!("Skill {index}"),
+                    description: format!("Skill {index} description"),
+                    content: format!("Content {index}"),
+                },
+            );
+        }
+        let catalog = SkillCatalog { skills };
         let calls = (0..=MAX_SKILL_TOOL_CALLS_PER_ROUND)
             .map(|index| ToolCall {
                 call_id: format!("call-{index}"),
@@ -333,7 +358,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let responses = resolve_skill_tool_calls(&calls, None);
+        let responses = resolve_skill_tool_calls(&calls, Some(&catalog));
 
         assert_eq!(responses.len(), calls.len());
         assert!(responses.last().unwrap().content.contains("Too many read_skill calls"));
@@ -372,6 +397,61 @@ mod tests {
         assert!(responses[0].content.contains("Content A"));
         assert!(responses[1].content.contains("already provided"));
         assert!(!responses[1].content.contains("Content A"));
+    }
+
+    #[test]
+    fn test_resolve_skill_tool_calls_duplicates_do_not_consume_cap() {
+        let mut skills = HashMap::new();
+        for index in 0..MAX_SKILL_TOOL_CALLS_PER_ROUND {
+            let id = format!("skill-{index}");
+            skills.insert(
+                id.clone(),
+                Skill {
+                    id,
+                    name: format!("Skill {index}"),
+                    description: format!("Skill {index} description"),
+                    content: format!("Content {index}"),
+                },
+            );
+        }
+        let catalog = SkillCatalog { skills };
+        let mut calls = vec![ToolCall {
+            call_id: "duplicate".to_string(),
+            fn_name: "read_skill".to_string(),
+            fn_arguments: json!({ "id": "skill-0" }),
+            thought_signatures: None,
+        }];
+        calls.extend((0..MAX_SKILL_TOOL_CALLS_PER_ROUND).map(|index| ToolCall {
+            call_id: format!("call-{index}"),
+            fn_name: "read_skill".to_string(),
+            fn_arguments: json!({ "id": format!("skill-{index}") }),
+            thought_signatures: None,
+        }));
+
+        let responses = resolve_skill_tool_calls(&calls, Some(&catalog));
+
+        assert!(responses[1].content.contains("already provided"));
+        assert!(
+            responses
+                .last()
+                .unwrap()
+                .content
+                .contains(&format!("Content {}", MAX_SKILL_TOOL_CALLS_PER_ROUND - 1))
+        );
+    }
+
+    #[test]
+    fn test_resolve_skill_tool_calls_reports_missing_id() {
+        let calls = vec![ToolCall {
+            call_id: "missing-id".to_string(),
+            fn_name: "read_skill".to_string(),
+            fn_arguments: json!({}),
+            thought_signatures: None,
+        }];
+
+        let responses = resolve_skill_tool_calls(&calls, None);
+
+        assert_eq!(responses[0].content, "Missing required argument: id");
     }
 
     #[test]
