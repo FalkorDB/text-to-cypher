@@ -299,8 +299,8 @@ jobs:
             --image-name "text-to-cypher"
           
           if [ "$PUSH_ENABLED" = "true" ]; then
-            # Try to build and push to GitHub Container Registry
-            echo "📦 Building and pushing to GitHub Container Registry..."
+            # Try to build and push to Docker Hub with the explicit docker.io registry prefix
+            echo "📦 Building and pushing to Docker Hub (${REGISTRY}/${OWNER_LOWER})..."
             set +e  # Don't exit on error
             ./docker-build.sh \
               --version "${{ steps.extract_version.outputs.release_tag }}" \
@@ -309,18 +309,18 @@ jobs:
               --image-name "text-to-cypher" \
               --registry "${REGISTRY}/${OWNER_LOWER}" \
               --push
-            GHCR_EXIT_CODE=$?
+            REGISTRY_EXIT_CODE=$?
             set -e  # Re-enable exit on error
             
-            if [ $GHCR_EXIT_CODE -eq 0 ]; then
-              echo "✅ Successfully pushed to GitHub Container Registry"
+            if [ $REGISTRY_EXIT_CODE -eq 0 ]; then
+              echo "✅ Successfully pushed to Docker Hub (${REGISTRY}/${OWNER_LOWER})"
             else
-              echo "⚠️ Failed to push to GitHub Container Registry (exit code: $GHCR_EXIT_CODE)"
+              echo "⚠️ Failed to push to Docker Hub (${REGISTRY}/${OWNER_LOWER}) (exit code: $REGISTRY_EXIT_CODE)"
               echo "This might be due to authentication issues or permission problems"
             fi
             
-            # Try to build and push to Docker Hub (optional)
-            echo "🐳 Attempting to build and push to Docker Hub..."
+            # Try the unqualified Docker Hub namespace as a compatibility alias (optional)
+            echo "🐳 Attempting Docker Hub compatibility alias (${OWNER_LOWER})..."
             set +e  # Don't exit on error
             ./docker-build.sh \
               --version "${{ steps.extract_version.outputs.release_tag }}" \
@@ -333,7 +333,7 @@ jobs:
             set -e  # Re-enable exit on error
             
             if [ $DOCKERHUB_EXIT_CODE -eq 0 ]; then
-              echo "✅ Successfully pushed to Docker Hub"
+              echo "✅ Successfully pushed Docker Hub compatibility alias"
             else
               echo "⚠️ Failed to push to Docker Hub (exit code: $DOCKERHUB_EXIT_CODE)"
               echo "This is optional and might be due to authentication issues"
@@ -341,8 +341,8 @@ jobs:
             
             echo "📊 Build Summary:"
             echo "  - Local Build (amd64): ✅ Success"
-            echo "  - GitHub Container Registry (multi-platform): $([ $GHCR_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "❌ Failed")"
-            echo "  - Docker Hub (multi-platform): $([ $DOCKERHUB_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "⚠️ Failed (optional)")"
+            echo "  - Docker Hub (${REGISTRY}/${OWNER_LOWER}, multi-platform): $([ $REGISTRY_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "❌ Failed")"
+            echo "  - Docker Hub alias (${OWNER_LOWER}, multi-platform): $([ $DOCKERHUB_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "⚠️ Failed (optional)")"
           else
             echo "📊 Build Summary:"
             echo "  - Local Build (amd64): ✅ Success"
@@ -403,23 +403,23 @@ jobs:
         run: |
           # Try to verify images from different sources
           PLATFORM="${{ matrix.platform }}"
-          GHCR_IMAGE="${REGISTRY}/${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          REGISTRY_IMAGE="${REGISTRY}/${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
           DOCKERHUB_IMAGE="${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
           
           echo "Verifying images for platform: ${PLATFORM}"
           
-          # Try GitHub Container Registry first
-          echo "🔍 Trying to pull from GitHub Container Registry..."
+          # Try the explicit Docker Hub registry path first
+          echo "🔍 Trying to pull from Docker Hub (${REGISTRY}/${OWNER_LOWER})..."
           set +e
-          docker pull --platform="${PLATFORM}" "${GHCR_IMAGE}"
-          GHCR_PULL_EXIT=$?
+          docker pull --platform="${PLATFORM}" "${REGISTRY_IMAGE}"
+          REGISTRY_PULL_EXIT=$?
           set -e
           
-          if [ $GHCR_PULL_EXIT -eq 0 ]; then
-            echo "✅ Successfully pulled from GHCR: ${GHCR_IMAGE}"
-            TEST_IMAGE="${GHCR_IMAGE}"
+          if [ $REGISTRY_PULL_EXIT -eq 0 ]; then
+            echo "✅ Successfully pulled from Docker Hub: ${REGISTRY_IMAGE}"
+            TEST_IMAGE="${REGISTRY_IMAGE}"
           else
-            echo "⚠️ Failed to pull from GHCR, trying Docker Hub..."
+            echo "⚠️ Failed to pull explicit Docker Hub path, trying unqualified alias..."
             set +e
             docker pull --platform="${PLATFORM}" "${DOCKERHUB_IMAGE}"
             DOCKERHUB_PULL_EXIT=$?
@@ -434,9 +434,9 @@ jobs:
               if docker image inspect "${DOCKERHUB_IMAGE}" >/dev/null 2>&1; then
                 echo "✅ Found local image: ${DOCKERHUB_IMAGE}"
                 TEST_IMAGE="${DOCKERHUB_IMAGE}"
-              elif docker image inspect "${GHCR_IMAGE}" >/dev/null 2>&1; then
-                echo "✅ Found local image: ${GHCR_IMAGE}"
-                TEST_IMAGE="${GHCR_IMAGE}"
+              elif docker image inspect "${REGISTRY_IMAGE}" >/dev/null 2>&1; then
+                echo "✅ Found local image: ${REGISTRY_IMAGE}"
+                TEST_IMAGE="${REGISTRY_IMAGE}"
               else
                 echo "❌ No images found locally or in registries"
                 echo "This might be due to push failures in the previous step"
