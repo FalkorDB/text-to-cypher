@@ -71,7 +71,7 @@ pub fn load_skills_from_directory(path: &Path) -> Result<HashMap<String, Skill>,
 
         match parse_skill(&skill_id, &raw) {
             Ok(skill) => {
-                tracing::info!("Loaded skill: {} ({})", skill.name, skill.id);
+                tracing::debug!("Loaded skill: {} ({})", skill.name, skill.id);
                 skills.insert(skill_id, skill);
             }
             Err(e) => {

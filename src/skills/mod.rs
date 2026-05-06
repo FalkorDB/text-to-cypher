@@ -82,12 +82,10 @@ impl SkillCatalog {
 
     /// Build a genai `Tool` definition for the `read_skill` function.
     ///
-    /// The tool schema uses an enum constraint on the `id` parameter
-    /// to restrict the LLM to valid skill IDs.
+    /// Skill IDs are listed in the prompt catalog and validated host-side to avoid
+    /// duplicating large catalogs inside every tool schema.
     #[must_use]
     pub fn tool_definition(&self) -> Tool {
-        let ids = self.skill_ids();
-
         Tool::new("read_skill")
             .with_description(
                 "Load the full content of a FalkorDB Cypher skill by its ID. \
@@ -100,7 +98,6 @@ impl SkillCatalog {
                     "id": {
                         "type": "string",
                         "description": "The skill ID from the catalog",
-                        "enum": ids,
                     }
                 },
                 "required": ["id"],
@@ -310,9 +307,8 @@ mod tests {
         assert_eq!(tool.name, "read_skill");
         assert!(tool.description.is_some());
         let schema = tool.schema.unwrap();
-        let enum_values = &schema["properties"]["id"]["enum"];
-        assert!(enum_values.as_array().unwrap().contains(&json!("skill-a")));
-        assert!(enum_values.as_array().unwrap().contains(&json!("skill-b")));
+        assert_eq!(schema["properties"]["id"]["type"], json!("string"));
+        assert!(schema["properties"]["id"].get("enum").is_none());
     }
 
     #[test]
