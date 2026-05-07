@@ -101,13 +101,13 @@ Improvements based on:
 ### Quick Start
 ```bash
 # Pull latest image with improvements
-docker pull ghcr.io/falkordb/text-to-cypher:latest
+docker pull docker.io/falkordb/text-to-cypher:latest
 
 # Run with all improvements active (no config needed)
 docker run -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini \
   -e DEFAULT_KEY=your-api-key \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 ```
 
 ### What Happens Automatically

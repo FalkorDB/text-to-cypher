@@ -37,7 +37,7 @@ Deploy the complete stack with Docker (AMD64 or ARM64):
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini \
   -e DEFAULT_KEY=your-api-key \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 ```
 
 Service addresses:

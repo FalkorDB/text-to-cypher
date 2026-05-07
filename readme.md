@@ -261,7 +261,7 @@ The project provides an all-in-one Docker image that includes FalkorDB database,
 
 ```bash
 # Pull the latest image
-docker pull ghcr.io/falkordb/text-to-cypher:latest
+docker pull docker.io/falkordb/text-to-cypher:latest
 
 # Option 1: Complete stack with all services (recommended)
 docker run -d \
@@ -273,7 +273,7 @@ docker run -d \
   -e DEFAULT_MODEL=gpt-4o-mini \
   -e DEFAULT_KEY=your-api-key \
   --restart unless-stopped \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 
 # Option 2: Using environment file
 docker run -d \
@@ -284,7 +284,7 @@ docker run -d \
   -p 3001:3001 \
   --env-file .env \
   --restart unless-stopped \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 
 # Option 3: Mount .env file for full MCP functionality
 docker run -d \
@@ -295,7 +295,7 @@ docker run -d \
   -p 3001:3001 \
   -v $(pwd)/.env:/app/.env:ro \
   --restart unless-stopped \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 
 # View logs from all services
 docker logs -f text-to-cypher-stack
@@ -335,7 +335,7 @@ Configure the application using environment variables or `.env` file:
 
 - `DEFAULT_MODEL`: Default AI model (e.g., "gpt-4o-mini", "anthropic:claude-3")
 - `DEFAULT_KEY`: Default API key for the AI service
-- `FALKOR_URL`: FalkorDB connection URL (default: "falkor://127.0.0.1:6379")
+- `FALKORDB_CONNECTION`: FalkorDB connection URL (default: "falkor://127.0.0.1:6379")
 - `SKILLS_DIR`: Path to Cypher skills directory (default: `/app/skills` in Docker, see [Dynamic Cypher Skills](#dynamic-cypher-skills))
 
 ## MCP Server Usage
@@ -351,7 +351,7 @@ To test and interact with the MCP server, you can use the MCP Inspector:
 ```bash
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 ```
 
 2. **Install MCP Inspector** (if not already installed):
@@ -434,7 +434,7 @@ The MCP server enables AI assistants to:
 # Run the complete integrated stack
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 ```
 
 #### Local Development
@@ -476,8 +476,8 @@ docker build --build-arg SKILLS_REF=<falkordb-skills-commit-sha> -t text-to-cyph
 #### Using Pre-built Images
 
 ```bash
-# Pull from GitHub Container Registry
-docker pull ghcr.io/falkordb/text-to-cypher:latest
+# Pull from Docker Hub
+docker pull docker.io/falkordb/text-to-cypher:latest
 
 # Available tags: latest, v1.0.0, v0.1.0-beta.x, etc.
 ```
@@ -663,7 +663,7 @@ eventSource.onmessage = (event) => {
 # 1. Start the complete stack
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-api-key \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 
 # 2. Create a graph using FalkorDB web interface (http://localhost:3000)
 # Add some sample data: people, relationships, etc.
@@ -905,7 +905,7 @@ docker run -d \
   -e DEFAULT_MODEL=gpt-4o-mini \
   -e DEFAULT_KEY=your-api-key \
   -p 8080:8080 \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 ```
 
 To override with custom skills, mount your own directory:
@@ -917,7 +917,7 @@ docker run -d \
   -e SKILLS_DIR=/app/custom-skills \
   -v /path/to/your/skills:/app/custom-skills:ro \
   -p 8080:8080 \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 ```
 
 Release Docker builds require a full `FalkorDB/skills` commit SHA. Use `./docker-build.sh --skills-ref <commit-sha>` or rebuild manually with `--build-arg SKILLS_REF=<commit-sha>`; reserve `SKILLS_REF=main` for local/dev builds only.
