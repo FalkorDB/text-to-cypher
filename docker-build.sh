@@ -106,6 +106,7 @@ if [ "$PUSH" = "true" ]; then
     echo -e "${GREEN}Building and pushing multi-platform Docker image...${NC}"
     docker buildx build \
         --platform ${PLATFORMS} \
+        --pull \
         --build-arg VERSION=${VERSION} \
         -t ${FULL_IMAGE_NAME}:${VERSION} \
         -t ${FULL_IMAGE_NAME}:latest \
@@ -115,6 +116,7 @@ else
     echo -e "${GREEN}Building multi-platform Docker image (local only)...${NC}"
     docker buildx build \
         --platform ${PLATFORMS} \
+        --pull \
         --build-arg VERSION=${VERSION} \
         -t ${FULL_IMAGE_NAME}:${VERSION} \
         -t ${FULL_IMAGE_NAME}:latest \
