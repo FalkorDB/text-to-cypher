@@ -47,7 +47,7 @@ FROM falkordb/falkordb:latest
 # Repair the minimal base image package state before installing supervisord.
 RUN apt-get update && \
     apt-get -y --fix-broken install && \
-    apt-get install -y perl-base passwd ca-certificates supervisor && \
+    apt-get install -y bash perl-base passwd ca-certificates supervisor && \
     rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user for the managed services.
