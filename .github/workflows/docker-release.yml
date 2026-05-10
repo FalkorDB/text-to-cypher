@@ -21,7 +21,7 @@ permissions:
 
 env:
   REGISTRY: docker.io
-  OWNER_LOWER: $(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+  OWNER_LOWER: falkordb
 
 jobs:
   docker-build:
@@ -278,12 +278,9 @@ jobs:
           LOGIN_SUCCESS="${{ steps.docker-login.outcome }}"
           echo "🔐 Docker login status: $LOGIN_SUCCESS"
           
-          if [ "$LOGIN_SUCCESS" = "success" ]; then
-            echo "✅ Docker login successful - will attempt to push to registries"
-            PUSH_ENABLED=true
-          else
-            echo "⚠️ Docker login failed - will build locally only"
-            PUSH_ENABLED=false
+          if [ "$LOGIN_SUCCESS" != "success" ]; then
+            echo "❌ Docker login failed; release images cannot be pushed"
+            exit 1
           fi
           
           # Build locally first (single platform only - multi-platform can't load to local daemon)
@@ -293,59 +290,17 @@ jobs:
             --platforms "linux/amd64" \
             --image-name "text-to-cypher"
           
-          if [ "$PUSH_ENABLED" = "true" ]; then
-            # Try to build and push to GitHub Container Registry
-            echo "📦 Building and pushing to GitHub Container Registry..."
-            set +e  # Don't exit on error
-            ./docker-build.sh \
-              --version "${{ steps.extract_version.outputs.release_tag }}" \
-              --platforms "linux/amd64,linux/arm64" \
-              --image-name "text-to-cypher" \
-              --registry "${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}" \
-              --push
-            GHCR_EXIT_CODE=$?
-            set -e  # Re-enable exit on error
-            
-            if [ $GHCR_EXIT_CODE -eq 0 ]; then
-              echo "✅ Successfully pushed to GitHub Container Registry"
-            else
-              echo "⚠️ Failed to push to GitHub Container Registry (exit code: $GHCR_EXIT_CODE)"
-              echo "This might be due to authentication issues or permission problems"
-            fi
-            
-            # Try to build and push to Docker Hub (optional)
-            echo "🐳 Attempting to build and push to Docker Hub..."
-            set +e  # Don't exit on error
-            ./docker-build.sh \
-              --version "${{ steps.extract_version.outputs.release_tag }}" \
-              --platforms "linux/amd64,linux/arm64" \
-              --image-name "text-to-cypher" \
-              --registry "${{ env.OWNER_LOWER }}" \
-              --push
-            DOCKERHUB_EXIT_CODE=$?
-            set -e  # Re-enable exit on error
-            
-            if [ $DOCKERHUB_EXIT_CODE -eq 0 ]; then
-              echo "✅ Successfully pushed to Docker Hub"
-            else
-              echo "⚠️ Failed to push to Docker Hub (exit code: $DOCKERHUB_EXIT_CODE)"
-              echo "This is optional and might be due to authentication issues"
-            fi
-            
-            echo "📊 Build Summary:"
-            echo "  - Local Build (amd64): ✅ Success"
-            echo "  - GitHub Container Registry (multi-platform): $([ $GHCR_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "❌ Failed")"
-            echo "  - Docker Hub (multi-platform): $([ $DOCKERHUB_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "⚠️ Failed (optional)")"
-          else
-            echo "📊 Build Summary:"
-            echo "  - Local Build (amd64): ✅ Success"
-            echo "  - Registry Push: ⚠️ Skipped (authentication failed)"
-            echo ""
-            echo "ℹ️ Images were built successfully but not pushed to registries."
-            echo "   This is normal if you don't have push permissions."
-            echo "   Note: Only built for current platform (amd64) since multi-platform"
-            echo "         builds require pushing to a registry."
-          fi
+          echo "🐳 Building and pushing multi-platform Docker image..."
+          ./docker-build.sh \
+            --version "${{ steps.extract_version.outputs.release_tag }}" \
+            --platforms "linux/amd64,linux/arm64" \
+            --image-name "text-to-cypher" \
+            --registry "${{ env.OWNER_LOWER }}" \
+            --push
+          
+          echo "📊 Build Summary:"
+          echo "  - Local Build (amd64): ✅ Success"
+          echo "  - Docker Hub (multi-platform): ✅ Success"
           
           echo "✅ Docker build process completed successfully"
 
@@ -430,35 +385,26 @@ jobs:
               else
                 echo "❌ No images found locally or in registries"
                 echo "This might be due to push failures in the previous step"
-                echo "Skipping verification for this platform"
-                exit 0
+                exit 1
               fi
             fi
           fi
           
           # Test the image we found
           echo "🧪 Testing image: ${TEST_IMAGE}"
-          set +e
-          
-          # Use timeout to prevent hanging and test if the binary exists and is executable
-          timeout 10s docker run --rm --platform="${PLATFORM}" "${TEST_IMAGE}" /bin/sh -c "ls -la /app/text-to-cypher && file /app/text-to-cypher && echo 'Binary test completed'"
-          TEST_EXIT=$?
-          set -e
-          
-          if [ $TEST_EXIT -eq 0 ]; then
-            echo "✅ Image verification completed successfully for ${PLATFORM}"
-          elif [ $TEST_EXIT -eq 124 ]; then
-            echo "⚠️ Image test timed out (expected for server applications) but binary exists for ${PLATFORM}"
-          else
-            echo "⚠️ Image test failed for ${PLATFORM}, but image exists"
-            echo "This might be a platform compatibility issue"
-          fi
+          docker run --rm \
+            --platform="${PLATFORM}" \
+            --entrypoint /bin/sh \
+            "${TEST_IMAGE}" \
+            -c "test -x /app/text-to-cypher && supervisord --version && id appuser"
+
+          echo "✅ Image verification completed successfully for ${PLATFORM}"
 
   # Update deployment configurations (optional)
   update-deployment:
     runs-on: ubuntu-latest
     needs: [docker-build, verify-images]
-    if: ${{ (!github.event.release.prerelease || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run') && needs.docker-build.outputs.release_tag && needs.docker-build.outputs.release_tag != '' && needs.docker-build.outputs.release_tag != 'null' && always() }}
+    if: ${{ (!github.event.release.prerelease || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run') && needs.docker-build.outputs.release_tag && needs.docker-build.outputs.release_tag != '' && needs.docker-build.outputs.release_tag != 'null' && success() }}
     steps:
       - name: Extract release version
         id: extract_version
