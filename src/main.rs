@@ -1733,30 +1733,13 @@ fn execute_query_with_existing_csv_blocking(
 
         tracing::info!("CSV file found at: {:?}", file_path);
 
-        // Read and log each line of the CSV file
-        match std::fs::read_to_string(&file_path) {
-            Ok(csv_content) => {
-                let lines: Vec<&str> = csv_content.lines().collect();
-                tracing::info!("CSV file '{}' contains {} lines", csv_filename, lines.len());
-
-                for (line_number, line) in lines.iter().enumerate() {
-                    let line_num = line_number + 1; // 1-based line numbering
-                    tracing::info!("CSV line {}: {}", line_num, line);
-                }
-
-                if lines.is_empty() {
-                    tracing::warn!("CSV file '{}' is empty", csv_filename);
-                } else {
-                    tracing::info!(
-                        "Finished logging all {} lines from CSV file '{}'",
-                        lines.len(),
-                        csv_filename
-                    );
-                }
+        match std::fs::metadata(&file_path) {
+            Ok(metadata) => {
+                tracing::info!("CSV file '{}' size: {} bytes", csv_filename, metadata.len());
             }
             Err(e) => {
-                tracing::warn!("Failed to read CSV file '{}' for line logging: {}", csv_filename, e);
-                // Continue with execution even if reading for logging fails
+                tracing::warn!("Failed to read CSV file '{}' metadata: {}", csv_filename, e);
+                // Continue with execution even if reading metadata fails.
             }
         }
 
