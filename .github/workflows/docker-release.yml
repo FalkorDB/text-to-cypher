@@ -392,21 +392,13 @@ jobs:
           
           # Test the image we found
           echo "🧪 Testing image: ${TEST_IMAGE}"
-          set +e
-          
-          # Use timeout to prevent hanging and test if the binary exists and is executable
-          timeout 10s docker run --rm --platform="${PLATFORM}" "${TEST_IMAGE}" /bin/sh -c "ls -la /app/text-to-cypher && file /app/text-to-cypher && echo 'Binary test completed'"
-          TEST_EXIT=$?
-          set -e
-          
-          if [ $TEST_EXIT -eq 0 ]; then
-            echo "✅ Image verification completed successfully for ${PLATFORM}"
-          elif [ $TEST_EXIT -eq 124 ]; then
-            echo "✅ Image test timed out as expected for server applications after startup for ${PLATFORM}"
-          else
-            echo "❌ Image test failed for ${PLATFORM}"
-            exit 1
-          fi
+          docker run --rm \
+            --platform="${PLATFORM}" \
+            --entrypoint /bin/sh \
+            "${TEST_IMAGE}" \
+            -c "test -x /app/text-to-cypher && supervisord --version && id appuser"
+
+          echo "✅ Image verification completed successfully for ${PLATFORM}"
 
   # Update deployment configurations (optional)
   update-deployment:
