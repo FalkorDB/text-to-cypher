@@ -42,7 +42,7 @@ RUN echo "Downloading text-to-cypher ${VERSION} for ${TARGETPLATFORM} (${TARGETO
 RUN test -x /tmp/text-to-cypher && echo "Binary verification completed"
 
 # Runtime stage - Use FalkorDB as base image
-FROM falkordb/falkordb:latest
+FROM falkordb/falkordb:v4.18.6
 
 # Repair the minimal base image package state before installing supervisord.
 RUN apt-get update && \
