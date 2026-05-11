@@ -21,6 +21,7 @@ permissions:
 
 env:
   REGISTRY: docker.io
+  OWNER_LOWER: falkordb
   # FalkorDB/skills commit baked into release images for reproducible builds.
   CYPHER_SKILLS_REF: 172978316e493c48ca352a0be6fb668a9f728855
 
@@ -119,6 +120,9 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
 
       - name: Log in to Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
@@ -282,12 +286,9 @@ jobs:
           LOGIN_SUCCESS="${{ steps.docker-login.outcome }}"
           echo "🔐 Docker login status: $LOGIN_SUCCESS"
           
-          if [ "$LOGIN_SUCCESS" = "success" ]; then
-            echo "✅ Docker login successful - will attempt to push to registries"
-            PUSH_ENABLED=true
-          else
-            echo "⚠️ Docker login failed - will build locally only"
-            PUSH_ENABLED=false
+          if [ "$LOGIN_SUCCESS" != "success" ]; then
+            echo "❌ Docker login failed; release images cannot be pushed"
+            exit 1
           fi
           
           # Build locally first (single platform only - multi-platform can't load to local daemon)
@@ -298,61 +299,19 @@ jobs:
             --platforms "linux/amd64" \
             --image-name "text-to-cypher"
           
-          if [ "$PUSH_ENABLED" = "true" ]; then
-            # Try to build and push to Docker Hub with the explicit docker.io registry prefix
-            echo "📦 Building and pushing to Docker Hub (${REGISTRY}/${OWNER_LOWER})..."
-            set +e  # Don't exit on error
-            ./docker-build.sh \
-              --version "${{ steps.extract_version.outputs.release_tag }}" \
-              --skills-ref "${{ env.CYPHER_SKILLS_REF }}" \
-              --platforms "linux/amd64,linux/arm64" \
-              --image-name "text-to-cypher" \
-              --registry "${REGISTRY}/${OWNER_LOWER}" \
-              --push
-            REGISTRY_EXIT_CODE=$?
-            set -e  # Re-enable exit on error
-            
-            if [ $REGISTRY_EXIT_CODE -eq 0 ]; then
-              echo "✅ Successfully pushed to Docker Hub (${REGISTRY}/${OWNER_LOWER})"
-            else
-              echo "⚠️ Failed to push to Docker Hub (${REGISTRY}/${OWNER_LOWER}) (exit code: $REGISTRY_EXIT_CODE)"
-              echo "This might be due to authentication issues or permission problems"
-            fi
-            
-            # Try the unqualified Docker Hub namespace as a compatibility alias (optional)
-            echo "🐳 Attempting Docker Hub compatibility alias (${OWNER_LOWER})..."
-            set +e  # Don't exit on error
-            ./docker-build.sh \
-              --version "${{ steps.extract_version.outputs.release_tag }}" \
-              --skills-ref "${{ env.CYPHER_SKILLS_REF }}" \
-              --platforms "linux/amd64,linux/arm64" \
-              --image-name "text-to-cypher" \
-              --registry "${OWNER_LOWER}" \
-              --push
-            DOCKERHUB_EXIT_CODE=$?
-            set -e  # Re-enable exit on error
-            
-            if [ $DOCKERHUB_EXIT_CODE -eq 0 ]; then
-              echo "✅ Successfully pushed Docker Hub compatibility alias"
-            else
-              echo "⚠️ Failed to push to Docker Hub (exit code: $DOCKERHUB_EXIT_CODE)"
-              echo "This is optional and might be due to authentication issues"
-            fi
-            
-            echo "📊 Build Summary:"
-            echo "  - Local Build (amd64): ✅ Success"
-            echo "  - Docker Hub (${REGISTRY}/${OWNER_LOWER}, multi-platform): $([ $REGISTRY_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "❌ Failed")"
-            echo "  - Docker Hub alias (${OWNER_LOWER}, multi-platform): $([ $DOCKERHUB_EXIT_CODE -eq 0 ] && echo "✅ Success" || echo "⚠️ Failed (optional)")"
-          else
-            echo "📊 Build Summary:"
-            echo "  - Local Build (amd64): ✅ Success"
-            echo "  - Registry Push: ⚠️ Skipped (authentication failed)"
-            echo ""
-            echo "ℹ️ Images were built successfully but not pushed to registries."
-            echo "   This is normal if you don't have push permissions."
-            echo "   Note: Only built for current platform (amd64) since multi-platform"
-            echo "         builds require pushing to a registry."
-          fi
+          echo "🐳 Building and pushing multi-platform Docker image..."
+          ./docker-build.sh \
+            --version "${{ steps.extract_version.outputs.release_tag }}" \
+            --skills-ref "${{ env.CYPHER_SKILLS_REF }}" \
+            --platforms "linux/amd64,linux/arm64" \
+            --image-name "text-to-cypher" \
+            --registry "${OWNER_LOWER}" \
+            --push
+          
+          echo "📊 Build Summary:"
+          echo "  - Local Build (amd64): ✅ Success"
+          echo "  - Docker Hub (${OWNER_LOWER}, multi-platform): ✅ Success"
+          echo "  - Cypher skills ref: ${{ env.CYPHER_SKILLS_REF }}"
           
           echo "✅ Docker build process completed successfully"
 
@@ -391,6 +350,9 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
 
       - name: Log in to Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
@@ -440,35 +402,26 @@ jobs:
               else
                 echo "❌ No images found locally or in registries"
                 echo "This might be due to push failures in the previous step"
-                echo "Skipping verification for this platform"
-                exit 0
+                exit 1
               fi
             fi
           fi
           
           # Test the image we found
           echo "🧪 Testing image: ${TEST_IMAGE}"
-          set +e
-          
-          # Use timeout to prevent hanging and test if the binary exists and is executable
-          timeout 10s docker run --rm --platform="${PLATFORM}" "${TEST_IMAGE}" /bin/sh -c "ls -la /app/text-to-cypher && file /app/text-to-cypher && echo 'Binary test completed' && echo 'Checking skills...' && test -d /app/skills && SKILL_COUNT=\$(find /app/skills -name skill.md | wc -l) && echo \"Found \${SKILL_COUNT} skill(s) in /app/skills\" && test \${SKILL_COUNT} -gt 0 && echo 'Skills verification completed'"
-          TEST_EXIT=$?
-          set -e
-          
-          if [ $TEST_EXIT -eq 0 ]; then
-            echo "✅ Image verification completed successfully for ${PLATFORM}"
-          elif [ $TEST_EXIT -eq 124 ]; then
-            echo "⚠️ Image test timed out (expected for server applications) but binary exists for ${PLATFORM}"
-          else
-            echo "❌ Image verification failed for ${PLATFORM} - binary or skills missing"
-            exit 1
-          fi
+          docker run --rm \
+            --platform="${PLATFORM}" \
+            --entrypoint /bin/sh \
+            "${TEST_IMAGE}" \
+            -c 'test -x /app/text-to-cypher && supervisord --version && id appuser && test -d /app/skills && SKILL_COUNT=$(find /app/skills -name skill.md | wc -l) && echo "Found ${SKILL_COUNT} skill(s) in /app/skills" && test "${SKILL_COUNT}" -gt 0'
+
+          echo "✅ Image verification completed successfully for ${PLATFORM}"
 
   # Update deployment configurations (optional)
   update-deployment:
     runs-on: ubuntu-latest
     needs: [docker-build, verify-images]
-    if: ${{ (!github.event.release.prerelease || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run') && needs.docker-build.outputs.release_tag && needs.docker-build.outputs.release_tag != '' && needs.docker-build.outputs.release_tag != 'null' && always() }}
+    if: ${{ (!github.event.release.prerelease || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run') && needs.docker-build.outputs.release_tag && needs.docker-build.outputs.release_tag != '' && needs.docker-build.outputs.release_tag != 'null' && success() }}
     steps:
       - name: Normalize Docker owner
         run: echo "OWNER_LOWER=$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"

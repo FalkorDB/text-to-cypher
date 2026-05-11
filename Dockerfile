@@ -61,12 +61,15 @@ RUN test -x /tmp/text-to-cypher && echo "Binary verification completed"
 # Runtime stage - Use FalkorDB as base image
 FROM falkordb/falkordb:latest
 
-# Install runtime dependencies and supervisord
-RUN apt-get update && apt-get install -y ca-certificates supervisor && rm -rf /var/lib/apt/lists/*
+# Repair the minimal base image package state before installing supervisord.
+RUN apt-get update && \
+    apt-get -y --fix-broken install && \
+    apt-get install -y bash perl-base passwd ca-certificates supervisor && \
+    rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user for security (if not already exists)
-RUN groupadd -g 1000 appuser 2>/dev/null || true && \
-    useradd -m -s /bin/bash -u 1000 -g appuser appuser 2>/dev/null || true
+# Create a non-root user for the managed services.
+RUN groupadd -g 1000 appuser && \
+    useradd -m -s /bin/bash -u 1000 -g appuser appuser
 
 # Set the working directory for our application
 WORKDIR /app
