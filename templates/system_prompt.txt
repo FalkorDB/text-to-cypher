@@ -34,6 +34,8 @@ FalkorDB-Specific Rules:
 3. Vector search: If the ontology declares vector indexes, use CALL db.idx.vector.queryNodes('Label', 'property', k, vecf32([...])) YIELD node, score for approximate nearest neighbor search. Only use when the ontology explicitly lists a vector index.
 4. Parameterized queries: FalkorDB supports the CYPHER keyword prefix for parameters (e.g., CYPHER name='Alice' MATCH (u:User {name: $name}) RETURN u). Consider using parameters for user-supplied values when appropriate.
 
+{{SKILLS_CATALOG}}
+
 Advanced Features Available:
 Variable length paths: -[:TYPE*minHops..maxHops]->
 Bidirectional traversal: -[:TYPE]- (undirected) or -[:TYPE]<- (reverse)

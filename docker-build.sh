@@ -6,7 +6,8 @@ show_usage() {
     echo ""
     echo "OPTIONS:"
     echo "  --version VERSION       Set the version tag (default: v0.1.0-alpha.1)"
-    echo "  --platforms PLATFORMS   Set target platforms (default: linux/amd64,linux/arm64)"
+    echo "  --platforms PLATFORMS   Set target platforms (default: linux/amd64,linux/arm64; local --load uses the first platform)"
+    echo "  --skills-ref REF        FalkorDB/skills ref to bake in (default: main for local builds; --push requires full commit SHA)"
     echo "  --image-name NAME       Set image name (default: text-to-cypher)"
     echo "  --registry REGISTRY     Set registry prefix (e.g., ghcr.io/owner/repo)"
     echo "  --push                  Push to registry (default: load locally)"
@@ -14,15 +15,17 @@ show_usage() {
     echo "  --help                  Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 --version v1.0.0 --push"
     echo "  $0 --local --version latest"
     echo "  $0 --platforms linux/amd64 --version v1.0.0"
-    echo "  $0 --registry ghcr.io/owner/repo --push --version v1.0.0"
+    echo "  $0 --version v1.0.0 --skills-ref <commit-sha> --push"
+    echo "  $0 --registry ghcr.io/owner/repo --push --version v1.0.0 --skills-ref <commit-sha>"
 }
 
 # Default values
 VERSION="v0.1.0-alpha.1"
 PLATFORMS="linux/amd64,linux/arm64"
+SKILLS_REF="main"
+SKILLS_REF_EXPLICIT=false
 IMAGE_NAME="text-to-cypher"
 REGISTRY=""
 PUSH=false
@@ -36,6 +39,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --platforms)
             PLATFORMS="$2"
+            shift 2
+            ;;
+        --skills-ref)
+            SKILLS_REF="$2"
+            SKILLS_REF_EXPLICIT=true
             shift 2
             ;;
         --image-name)
@@ -73,9 +81,29 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+if [ "$PUSH" = "true" ]; then
+    if [ "$SKILLS_REF_EXPLICIT" != "true" ]; then
+        echo -e "${RED}Release/push builds must set --skills-ref to a full FalkorDB/skills commit SHA.${NC}"
+        echo "Use --skills-ref main only for local/dev builds."
+        exit 1
+    fi
+
+    if [[ ! "$SKILLS_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        echo -e "${RED}Release/push builds require an immutable 40-character FalkorDB/skills commit SHA.${NC}"
+        echo "Received: '${SKILLS_REF}'"
+        exit 1
+    fi
+elif [[ "$PLATFORMS" == *,* ]]; then
+    LOCAL_PLATFORM="${PLATFORMS%%,*}"
+    echo -e "${YELLOW}Local Docker loads support one platform; using ${LOCAL_PLATFORM} from '${PLATFORMS}'.${NC}"
+    echo "Use --push for multi-platform images."
+    PLATFORMS="${LOCAL_PLATFORM}"
+fi
+
 echo -e "${YELLOW}Building Docker image with buildx...${NC}"
 echo -e "${BLUE}Version: ${VERSION}${NC}"
 echo -e "${BLUE}Platforms: ${PLATFORMS}${NC}"
+echo -e "${BLUE}Skills ref: ${SKILLS_REF}${NC}"
 echo -e "${BLUE}Image: ${IMAGE_NAME}${NC}"
 if [ -n "$REGISTRY" ]; then
     echo -e "${BLUE}Registry: ${REGISTRY}${NC}"
@@ -105,19 +133,21 @@ docker buildx use ${BUILDER_NAME}
 if [ "$PUSH" = "true" ]; then
     echo -e "${GREEN}Building and pushing multi-platform Docker image...${NC}"
     docker buildx build \
-        --platform ${PLATFORMS} \
-        --build-arg VERSION=${VERSION} \
-        -t ${FULL_IMAGE_NAME}:${VERSION} \
-        -t ${FULL_IMAGE_NAME}:latest \
+        --platform "${PLATFORMS}" \
+        --build-arg "VERSION=${VERSION}" \
+        --build-arg "SKILLS_REF=${SKILLS_REF}" \
+        -t "${FULL_IMAGE_NAME}:${VERSION}" \
+        -t "${FULL_IMAGE_NAME}:latest" \
         --push \
         .
 else
-    echo -e "${GREEN}Building multi-platform Docker image (local only)...${NC}"
+    echo -e "${GREEN}Building Docker image for local load (${PLATFORMS})...${NC}"
     docker buildx build \
-        --platform ${PLATFORMS} \
-        --build-arg VERSION=${VERSION} \
-        -t ${FULL_IMAGE_NAME}:${VERSION} \
-        -t ${FULL_IMAGE_NAME}:latest \
+        --platform "${PLATFORMS}" \
+        --build-arg "VERSION=${VERSION}" \
+        --build-arg "SKILLS_REF=${SKILLS_REF}" \
+        -t "${FULL_IMAGE_NAME}:${VERSION}" \
+        -t "${FULL_IMAGE_NAME}:latest" \
         --load \
         .
 fi

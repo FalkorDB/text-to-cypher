@@ -8,9 +8,10 @@ When a new release is published on GitHub, the Docker Release Build workflow aut
 
 1. **Builds multi-platform Docker images** for both `linux/amd64` and `linux/arm64`
 2. **Uses the published release binaries** instead of rebuilding from source
-3. **Pushes images to GitHub Container Registry** with proper versioning
-4. **Verifies the images work** on both platforms
-5. **Provides deployment instructions** in the workflow summary
+3. **Pins the baked-in FalkorDB Cypher skills** to a reproducible `FalkorDB/skills` commit
+4. **Pushes images to Docker Hub** with proper versioning
+5. **Verifies the images work** on both platforms
+6. **Provides deployment instructions** in the workflow summary
 
 ## Triggered Events
 
@@ -22,13 +23,11 @@ The workflow is triggered when:
 
 For each release, the following Docker images are created:
 
-### GitHub Container Registry (GHCR)
-- `ghcr.io/falkordb/text-to-cypher:v1.0.0` (release tag)
-- `ghcr.io/falkordb/text-to-cypher:latest`
-
-### Local/Docker Hub Compatible
-- `text-to-cypher:v1.0.0` (release tag)
-- `text-to-cypher:latest`
+### Docker Hub
+- `docker.io/falkordb/text-to-cypher:v1.0.0` (release tag)
+- `docker.io/falkordb/text-to-cypher:latest`
+- `falkordb/text-to-cypher:v1.0.0` (Docker Hub compatibility alias)
+- `falkordb/text-to-cypher:latest` (Docker Hub compatibility alias)
 
 ## Architecture Support
 
@@ -60,8 +59,9 @@ Uses Docker Buildx with the enhanced `docker-build.sh` script:
 ```bash
 ./docker-build.sh \
   --version "v1.0.0" \
+  --skills-ref "172978316e493c48ca352a0be6fb668a9f728855" \
   --platforms "linux/amd64,linux/arm64" \
-  --registry "ghcr.io/falkordb" \
+  --registry "docker.io/falkordb" \
   --push
 ```
 
@@ -84,6 +84,7 @@ You can also use the `docker-build.sh` script manually:
 ```bash
 ./docker-build.sh \
   --version v1.0.0 \
+  --skills-ref <falkordb-skills-commit-sha> \
   --registry my-registry.com/my-org \
   --push
 ```
@@ -92,6 +93,7 @@ You can also use the `docker-build.sh` script manually:
 ```bash
 ./docker-build.sh \
   --version v1.0.0 \
+  --skills-ref <falkordb-skills-commit-sha> \
   --platforms linux/amd64 \
   --push
 ```
@@ -99,9 +101,10 @@ You can also use the `docker-build.sh` script manually:
 ## Configuration
 
 The workflow requires:
-- **GITHUB_TOKEN**: Automatically provided (for GHCR access)
+- **DOCKER_USERNAME / DOCKER_PASSWORD**: Docker Hub credentials used by the release workflow
 - **Docker Buildx**: Automatically set up in the workflow
 - **Release binaries**: Must exist in the GitHub release assets
+- **CYPHER_SKILLS_REF**: Pinned `FalkorDB/skills` commit SHA baked into release images
 
 ## Troubleshooting
 
@@ -114,7 +117,7 @@ If you get "image not found" errors:
 ### Platform Issues
 If you need a specific platform:
 ```bash
-docker pull --platform linux/amd64 ghcr.io/falkordb/text-to-cypher:v1.0.0
+docker pull --platform linux/amd64 docker.io/falkordb/text-to-cypher:v1.0.0
 ```
 
 ### Build Failures
@@ -138,10 +141,10 @@ The Docker image includes both FalkorDB and text-to-cypher:
 # Run the latest release
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \
-  ghcr.io/falkordb/text-to-cypher:latest
+  docker.io/falkordb/text-to-cypher:latest
 
 # Run a specific version
 docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \
   -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \
-  ghcr.io/falkordb/text-to-cypher:v1.0.0
+  docker.io/falkordb/text-to-cypher:v1.0.0
 ```

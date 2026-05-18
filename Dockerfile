@@ -7,8 +7,25 @@ ARG TARGETPLATFORM
 ARG TARGETOS=linux
 ARG TARGETARCH
 
+# FalkorDB Cypher skills version. Local builds default to main; release builds pass an immutable commit SHA.
+ARG SKILLS_REF=main
+
 # Install download dependencies
 RUN apk add --no-cache wget tar
+
+# Download FalkorDB Cypher skills
+RUN set -eu; \
+    if [ -z "${SKILLS_REF:-}" ]; then \
+      echo "SKILLS_REF build arg must not be empty. Use a pinned commit SHA for release builds; use branch refs only for local/dev builds."; \
+      exit 1; \
+    fi; \
+    echo "Downloading FalkorDB Cypher skills (ref: ${SKILLS_REF})" && \
+    wget -O /tmp/skills.tar.gz "https://github.com/FalkorDB/skills/archive/${SKILLS_REF}.tar.gz" && \
+    mkdir -p /tmp/skills-extract && \
+    tar -xzf /tmp/skills.tar.gz -C /tmp/skills-extract --strip-components=1 && \
+    mv /tmp/skills-extract/cypher-skills /tmp/cypher-skills && \
+    rm -rf /tmp/skills.tar.gz /tmp/skills-extract && \
+    echo "✅ Downloaded $(ls /tmp/cypher-skills | wc -l) skills"
 
 # Download the appropriate binary based on target architecture with retry logic
 RUN echo "Downloading text-to-cypher ${VERSION} for ${TARGETPLATFORM} (${TARGETOS}/${TARGETARCH})" && \
@@ -62,6 +79,12 @@ COPY --from=downloader /tmp/text-to-cypher /app/text-to-cypher
 
 # Copy the templates from the downloaded package (contains the correct templates for this version)
 COPY --from=downloader /tmp/templates ./templates
+
+# Copy FalkorDB Cypher skills for dynamic skill loading
+COPY --from=downloader /tmp/cypher-skills /app/skills
+
+# Enable dynamic Cypher skills by default
+ENV SKILLS_DIR=/app/skills
 
 # Create import directory and set permissions
 RUN mkdir -p /var/lib/FalkorDB/import && \

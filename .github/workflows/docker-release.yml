@@ -22,6 +22,8 @@ permissions:
 env:
   REGISTRY: docker.io
   OWNER_LOWER: falkordb
+  # FalkorDB/skills commit baked into release images for reproducible builds.
+  CYPHER_SKILLS_REF: 172978316e493c48ca352a0be6fb668a9f728855
 
 jobs:
   docker-build:
@@ -34,6 +36,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Normalize Docker owner
+        run: echo "OWNER_LOWER=$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Extract release version
         id: extract_version
@@ -290,20 +295,23 @@ jobs:
           echo "🔧 Building image locally for current platform (linux/amd64)..."
           ./docker-build.sh \
             --version "${{ steps.extract_version.outputs.release_tag }}" \
+            --skills-ref "${{ env.CYPHER_SKILLS_REF }}" \
             --platforms "linux/amd64" \
             --image-name "text-to-cypher"
           
           echo "🐳 Building and pushing multi-platform Docker image..."
           ./docker-build.sh \
             --version "${{ steps.extract_version.outputs.release_tag }}" \
+            --skills-ref "${{ env.CYPHER_SKILLS_REF }}" \
             --platforms "linux/amd64,linux/arm64" \
             --image-name "text-to-cypher" \
-            --registry "${{ env.OWNER_LOWER }}" \
+            --registry "${OWNER_LOWER}" \
             --push
           
           echo "📊 Build Summary:"
           echo "  - Local Build (amd64): ✅ Success"
-          echo "  - Docker Hub (multi-platform): ✅ Success"
+          echo "  - Docker Hub (${OWNER_LOWER}, multi-platform): ✅ Success"
+          echo "  - Cypher skills ref: ${{ env.CYPHER_SKILLS_REF }}"
           
           echo "✅ Docker build process completed successfully"
 
@@ -316,6 +324,9 @@ jobs:
       matrix:
         platform: [linux/amd64, linux/arm64]
     steps:
+      - name: Normalize Docker owner
+        run: echo "OWNER_LOWER=$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Extract release version
         id: extract_version
         run: |
@@ -354,23 +365,23 @@ jobs:
         run: |
           # Try to verify images from different sources
           PLATFORM="${{ matrix.platform }}"
-          GHCR_IMAGE="${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
-          DOCKERHUB_IMAGE="${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          REGISTRY_IMAGE="${REGISTRY}/${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          DOCKERHUB_IMAGE="${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
           
           echo "Verifying images for platform: ${PLATFORM}"
           
-          # Try GitHub Container Registry first
-          echo "🔍 Trying to pull from GitHub Container Registry..."
+          # Try the explicit Docker Hub registry path first
+          echo "🔍 Trying to pull from Docker Hub (${REGISTRY}/${OWNER_LOWER})..."
           set +e
-          docker pull --platform="${PLATFORM}" "${GHCR_IMAGE}"
-          GHCR_PULL_EXIT=$?
+          docker pull --platform="${PLATFORM}" "${REGISTRY_IMAGE}"
+          REGISTRY_PULL_EXIT=$?
           set -e
           
-          if [ $GHCR_PULL_EXIT -eq 0 ]; then
-            echo "✅ Successfully pulled from GHCR: ${GHCR_IMAGE}"
-            TEST_IMAGE="${GHCR_IMAGE}"
+          if [ $REGISTRY_PULL_EXIT -eq 0 ]; then
+            echo "✅ Successfully pulled from Docker Hub: ${REGISTRY_IMAGE}"
+            TEST_IMAGE="${REGISTRY_IMAGE}"
           else
-            echo "⚠️ Failed to pull from GHCR, trying Docker Hub..."
+            echo "⚠️ Failed to pull explicit Docker Hub path, trying unqualified alias..."
             set +e
             docker pull --platform="${PLATFORM}" "${DOCKERHUB_IMAGE}"
             DOCKERHUB_PULL_EXIT=$?
@@ -385,9 +396,9 @@ jobs:
               if docker image inspect "${DOCKERHUB_IMAGE}" >/dev/null 2>&1; then
                 echo "✅ Found local image: ${DOCKERHUB_IMAGE}"
                 TEST_IMAGE="${DOCKERHUB_IMAGE}"
-              elif docker image inspect "${GHCR_IMAGE}" >/dev/null 2>&1; then
-                echo "✅ Found local image: ${GHCR_IMAGE}"
-                TEST_IMAGE="${GHCR_IMAGE}"
+              elif docker image inspect "${REGISTRY_IMAGE}" >/dev/null 2>&1; then
+                echo "✅ Found local image: ${REGISTRY_IMAGE}"
+                TEST_IMAGE="${REGISTRY_IMAGE}"
               else
                 echo "❌ No images found locally or in registries"
                 echo "This might be due to push failures in the previous step"
@@ -402,7 +413,7 @@ jobs:
             --platform="${PLATFORM}" \
             --entrypoint /bin/sh \
             "${TEST_IMAGE}" \
-            -c "test -x /app/text-to-cypher && supervisord --version && id appuser"
+            -c 'test -x /app/text-to-cypher && supervisord --version && id appuser && test -d /app/skills && SKILL_COUNT=$(find /app/skills -name skill.md | wc -l) && echo "Found ${SKILL_COUNT} skill(s) in /app/skills" && test "${SKILL_COUNT}" -gt 0'
 
           echo "✅ Image verification completed successfully for ${PLATFORM}"
 
@@ -412,6 +423,9 @@ jobs:
     needs: [docker-build, verify-images]
     if: ${{ (!github.event.release.prerelease || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run') && needs.docker-build.outputs.release_tag && needs.docker-build.outputs.release_tag != '' && needs.docker-build.outputs.release_tag != 'null' && success() }}
     steps:
+      - name: Normalize Docker owner
+        run: echo "OWNER_LOWER=$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Extract release version
         id: extract_version
         run: |
@@ -438,15 +452,15 @@ jobs:
           echo "🚀 Docker images built and verified for release: ${{ steps.extract_version.outputs.release_tag }}"
           echo ""
           echo "📦 Available images:"
-          echo "  - ${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
-          echo "  - ${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:latest"
-          echo "  - ${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
-          echo "  - ${{ env.OWNER_LOWER }}/text-to-cypher:latest"
+          echo "  - ${REGISTRY}/${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "  - ${REGISTRY}/${OWNER_LOWER}/text-to-cypher:latest"
+          echo "  - ${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "  - ${OWNER_LOWER}/text-to-cypher:latest"
           echo ""
           echo "🏃 To run the latest release:"
           echo "  docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \\"
           echo "    -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \\"
-          echo "    ${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
+          echo "    ${REGISTRY}/${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}"
           echo ""
           echo "📋 Available platforms: linux/amd64, linux/arm64"
 
@@ -461,16 +475,16 @@ jobs:
           - **Platforms**: linux/amd64, linux/arm64
           
           ## Available Images
-          - \`${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
-          - \`${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:latest\`
-          - \`${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
-          - \`${{ env.OWNER_LOWER }}/text-to-cypher:latest\`
+          - \`${REGISTRY}/${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
+          - \`${REGISTRY}/${OWNER_LOWER}/text-to-cypher:latest\`
+          - \`${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}\`
+          - \`${OWNER_LOWER}/text-to-cypher:latest\`
           
           ## Quick Start
           \`\`\`bash
           docker run -p 6379:6379 -p 3000:3000 -p 8080:8080 -p 3001:3001 \\
             -e DEFAULT_MODEL=gpt-4o-mini -e DEFAULT_KEY=your-key \\
-            ${{ env.REGISTRY }}/${{ env.OWNER_LOWER }}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}
+            ${REGISTRY}/${OWNER_LOWER}/text-to-cypher:${{ steps.extract_version.outputs.release_tag }}
           \`\`\`
           
           ## Services
