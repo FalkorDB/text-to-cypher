@@ -386,7 +386,7 @@ pub async fn list_adapter_models(
     client: &GenAiClient,
 ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
     let models = client
-        .all_model_names(adapter_kind)
+        .all_model_names(adapter_kind, ())
         .await
         .map_err(|e| format!("Failed to fetch models for {adapter_kind}: {e}"))?;
 
@@ -442,7 +442,7 @@ pub async fn list_all_models(
     let mut results = HashMap::new();
 
     for &adapter in ADAPTERS {
-        match client.all_model_names(adapter).await {
+        match client.all_model_names(adapter, ()).await {
             Ok(models) => {
                 results.insert(adapter, models);
             }
