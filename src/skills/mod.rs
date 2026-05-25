@@ -304,7 +304,7 @@ mod tests {
         let catalog = SkillCatalog { skills };
         let tool = catalog.tool_definition();
 
-        assert_eq!(tool.name, "read_skill");
+        assert_eq!(tool.name.as_ref(), "read_skill");
         assert!(tool.description.is_some());
         let schema = tool.schema.unwrap();
         assert_eq!(schema["properties"]["id"]["type"], json!("string"));
