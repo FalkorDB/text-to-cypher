@@ -8,6 +8,7 @@ use crate::formatter::format_query_records;
 use crate::schema::discovery::Schema;
 use crate::skills::{self, SkillCatalog};
 use crate::template::TemplateEngine;
+use crate::usage::TokenUsage;
 use crate::validator::CypherValidator;
 use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo};
 use genai::adapter::AdapterKind;
@@ -75,6 +76,30 @@ pub async fn generate_cypher_query_with_skills(
     model: &str,
     skill_catalog: Option<&SkillCatalog>,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let mut usage = TokenUsage::new();
+    generate_cypher_query_with_skills_and_usage(chat_request, schema, client, model, skill_catalog, &mut usage).await
+}
+
+/// Generates a Cypher query (with optional skills), accumulating token usage.
+///
+/// Behaves like [`generate_cypher_query_with_skills`] but also records the
+/// [`TokenUsage`] summed across every LLM call made while producing the query
+/// (tool-call rounds, fallback, and the final forced response) into `token_usage`.
+///
+/// Usage is accumulated as calls are made, so the counts captured in `token_usage`
+/// remain valid even when this function returns an error (e.g. validation failure).
+///
+/// # Errors
+///
+/// Returns an error if AI chat request fails, validation fails, or no query is generated
+pub async fn generate_cypher_query_with_skills_and_usage(
+    chat_request: &ChatRequest,
+    schema: &str,
+    client: &GenAiClient,
+    model: &str,
+    skill_catalog: Option<&SkillCatalog>,
+    token_usage: &mut TokenUsage,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
     let use_tools = skill_catalog.is_some_and(|c| !c.is_empty()) && skills::supports_tool_calling(model);
 
     let mut genai_chat_request =
@@ -98,11 +123,14 @@ pub async fn generate_cypher_query_with_skills(
                     .exec_chat(model, fallback_request, None)
                     .await
                     .map_err(|fallback_err| format!("Chat request failed: {err}; fallback failed: {fallback_err}"))?;
+                token_usage.add_genai_usage(&fallback_response.usage);
                 let query = fallback_response.into_first_text().unwrap_or_else(|| "NO ANSWER".to_string());
                 return validate_generated_query(&query);
             }
             Err(err) => return Err(format!("Chat request failed: {err}").into()),
         };
+
+        token_usage.add_genai_usage(&chat_response.usage);
 
         let tool_calls = chat_response.tool_calls().into_iter().cloned().collect::<Vec<_>>();
 
@@ -128,6 +156,7 @@ pub async fn generate_cypher_query_with_skills(
         .await
         .map_err(|e| format!("Chat request failed after tool rounds: {e}"))?;
 
+    token_usage.add_genai_usage(&final_response.usage);
     let query = final_response.into_first_text().unwrap_or_else(|| "NO ANSWER".to_string());
     validate_generated_query(&query)
 }
@@ -192,12 +221,34 @@ pub async fn generate_final_answer(
     client: &GenAiClient,
     model: &str,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let mut usage = TokenUsage::new();
+    generate_final_answer_with_usage(chat_request, cypher_query, cypher_result, client, model, &mut usage).await
+}
+
+/// Generates a final answer, accumulating the token usage of the call.
+///
+/// Behaves like [`generate_final_answer`] but also records the [`TokenUsage`]
+/// consumed by the answer-generation LLM call into `token_usage`.
+///
+/// # Errors
+///
+/// Returns an error if the AI chat request fails
+pub async fn generate_final_answer_with_usage(
+    chat_request: &ChatRequest,
+    cypher_query: &str,
+    cypher_result: &str,
+    client: &GenAiClient,
+    model: &str,
+    token_usage: &mut TokenUsage,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
     let genai_chat_request = create_answer_chat_request(chat_request, cypher_query, cypher_result);
 
     let chat_response = client
         .exec_chat(model, genai_chat_request, None)
         .await
         .map_err(|e| format!("Chat request failed: {e}"))?;
+
+    token_usage.add_genai_usage(&chat_response.usage);
 
     let answer = chat_response
         .into_first_text()
