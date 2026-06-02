@@ -160,6 +160,7 @@ pub mod processor;
 pub mod schema;
 pub mod skills;
 pub mod template;
+pub mod usage;
 pub mod validator;
 
 // Re-export commonly used types for easier access
@@ -168,6 +169,7 @@ pub use error::ErrorResponse;
 pub use genai::adapter::AdapterKind;
 pub use processor::{TextToCypherRequest, TextToCypherResponse, process_text_to_cypher_with_skills};
 pub use skills::SkillCatalog;
+pub use usage::TokenUsage;
 // Server-specific modules - only when server feature is enabled
 #[cfg(feature = "server")]
 pub mod mcp;

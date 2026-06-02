@@ -8,6 +8,7 @@ use crate::formatter::format_query_records;
 use crate::schema::discovery::Schema;
 use crate::skills::{self, SkillCatalog};
 use crate::template::TemplateEngine;
+use crate::usage::TokenUsage;
 use crate::validator::CypherValidator;
 use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo};
 use genai::adapter::AdapterKind;
@@ -75,6 +76,28 @@ pub async fn generate_cypher_query_with_skills(
     model: &str,
     skill_catalog: Option<&SkillCatalog>,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
+    generate_cypher_query_with_skills_and_usage(chat_request, schema, client, model, skill_catalog)
+        .await
+        .map(|(query, _usage)| query)
+}
+
+/// Generates a Cypher query (with optional skills) and reports the aggregated token usage.
+///
+/// Behaves like [`generate_cypher_query_with_skills`] but also returns the
+/// [`TokenUsage`] summed across every LLM call made while producing the query
+/// (tool-call rounds, fallback, and the final forced response).
+///
+/// # Errors
+///
+/// Returns an error if AI chat request fails, validation fails, or no query is generated
+pub async fn generate_cypher_query_with_skills_and_usage(
+    chat_request: &ChatRequest,
+    schema: &str,
+    client: &GenAiClient,
+    model: &str,
+    skill_catalog: Option<&SkillCatalog>,
+) -> Result<(String, TokenUsage), Box<dyn Error + Send + Sync>> {
+    let mut usage = TokenUsage::new();
     let use_tools = skill_catalog.is_some_and(|c| !c.is_empty()) && skills::supports_tool_calling(model);
 
     let mut genai_chat_request =
@@ -98,18 +121,21 @@ pub async fn generate_cypher_query_with_skills(
                     .exec_chat(model, fallback_request, None)
                     .await
                     .map_err(|fallback_err| format!("Chat request failed: {err}; fallback failed: {fallback_err}"))?;
+                usage.add_genai_usage(&fallback_response.usage);
                 let query = fallback_response.into_first_text().unwrap_or_else(|| "NO ANSWER".to_string());
-                return validate_generated_query(&query);
+                return validate_generated_query(&query).map(|q| (q, usage));
             }
             Err(err) => return Err(format!("Chat request failed: {err}").into()),
         };
+
+        usage.add_genai_usage(&chat_response.usage);
 
         let tool_calls = chat_response.tool_calls().into_iter().cloned().collect::<Vec<_>>();
 
         if tool_calls.is_empty() {
             // No tool calls — extract query from text response
             let query = chat_response.into_first_text().unwrap_or_else(|| "NO ANSWER".to_string());
-            return validate_generated_query(&query);
+            return validate_generated_query(&query).map(|q| (q, usage));
         }
 
         // Handle tool calls: append assistant turn once, then each tool response
@@ -128,8 +154,9 @@ pub async fn generate_cypher_query_with_skills(
         .await
         .map_err(|e| format!("Chat request failed after tool rounds: {e}"))?;
 
+    usage.add_genai_usage(&final_response.usage);
     let query = final_response.into_first_text().unwrap_or_else(|| "NO ANSWER".to_string());
-    validate_generated_query(&query)
+    validate_generated_query(&query).map(|q| (q, usage))
 }
 
 /// Validate and clean a generated query string.
@@ -192,6 +219,26 @@ pub async fn generate_final_answer(
     client: &GenAiClient,
     model: &str,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
+    generate_final_answer_with_usage(chat_request, cypher_query, cypher_result, client, model)
+        .await
+        .map(|(answer, _usage)| answer)
+}
+
+/// Generates a final answer and reports the token usage of the call.
+///
+/// Behaves like [`generate_final_answer`] but also returns the [`TokenUsage`]
+/// consumed by the answer-generation LLM call.
+///
+/// # Errors
+///
+/// Returns an error if the AI chat request fails
+pub async fn generate_final_answer_with_usage(
+    chat_request: &ChatRequest,
+    cypher_query: &str,
+    cypher_result: &str,
+    client: &GenAiClient,
+    model: &str,
+) -> Result<(String, TokenUsage), Box<dyn Error + Send + Sync>> {
     let genai_chat_request = create_answer_chat_request(chat_request, cypher_query, cypher_result);
 
     let chat_response = client
@@ -199,11 +246,14 @@ pub async fn generate_final_answer(
         .await
         .map_err(|e| format!("Chat request failed: {e}"))?;
 
+    let mut usage = TokenUsage::new();
+    usage.add_genai_usage(&chat_response.usage);
+
     let answer = chat_response
         .into_first_text()
         .unwrap_or_else(|| "Unable to generate answer".to_string());
 
-    Ok(answer)
+    Ok((answer, usage))
 }
 
 /// Creates a `GenAI` client with optional custom API key

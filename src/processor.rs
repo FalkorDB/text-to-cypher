@@ -5,10 +5,11 @@
 
 use crate::chat::ChatRequest;
 use crate::core::{
-    create_genai_client, discover_graph_schema, execute_cypher_query, generate_cypher_query_with_skills,
-    generate_final_answer,
+    create_genai_client, discover_graph_schema, execute_cypher_query, generate_cypher_query_with_skills_and_usage,
+    generate_final_answer_with_usage,
 };
 use crate::skills::SkillCatalog;
+use crate::usage::TokenUsage;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -40,6 +41,9 @@ pub struct TextToCypherResponse {
     pub answer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Aggregated token usage across all LLM calls made while serving the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
 }
 
 impl TextToCypherResponse {
@@ -62,6 +66,17 @@ impl TextToCypherResponse {
         cypher_result: Option<String>,
         answer: Option<String>,
     ) -> Self {
+        Self::success_with_usage(schema, cypher_query, cypher_result, answer, None)
+    }
+
+    #[must_use]
+    pub fn success_with_usage(
+        schema: String,
+        cypher_query: String,
+        cypher_result: Option<String>,
+        answer: Option<String>,
+        token_usage: Option<TokenUsage>,
+    ) -> Self {
         Self {
             status: "success".to_string(),
             schema: Some(schema),
@@ -69,11 +84,24 @@ impl TextToCypherResponse {
             cypher_result,
             answer,
             error: None,
+            token_usage,
         }
     }
 
     #[must_use]
     pub fn error(error_message: String) -> Self {
+        Self::error_with_usage(error_message, None)
+    }
+
+    /// Creates an error response that also reports the token usage consumed before failure.
+    ///
+    /// Use this on error paths that occur after one or more LLM calls so that consumers
+    /// can still account for the tokens the request spent.
+    #[must_use]
+    pub fn error_with_usage(
+        error_message: String,
+        token_usage: Option<TokenUsage>,
+    ) -> Self {
         Self {
             status: "error".to_string(),
             schema: None,
@@ -81,6 +109,7 @@ impl TextToCypherResponse {
             cypher_result: None,
             answer: None,
             error: Some(error_message),
+            token_usage,
         }
     }
 }
@@ -175,20 +204,33 @@ pub async fn process_text_to_cypher_with_skills(
         }
     };
 
+    // Track token usage across every LLM call made for this request.
+    let mut token_usage = TokenUsage::new();
+
     // Step 2: Generate Cypher query
-    let cypher_query =
-        match generate_cypher_query_with_skills(&request.chat_request, &schema, &client, &model, skill_catalog).await {
-            Ok(q) => q,
-            Err(e) => {
-                return TextToCypherResponse::error(format!("Failed to generate query: {e}"));
-            }
-        };
+    let cypher_query = match generate_cypher_query_with_skills_and_usage(
+        &request.chat_request,
+        &schema,
+        &client,
+        &model,
+        skill_catalog,
+    )
+    .await
+    {
+        Ok((q, usage)) => {
+            token_usage.accumulate(&usage);
+            q
+        }
+        Err(e) => {
+            return TextToCypherResponse::error(format!("Failed to generate query: {e}"));
+        }
+    };
 
     tracing::info!("Cypher query generated: {}", cypher_query);
 
     // If cypher_only mode, return just the query
     if request.cypher_only {
-        return TextToCypherResponse::success(schema, cypher_query, None, None);
+        return TextToCypherResponse::success_with_usage(schema, cypher_query, None, None, Some(token_usage));
     }
 
     // Step 3: Execute query
@@ -208,13 +250,14 @@ pub async fn process_text_to_cypher_with_skills(
                 &model,
                 &falkordb_connection,
                 skill_catalog,
+                &mut token_usage,
             )
             .await
             {
                 Ok((healed_query, healed_result)) => {
                     tracing::info!("Self-healing successful");
                     // Return the healed version
-                    let answer = match generate_final_answer(
+                    let answer = match generate_final_answer_with_usage(
                         &request.chat_request,
                         &healed_query,
                         &healed_result,
@@ -223,19 +266,29 @@ pub async fn process_text_to_cypher_with_skills(
                     )
                     .await
                     {
-                        Ok(a) => Some(a),
+                        Ok((a, usage)) => {
+                            token_usage.accumulate(&usage);
+                            Some(a)
+                        }
                         Err(e) => {
                             tracing::error!("Failed to generate answer: {}", e);
                             None
                         }
                     };
 
-                    return TextToCypherResponse::success(schema, healed_query, Some(healed_result), answer);
+                    return TextToCypherResponse::success_with_usage(
+                        schema,
+                        healed_query,
+                        Some(healed_result),
+                        answer,
+                        Some(token_usage),
+                    );
                 }
                 Err(heal_error) => {
-                    return TextToCypherResponse::error(format!(
-                        "Query execution failed: {e}. Self-healing also failed: {heal_error}"
-                    ));
+                    return TextToCypherResponse::error_with_usage(
+                        format!("Query execution failed: {e}. Self-healing also failed: {heal_error}"),
+                        Some(token_usage),
+                    );
                 }
             }
         }
@@ -245,17 +298,28 @@ pub async fn process_text_to_cypher_with_skills(
 
     // Step 4: Generate final answer
     let answer =
-        match generate_final_answer(&request.chat_request, &cypher_query, &cypher_result, &client, &model).await {
-            Ok(a) => Some(a),
+        match generate_final_answer_with_usage(&request.chat_request, &cypher_query, &cypher_result, &client, &model)
+            .await
+        {
+            Ok((a, usage)) => {
+                token_usage.accumulate(&usage);
+                Some(a)
+            }
             Err(e) => {
-                return TextToCypherResponse::error(format!("Failed to generate answer: {e}"));
+                return TextToCypherResponse::error_with_usage(
+                    format!("Failed to generate answer: {e}"),
+                    Some(token_usage),
+                );
             }
         };
 
-    TextToCypherResponse::success(schema, cypher_query, Some(cypher_result), answer)
+    TextToCypherResponse::success_with_usage(schema, cypher_query, Some(cypher_result), answer, Some(token_usage))
 }
 
 /// Attempts to self-heal a failed query by regenerating with error context
+///
+/// Token usage from the regeneration call is accumulated into `token_usage` even when the
+/// subsequent execution fails, so the caller can report it on error responses.
 #[allow(clippy::too_many_arguments)]
 async fn attempt_self_healing(
     request: &TextToCypherRequest,
@@ -266,6 +330,7 @@ async fn attempt_self_healing(
     model: &str,
     falkordb_connection: &str,
     skill_catalog: Option<&SkillCatalog>,
+    token_usage: &mut TokenUsage,
 ) -> Result<(String, String), Box<dyn Error + Send + Sync>> {
     use crate::chat::{ChatMessage, ChatRole};
 
@@ -285,7 +350,9 @@ async fn attempt_self_healing(
     });
 
     // Generate new query (include skill catalog for consistent prompt)
-    let healed_query = generate_cypher_query_with_skills(&retry_request, schema, client, model, skill_catalog).await?;
+    let (healed_query, usage) =
+        generate_cypher_query_with_skills_and_usage(&retry_request, schema, client, model, skill_catalog).await?;
+    token_usage.accumulate(&usage);
 
     tracing::info!("Self-healed query generated: {}", healed_query);
 
@@ -346,6 +413,26 @@ mod tests {
         assert_eq!(response.cypher_result, None);
         assert_eq!(response.answer, None);
         assert_eq!(response.error, Some("Test error".to_string()));
+        assert_eq!(response.token_usage, None);
+    }
+
+    #[test]
+    fn test_error_with_usage_reports_tokens() {
+        let usage = TokenUsage {
+            prompt_tokens: 30,
+            completion_tokens: 0,
+            total_tokens: 30,
+        };
+        let response = TextToCypherResponse::error_with_usage("boom".to_string(), Some(usage));
+
+        assert!(response.is_error());
+        assert_eq!(response.error, Some("boom".to_string()));
+        assert_eq!(response.token_usage, Some(usage));
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("token_usage"), "token_usage should be present: {json}");
+        let deserialized: TextToCypherResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.token_usage, Some(usage));
     }
 
     #[test]
@@ -404,6 +491,45 @@ mod tests {
         assert_eq!(deserialized.status, "success");
         assert_eq!(deserialized.cypher_query, Some("MATCH (n) RETURN n".to_string()));
         assert_eq!(deserialized.cypher_result, None);
+    }
+
+    #[test]
+    fn test_token_usage_omitted_when_absent() {
+        let response = TextToCypherResponse::success(
+            "schema".to_string(),
+            "MATCH (n) RETURN n".to_string(),
+            None,
+            Some("answer".to_string()),
+        );
+
+        assert_eq!(response.token_usage, None);
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(
+            !json.contains("token_usage"),
+            "token_usage should be omitted when None: {json}"
+        );
+    }
+
+    #[test]
+    fn test_token_usage_present_when_set() {
+        let usage = TokenUsage {
+            prompt_tokens: 12,
+            completion_tokens: 8,
+            total_tokens: 20,
+        };
+        let response = TextToCypherResponse::success_with_usage(
+            "schema".to_string(),
+            "MATCH (n) RETURN n".to_string(),
+            Some("result".to_string()),
+            Some("answer".to_string()),
+            Some(usage),
+        );
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("token_usage"), "token_usage should be present: {json}");
+
+        let deserialized: TextToCypherResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.token_usage, Some(usage));
     }
 
     #[test]

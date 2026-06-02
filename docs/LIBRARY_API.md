@@ -328,6 +328,20 @@ pub struct TextToCypherResponse {
     pub cypher_result: Option<String>,
     pub answer: Option<String>,
     pub error: Option<String>,
+    /// Aggregated token usage across all LLM calls made while serving the request.
+    /// Present on successful responses; omitted from JSON when absent.
+    pub token_usage: Option<TokenUsage>,
+}
+```
+
+`TokenUsage` reports the token counts consumed across every LLM call for the request
+(cypher generation, final answer, self-healing retries, and skill tool-call rounds):
+
+```rust
+pub struct TokenUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 ```
 

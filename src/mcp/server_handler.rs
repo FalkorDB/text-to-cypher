@@ -1,5 +1,6 @@
 use crate::chat::{ChatMessage, ChatRequest, ChatRole};
 use crate::mcp::tools::TextToCypherTool;
+use crate::usage::TokenUsage;
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use rust_mcp_sdk::schema::TextContent;
@@ -193,6 +194,7 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
     let mut stream = response.bytes_stream();
     let mut result_buffer = String::new();
     let mut final_result = String::new();
+    let mut token_usage: Option<TokenUsage> = None;
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
@@ -200,12 +202,16 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
 
         for line in chunk_str.lines() {
             if let Some(data) = line.strip_prefix("data: ") {
-                process_sse_event(data, &mut result_buffer, &mut final_result)?;
+                process_sse_event(data, &mut result_buffer, &mut final_result, &mut token_usage)?;
             }
         }
     }
 
-    Ok(build_complete_response(&result_buffer, &final_result))
+    Ok(build_complete_response(
+        &result_buffer,
+        &final_result,
+        token_usage.as_ref(),
+    ))
 }
 
 // Process individual SSE event
@@ -213,6 +219,7 @@ fn process_sse_event(
     data: &str,
     result_buffer: &mut String,
     final_result: &mut String,
+    token_usage: &mut Option<TokenUsage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Ok(progress) = serde_json::from_str::<serde_json::Value>(data)
         && let Some(event_type) = progress.as_object().and_then(|obj| obj.keys().next())
@@ -224,6 +231,7 @@ fn process_sse_event(
             "CypherResult" => handle_cypher_result_event(&progress, result_buffer),
             "ModelOutputChunk" => handle_model_output_chunk(&progress, final_result),
             "Result" => handle_result_event(&progress, final_result),
+            "Usage" => handle_usage_event(&progress, token_usage),
             "Error" => return handle_error_event(&progress),
             _ => tracing::debug!("Unknown event type: {}", event_type),
         }
@@ -294,16 +302,46 @@ fn handle_error_event(progress: &serde_json::Value) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+fn handle_usage_event(
+    progress: &serde_json::Value,
+    token_usage: &mut Option<TokenUsage>,
+) {
+    if let Some(usage) = progress
+        .get("Usage")
+        .and_then(|v| serde_json::from_value::<TokenUsage>(v.clone()).ok())
+    {
+        tracing::info!(
+            "Token usage: prompt={}, completion={}, total={}",
+            usage.prompt_tokens,
+            usage.completion_tokens,
+            usage.total_tokens
+        );
+        *token_usage = Some(usage);
+    }
+}
+
 // Build the complete response from buffer and final result
 fn build_complete_response(
     result_buffer: &str,
     final_result: &str,
+    token_usage: Option<&TokenUsage>,
 ) -> String {
-    if final_result.is_empty() {
+    let mut response = if final_result.is_empty() {
         result_buffer.trim().to_string()
     } else {
         format!("{}\n\nFinal Answer:\n{}", result_buffer.trim(), final_result)
+    };
+
+    if let Some(usage) = token_usage {
+        write!(
+            response,
+            "\n\nToken Usage: prompt={}, completion={}, total={}",
+            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+        )
+        .unwrap();
     }
+
+    response
 }
 
 // Helper function to get list of graphs from FalkorDB via REST API

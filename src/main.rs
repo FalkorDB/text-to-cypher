@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 #![allow(clippy::needless_for_each)]
 
+use crate::usage::TokenUsage;
 use ::text_to_cypher::skills::{self, SkillCatalog};
 use actix_multipart::Multipart;
 use actix_web::HttpResponse;
@@ -146,6 +147,7 @@ mod formatter;
 mod mcp;
 mod schema;
 mod template;
+mod usage;
 mod validator;
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
@@ -295,6 +297,7 @@ enum Progress {
     CypherResult(String),
     ModelOutputChunk(String),
     Result(String),
+    Usage(TokenUsage),
     Error(String),
 }
 
@@ -1101,8 +1104,12 @@ async fn process_text_to_cypher_request(
         return;
     };
 
+    // Track token usage across every LLM call made for this request.
+    let mut token_usage = TokenUsage::new();
+
     // Step 3: Generate and execute cypher query with self-healing retry
-    let Some(initial_query) = generate_cypher_query(&request, &schema, &client, model, &tx).await else {
+    let Some(initial_query) = generate_cypher_query(&request, &schema, &client, model, &tx, &mut token_usage).await
+    else {
         return;
     };
     let mut executed_query = initial_query.clone();
@@ -1110,6 +1117,7 @@ async fn process_text_to_cypher_request(
     // If cypher_only is true, stop here and return just the validated query
     if request.cypher_only {
         tracing::info!("cypher_only mode: returning query without execution");
+        send!(tx, Progress::Usage(token_usage));
         send!(tx, Progress::Result(executed_query));
         return;
     }
@@ -1131,8 +1139,17 @@ async fn process_text_to_cypher_request(
         let error_msg = "Query execution failed - see logs for details";
 
         // Attempt to get a fixed query with error context
-        if let Some(fixed_query) =
-            attempt_query_self_healing(&request, &schema, &executed_query, error_msg, &client, model, &tx).await
+        if let Some(fixed_query) = attempt_query_self_healing(
+            &request,
+            &schema,
+            &executed_query,
+            error_msg,
+            &client,
+            model,
+            &tx,
+            &mut token_usage,
+        )
+        .await
         {
             // Try executing the fixed query
             if let Ok(result) =
@@ -1156,7 +1173,16 @@ async fn process_text_to_cypher_request(
     };
 
     // Step 5: Generate final answer using AI
-    generate_final_answer(&request, &executed_query, &query_result, &client, model, &tx).await;
+    generate_final_answer(
+        &request,
+        &executed_query,
+        &query_result,
+        &client,
+        model,
+        &tx,
+        &mut token_usage,
+    )
+    .await;
 }
 
 /// Validates a query and returns it if valid, None otherwise
@@ -1189,6 +1215,7 @@ async fn validate_and_log_query(
 
 /// Attempts to self-heal a failed query by regenerating with error context
 #[allow(clippy::cognitive_complexity)]
+#[allow(clippy::too_many_arguments)]
 async fn attempt_query_self_healing(
     request: &TextToCypherRequest,
     schema: &str,
@@ -1197,6 +1224,7 @@ async fn attempt_query_self_healing(
     client: &genai::Client,
     model: &str,
     tx: &mpsc::Sender<sse::Event>,
+    token_usage: &mut TokenUsage,
 ) -> Option<String> {
     tracing::info!("Attempting to self-heal failed query: {}", failed_query);
 
@@ -1215,7 +1243,8 @@ async fn attempt_query_self_healing(
 
     // Generate new query using the same skill-loading path as the initial request.
     let skill_catalog = AppConfig::get().skill_catalog.as_ref();
-    let retry_query = execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx).await;
+    let retry_query =
+        execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx, token_usage).await;
 
     if retry_query.trim().is_empty() || retry_query.trim() == "NO ANSWER" {
         tracing::warn!("Self-healing failed: no valid query generated");
@@ -1258,6 +1287,7 @@ async fn generate_cypher_query(
     client: &genai::Client,
     model: &str,
     tx: &mpsc::Sender<sse::Event>,
+    token_usage: &mut TokenUsage,
 ) -> Option<String> {
     let skill_catalog = AppConfig::get().skill_catalog.as_ref();
 
@@ -1266,7 +1296,16 @@ async fn generate_cypher_query(
         Progress::Status(String::from("Generating Cypher query using schema ..."))
     );
 
-    let query = execute_chat_with_skills(client, model, &request.chat_request, schema, skill_catalog, tx).await;
+    let query = execute_chat_with_skills(
+        client,
+        model,
+        &request.chat_request,
+        schema,
+        skill_catalog,
+        tx,
+        token_usage,
+    )
+    .await;
 
     if query.trim().is_empty() || query.trim() == "NO ANSWER" {
         tracing::warn!("No query generated from AI model");
@@ -1287,7 +1326,8 @@ async fn generate_cypher_query(
         let validation_result = CypherValidator::validate(&clean_query);
         let error_feedback = validation_result.errors.join("; ");
         let retry_request = append_validation_feedback(&request.chat_request, &clean_query, &error_feedback);
-        let retry_query = execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx).await;
+        let retry_query =
+            execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx, token_usage).await;
 
         if !retry_query.trim().is_empty() && retry_query.trim() != "NO ANSWER" {
             let retry_clean = retry_query.replace('\n', " ").replace("```", "").trim().to_string();
@@ -1343,6 +1383,7 @@ async fn generate_final_answer(
     client: &genai::Client,
     model: &str,
     tx: &mpsc::Sender<sse::Event>,
+    token_usage: &mut TokenUsage,
 ) {
     send!(
         tx,
@@ -1352,7 +1393,7 @@ async fn generate_final_answer(
     );
 
     let genai_chat_request = generate_answer_chat_request(&request.chat_request, query, query_result);
-    execute_chat_stream(client, model, genai_chat_request, tx).await;
+    execute_chat_stream(client, model, genai_chat_request, tx, token_usage).await;
 }
 
 #[allow(dead_code)]
@@ -2204,6 +2245,7 @@ async fn execute_chat_with_skills(
     schema: &str,
     skill_catalog: Option<&SkillCatalog>,
     tx: &mpsc::Sender<sse::Event>,
+    token_usage: &mut TokenUsage,
 ) -> String {
     let use_tools = skill_catalog.is_some_and(|c| !c.is_empty()) && skills::supports_tool_calling(model);
 
@@ -2234,7 +2276,10 @@ async fn execute_chat_with_skills(
                     model,
                 );
                 match client.exec_chat(model, fallback_request, None).await {
-                    Ok(response) => return response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER")),
+                    Ok(response) => {
+                        token_usage.add_genai_usage(&response.usage);
+                        return response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER"));
+                    }
                     Err(fallback_err) => {
                         let error_update =
                             Progress::Error(format!("Chat request failed: {e}; fallback failed: {fallback_err}"));
@@ -2249,6 +2294,8 @@ async fn execute_chat_with_skills(
                 return String::from("NO ANSWER");
             }
         };
+
+        token_usage.add_genai_usage(&chat_response.usage);
 
         let tool_calls = chat_response.tool_calls().into_iter().cloned().collect::<Vec<_>>();
 
@@ -2281,7 +2328,10 @@ async fn execute_chat_with_skills(
     // Final attempt after exhausting tool rounds
     genai_request.tools = None;
     match client.exec_chat(model, genai_request, None).await {
-        Ok(response) => response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER")),
+        Ok(response) => {
+            token_usage.add_genai_usage(&response.usage);
+            response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER"))
+        }
         Err(e) => {
             let error_update = Progress::Error(format!("Chat request failed after tool rounds: {e}"));
             send_or_empty!(tx, error_update);
@@ -2295,30 +2345,47 @@ async fn execute_chat_stream(
     model: &str,
     genai_chat_request: genai::chat::ChatRequest,
     tx: &mpsc::Sender<sse::Event>,
+    token_usage: &mut TokenUsage,
 ) -> String {
+    // Enable usage capture so the StreamEnd event carries token counts.
+    let options = genai::chat::ChatOptions::default().with_capture_usage(true);
+
     // Make the actual request to the model
-    let chat_response = match client.exec_chat_stream(model, genai_chat_request, None).await {
+    let chat_response = match client.exec_chat_stream(model, genai_chat_request, Some(&options)).await {
         Ok(response) => response,
         Err(e) => {
+            // Report usage accumulated so far before signalling the terminal error,
+            // so consumers that treat Error as terminal still receive the usage.
+            send_or_empty!(tx, Progress::Usage(*token_usage));
             let error_update = Progress::Error(format!("Chat request failed: {e}"));
             send_or_empty!(tx, error_update);
             return String::new();
         }
     };
 
-    process_chat_stream(chat_response, tx).await
+    process_chat_stream(chat_response, tx, token_usage).await
 }
 
 #[allow(clippy::cognitive_complexity)]
 async fn process_chat_stream(
     chat_response: genai::chat::ChatStreamResponse,
     tx: &mpsc::Sender<sse::Event>,
+    token_usage: &mut TokenUsage,
 ) -> String {
     let mut answer = String::new();
 
     // Extract the response stream
     let mut stream = chat_response.stream;
-    while let Some(Ok(stream_event)) = stream.next().await {
+    while let Some(stream_event) = stream.next().await {
+        let stream_event = match stream_event {
+            Ok(event) => event,
+            Err(e) => {
+                tracing::error!("Streaming answer failed: {}", e);
+                send_or_empty!(tx, Progress::Usage(*token_usage));
+                send_or_empty!(tx, Progress::Error(format!("Answer streaming failed: {e}")));
+                return String::new();
+            }
+        };
         match stream_event {
             genai::chat::ChatStreamEvent::Start => {}
             genai::chat::ChatStreamEvent::Chunk(chunk) => {
@@ -2326,13 +2393,20 @@ async fn process_chat_stream(
                 send_or_empty!(tx, Progress::ModelOutputChunk(chunk.content));
             }
             genai::chat::ChatStreamEvent::ReasoningChunk(_chunk) => {}
-            genai::chat::ChatStreamEvent::End(_end_event) => {}
+            genai::chat::ChatStreamEvent::End(end_event) => {
+                if let Some(usage) = end_event.captured_usage.as_ref() {
+                    token_usage.add_genai_usage(usage);
+                }
+            }
             genai::chat::ChatStreamEvent::ThoughtSignatureChunk(_stream_chunk) => {}
             genai::chat::ChatStreamEvent::ToolCallChunk(_tool_chunk) => {}
         }
     }
 
     tracing::info!("Final answer: {}", answer);
+    // Emit the aggregated token usage before the terminal Result event so consumers
+    // that treat Result as terminal still receive the usage.
+    send_or_empty!(tx, Progress::Usage(*token_usage));
     send_or_empty!(tx, Progress::Result(answer.clone()));
     answer
 }
