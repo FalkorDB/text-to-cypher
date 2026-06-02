@@ -1161,6 +1161,7 @@ async fn process_text_to_cypher_request(
                 result
             } else {
                 tracing::error!("Self-healing failed");
+                send!(tx, Progress::Usage(token_usage));
                 send!(
                     tx,
                     Progress::Error("Query execution failed even after self-healing attempt".to_string())
@@ -1309,6 +1310,7 @@ async fn generate_cypher_query(
 
     if query.trim().is_empty() || query.trim() == "NO ANSWER" {
         tracing::warn!("No query generated from AI model");
+        send_option!(tx, Progress::Usage(*token_usage));
         send_option!(tx, Progress::Error("No valid query was generated".to_string()));
         return None;
     }
@@ -2283,6 +2285,7 @@ async fn execute_chat_with_skills(
                     Err(fallback_err) => {
                         let error_update =
                             Progress::Error(format!("Chat request failed: {e}; fallback failed: {fallback_err}"));
+                        send_or_empty!(tx, Progress::Usage(*token_usage));
                         send_or_empty!(tx, error_update);
                         return String::from("NO ANSWER");
                     }
@@ -2290,6 +2293,7 @@ async fn execute_chat_with_skills(
             }
             Err(e) => {
                 let error_update = Progress::Error(format!("Chat request failed: {e}"));
+                send_or_empty!(tx, Progress::Usage(*token_usage));
                 send_or_empty!(tx, error_update);
                 return String::from("NO ANSWER");
             }
@@ -2334,6 +2338,7 @@ async fn execute_chat_with_skills(
         }
         Err(e) => {
             let error_update = Progress::Error(format!("Chat request failed after tool rounds: {e}"));
+            send_or_empty!(tx, Progress::Usage(*token_usage));
             send_or_empty!(tx, error_update);
             String::from("NO ANSWER")
         }

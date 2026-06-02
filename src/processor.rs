@@ -214,15 +214,13 @@ pub async fn process_text_to_cypher_with_skills(
         &client,
         &model,
         skill_catalog,
+        &mut token_usage,
     )
     .await
     {
-        Ok((q, usage)) => {
-            token_usage.accumulate(&usage);
-            q
-        }
+        Ok(q) => q,
         Err(e) => {
-            return TextToCypherResponse::error(format!("Failed to generate query: {e}"));
+            return TextToCypherResponse::error_with_usage(format!("Failed to generate query: {e}"), Some(token_usage));
         }
     };
 
@@ -263,13 +261,11 @@ pub async fn process_text_to_cypher_with_skills(
                         &healed_result,
                         &client,
                         &model,
+                        &mut token_usage,
                     )
                     .await
                     {
-                        Ok((a, usage)) => {
-                            token_usage.accumulate(&usage);
-                            Some(a)
-                        }
+                        Ok(a) => Some(a),
                         Err(e) => {
                             tracing::error!("Failed to generate answer: {}", e);
                             None
@@ -297,21 +293,24 @@ pub async fn process_text_to_cypher_with_skills(
     tracing::info!("Query executed successfully");
 
     // Step 4: Generate final answer
-    let answer =
-        match generate_final_answer_with_usage(&request.chat_request, &cypher_query, &cypher_result, &client, &model)
-            .await
-        {
-            Ok((a, usage)) => {
-                token_usage.accumulate(&usage);
-                Some(a)
-            }
-            Err(e) => {
-                return TextToCypherResponse::error_with_usage(
-                    format!("Failed to generate answer: {e}"),
-                    Some(token_usage),
-                );
-            }
-        };
+    let answer = match generate_final_answer_with_usage(
+        &request.chat_request,
+        &cypher_query,
+        &cypher_result,
+        &client,
+        &model,
+        &mut token_usage,
+    )
+    .await
+    {
+        Ok(a) => Some(a),
+        Err(e) => {
+            return TextToCypherResponse::error_with_usage(
+                format!("Failed to generate answer: {e}"),
+                Some(token_usage),
+            );
+        }
+    };
 
     TextToCypherResponse::success_with_usage(schema, cypher_query, Some(cypher_result), answer, Some(token_usage))
 }
@@ -349,10 +348,11 @@ async fn attempt_self_healing(
         ),
     });
 
-    // Generate new query (include skill catalog for consistent prompt)
-    let (healed_query, usage) =
-        generate_cypher_query_with_skills_and_usage(&retry_request, schema, client, model, skill_catalog).await?;
-    token_usage.accumulate(&usage);
+    // Generate new query (include skill catalog for consistent prompt).
+    // Usage is accumulated into `token_usage` even if generation/execution below fails.
+    let healed_query =
+        generate_cypher_query_with_skills_and_usage(&retry_request, schema, client, model, skill_catalog, token_usage)
+            .await?;
 
     tracing::info!("Self-healed query generated: {}", healed_query);
 

@@ -65,10 +65,10 @@ impl From<&Usage> for TokenUsage {
         let prompt_tokens = clamp(usage.prompt_tokens);
         let completion_tokens = clamp(usage.completion_tokens);
         // Prefer the provider-reported total; fall back to prompt + completion when absent.
-        let total_tokens = usage.total_tokens.map_or_else(
-            || prompt_tokens.saturating_add(completion_tokens),
-            |_| clamp(usage.total_tokens),
-        );
+        // A negative provider-reported total is clamped to 0 by `clamp` (not summed).
+        let total_tokens = usage
+            .total_tokens
+            .map_or_else(|| prompt_tokens.saturating_add(completion_tokens), |t| clamp(Some(t)));
 
         Self {
             prompt_tokens,
