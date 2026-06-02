@@ -329,7 +329,11 @@ pub struct TextToCypherResponse {
     pub answer: Option<String>,
     pub error: Option<String>,
     /// Aggregated token usage across all LLM calls made while serving the request.
-    /// Present on successful responses; omitted from JSON when absent.
+    /// Present on successful responses, and also on error responses when at least
+    /// one token-consuming LLM call was made before the failure (e.g. a query that
+    /// fails validation, or a failed answer-generation step). Omitted from JSON when
+    /// absent — i.e. for errors that occur before any LLM call (such as schema
+    /// discovery failures), where no tokens were spent.
     pub token_usage: Option<TokenUsage>,
 }
 ```

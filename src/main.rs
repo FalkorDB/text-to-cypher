@@ -147,8 +147,14 @@ mod formatter;
 mod mcp;
 mod schema;
 mod template;
-mod usage;
 mod validator;
+
+/// Re-export the library's `TokenUsage` so the binary and the shared `mcp`
+/// module share a single definition (referenced as `crate::usage::TokenUsage`)
+/// instead of compiling a duplicate copy of `src/usage.rs` into the bin crate.
+mod usage {
+    pub use ::text_to_cypher::usage::TokenUsage;
+}
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
 use formatter::{format_as_json, format_query_records};
@@ -1169,6 +1175,12 @@ async fn process_text_to_cypher_request(
                 return;
             }
         } else {
+            tracing::error!("Self-healing failed: no valid query was generated");
+            send!(tx, Progress::Usage(token_usage));
+            send!(
+                tx,
+                Progress::Error("Self-healing failed: no valid query was generated".to_string())
+            );
             return;
         }
     };
