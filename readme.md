@@ -111,6 +111,34 @@ export OPENAI_API_KEY=your-key-here
 cargo run --example library_usage --no-default-features
 ```
 
+**Listing available models:**
+
+To discover which AI models each provider supports, use `TextToCypherClient::list_models`
+(single provider) and `list_all_models` (all providers). See the
+[list models example](examples/list_client_models.rs).
+
+```bash
+# Optionally set an API key to fetch the provider's live model list
+export OPENAI_API_KEY=your-key-here
+
+# Run the example (library mode - no server dependencies)
+cargo run --example list_client_models --no-default-features
+```
+
+> Results combine the provider's **dynamic** list (fetched live from the provider, which
+> usually needs an API key) with a **curated static catalog** maintained in
+> [`src/models_catalog.rs`](src/models_catalog.rs). Because of this fallback, providers
+> with a curated list still return their well-known models even when no API key is
+> configured. The curated catalog is intentionally small and high-confidence — update it
+> when adding support for newer models.
+
+There is also a lower-level [`list_models` example](examples/list_models.rs) that calls
+the `core::list_adapter_models` / `core::list_all_models` functions directly:
+
+```bash
+cargo run --example list_models --no-default-features
+```
+
 ### Using from TypeScript/JavaScript
 
 See [TypeScript Usage Guide](docs/TYPESCRIPT_USAGE.md) for detailed instructions on using text-to-cypher from TypeScript/JavaScript applications via REST API, Node.js native bindings, or WebAssembly.

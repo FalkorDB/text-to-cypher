@@ -403,7 +403,16 @@ fn execute_query_blocking(
     })
 }
 
-/// Lists all available model names for a specific AI provider
+/// Lists available model names for a specific AI provider.
+///
+/// The result combines two sources:
+/// 1. The *dynamic* list returned by `genai` (a live, usually authenticated request to
+///    the provider — see [`crate::models_catalog`]).
+/// 2. A *curated static* fallback list of well-known models for the provider.
+///
+/// Dynamic models keep their provider-native ordering and appear first; curated models
+/// not already present are appended. This means the function returns useful results even
+/// when no API key is configured (the dynamic call fails but the curated list is used).
 ///
 /// # Arguments
 ///
@@ -412,11 +421,13 @@ fn execute_query_blocking(
 ///
 /// # Returns
 ///
-/// A vector of model names supported by the adapter
+/// A vector of model names for the adapter (dynamic results merged with the curated catalog).
 ///
 /// # Errors
 ///
-/// Returns an error if the model listing request fails
+/// Returns an error only when the dynamic listing fails *and* no curated static models
+/// exist for the provider (e.g. `Ollama`). When a curated list is available, a failed
+/// dynamic call is logged as a warning and the curated list is returned instead.
 ///
 /// # Examples
 ///
@@ -436,15 +447,25 @@ pub async fn list_adapter_models(
     adapter_kind: AdapterKind,
     client: &GenAiClient,
 ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
-    let models = client
-        .all_model_names(adapter_kind, ())
-        .await
-        .map_err(|e| format!("Failed to fetch models for {adapter_kind}: {e}"))?;
+    let statics = crate::models_catalog::static_models(adapter_kind);
 
-    Ok(models)
+    match client.all_model_names(adapter_kind, ()).await {
+        Ok(dynamic) => Ok(crate::models_catalog::merge_models(dynamic, statics)),
+        Err(e) => crate::models_catalog::static_fallback(statics).map_or_else(
+            || Err(format!("Failed to fetch models for {adapter_kind}: {e}").into()),
+            |models| {
+                tracing::warn!("Dynamic model listing for {adapter_kind} failed ({e}); using curated static catalog");
+                Ok(models)
+            },
+        ),
+    }
 }
 
 /// Lists all available models across all supported AI providers
+///
+/// Each provider's dynamic results are merged with a curated static catalog (see
+/// [`list_adapter_models`]), so providers with a curated list still return models even
+/// when no matching API key is configured.
 ///
 /// # Arguments
 ///
@@ -457,8 +478,9 @@ pub async fn list_adapter_models(
 /// # Errors
 ///
 /// This function returns `Ok` with partial results even when individual adapters fail.
-/// Individual adapter failures are logged as warnings and skipped, allowing the function
-/// to continue and return results from successful adapters
+/// Individual adapter failures (only possible for providers without a curated static
+/// list, e.g. `Ollama`) are logged as warnings and skipped, allowing the function to
+/// continue and return results from the other providers.
 ///
 /// # Examples
 ///
@@ -487,13 +509,14 @@ pub async fn list_all_models(
         AdapterKind::Anthropic,
         AdapterKind::Groq,
         AdapterKind::Cohere,
-        // Add DeepSeek, xAI/Grok if available in your version
+        AdapterKind::DeepSeek,
+        AdapterKind::Xai,
     ];
 
     let mut results = HashMap::new();
 
     for &adapter in ADAPTERS {
-        match client.all_model_names(adapter, ()).await {
+        match list_adapter_models(adapter, client).await {
             Ok(models) => {
                 results.insert(adapter, models);
             }

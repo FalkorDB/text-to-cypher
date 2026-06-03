@@ -156,6 +156,7 @@ pub mod chat;
 pub mod core;
 pub mod error;
 pub mod formatter;
+pub mod models_catalog;
 pub mod processor;
 pub mod schema;
 pub mod skills;
@@ -485,10 +486,10 @@ impl TextToCypherClient {
     ///
     /// # Note
     ///
-    /// This method uses the API key configured in the client. Different providers
-    /// require different API keys, so only the provider matching the configured key
-    /// will successfully return results. Other providers will be logged as warnings
-    /// and skipped.
+    /// Each provider's live results are merged with a curated static catalog, so
+    /// providers with a curated list still return models even when the configured API
+    /// key does not match them. Providers without a curated list (e.g. Ollama) are only
+    /// returned when reachable.
     ///
     /// # Example
     ///
