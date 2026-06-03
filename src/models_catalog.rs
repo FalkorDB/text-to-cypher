@@ -145,13 +145,17 @@ mod tests {
             AdapterKind::Gemini,
             AdapterKind::Groq,
             AdapterKind::Cohere,
+            AdapterKind::DeepSeek,
+            AdapterKind::Xai,
         ] {
             assert!(!static_models(kind).is_empty(), "{kind} should have curated models");
         }
     }
 
     #[test]
-    fn static_models_unknown_provider_empty() {
+    fn static_models_uncatalogued_provider_empty() {
+        // Ollama is a known provider but intentionally has no curated catalog
+        // (its models are listed from a local daemon).
         assert!(static_models(AdapterKind::Ollama).is_empty());
     }
 
