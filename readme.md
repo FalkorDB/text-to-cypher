@@ -139,6 +139,34 @@ the `core::list_adapter_models` / `core::list_all_models` functions directly:
 cargo run --example list_models --no-default-features
 ```
 
+**Tracking token usage:**
+
+Each `text_to_cypher` / `cypher_only` request may issue several LLM calls (Cypher
+generation, self-healing retries, skill tool-call rounds, and final answer generation).
+The library aggregates the token counts from all of them into
+`TextToCypherResponse::token_usage`. See the
+[token usage example](examples/token_usage.rs).
+
+```bash
+# Ensure FalkorDB is running
+docker run -d -p 6379:6379 falkordb/falkordb:latest
+
+# Set your OpenAI API key (the account must have available quota)
+export OPENAI_API_KEY=sk-...
+
+# Optionally override defaults (MODEL defaults to gpt-5.5)
+# export MODEL=gpt-5.5
+# export FALKORDB_CONNECTION=falkor://127.0.0.1:6379
+# export GRAPH_NAME=demo_graph
+
+# Run the example (library mode - no server dependencies)
+cargo run --example token_usage --no-default-features
+```
+
+> A `429 insufficient_quota` response means the account has no available quota — that is a
+> billing issue, not a problem with token tracking. Use a funded key to see the reported
+> `prompt_tokens`, `completion_tokens`, and `total_tokens`.
+
 ### Using from TypeScript/JavaScript
 
 See [TypeScript Usage Guide](docs/TYPESCRIPT_USAGE.md) for detailed instructions on using text-to-cypher from TypeScript/JavaScript applications via REST API, Node.js native bindings, or WebAssembly.
