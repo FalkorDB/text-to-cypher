@@ -210,6 +210,7 @@ pub struct TextToCypherClient {
     model: String,
     api_key: String,
     falkordb_connection: String,
+    llm_endpoint: Option<String>,
     skill_catalog: Option<SkillCatalog>,
 }
 
@@ -243,8 +244,22 @@ impl TextToCypherClient {
             model: model.into(),
             api_key: api_key.into(),
             falkordb_connection: falkordb_connection.into(),
+            llm_endpoint: None,
             skill_catalog: None,
         }
+    }
+
+    /// Sets a custom LLM provider endpoint/base URL.
+    ///
+    /// This is useful for OpenAI-compatible local providers such as LM Studio
+    /// (for example, `http://localhost:1234/v1`).
+    #[must_use]
+    pub fn with_llm_endpoint(
+        mut self,
+        endpoint: impl Into<String>,
+    ) -> Self {
+        self.llm_endpoint = Some(endpoint.into());
+        self
     }
 
     /// Sets the skill catalog for dynamic Cypher skill loading.
@@ -320,6 +335,7 @@ impl TextToCypherClient {
             model: Some(self.model.clone()),
             key: Some(self.api_key.clone()),
             falkordb_connection: Some(self.falkordb_connection.clone()),
+            llm_endpoint: self.llm_endpoint.clone(),
             cypher_only: false,
         };
 
@@ -385,6 +401,7 @@ impl TextToCypherClient {
             model: Some(self.model.clone()),
             key: Some(self.api_key.clone()),
             falkordb_connection: Some(self.falkordb_connection.clone()),
+            llm_endpoint: self.llm_endpoint.clone(),
             cypher_only: true,
         };
 
@@ -470,8 +487,8 @@ impl TextToCypherClient {
         &self,
         adapter_kind: AdapterKind,
     ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-        let client = core::create_genai_client(Some(&self.api_key));
-        core::list_adapter_models(adapter_kind, &client).await
+        let client = core::create_genai_client_with_endpoint(Some(&self.api_key), self.llm_endpoint.as_deref());
+        core::list_adapter_models_with_endpoint(adapter_kind, &client, self.llm_endpoint.as_deref()).await
     }
 
     /// Lists all available models across all supported AI providers
@@ -514,8 +531,8 @@ impl TextToCypherClient {
     pub async fn list_all_models(
         &self
     ) -> Result<std::collections::HashMap<AdapterKind, Vec<String>>, Box<dyn std::error::Error + Send + Sync>> {
-        let client = core::create_genai_client(Some(&self.api_key));
-        core::list_all_models(&client).await
+        let client = core::create_genai_client_with_endpoint(Some(&self.api_key), self.llm_endpoint.as_deref());
+        core::list_all_models_with_endpoint(&client, self.llm_endpoint.as_deref()).await
     }
 }
 
@@ -530,6 +547,7 @@ mod tests {
         assert_eq!(client.model, "gpt-4o-mini");
         assert_eq!(client.api_key, "test-api-key");
         assert_eq!(client.falkordb_connection, "falkor://127.0.0.1:6379");
+        assert_eq!(client.llm_endpoint, None);
     }
 
     #[test]
@@ -543,7 +561,16 @@ mod tests {
         assert_eq!(client.model, "anthropic:claude-3");
         assert_eq!(client.api_key, "key123");
         assert_eq!(client.falkordb_connection, "falkor://localhost:6379");
+        assert_eq!(client.llm_endpoint, None);
         assert!(client.skill_catalog.is_none());
+    }
+
+    #[test]
+    fn test_client_with_llm_endpoint() {
+        let client = TextToCypherClient::new("openai::local-model", "key", "falkor://localhost:6379")
+            .with_llm_endpoint("http://localhost:1234/v1");
+
+        assert_eq!(client.llm_endpoint, Some("http://localhost:1234/v1".to_string()));
     }
 
     #[test]

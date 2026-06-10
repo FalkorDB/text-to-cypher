@@ -5,8 +5,8 @@
 
 use crate::chat::ChatRequest;
 use crate::core::{
-    create_genai_client, discover_graph_schema, execute_cypher_query, generate_cypher_query_with_skills_and_usage,
-    generate_final_answer_with_usage,
+    create_genai_client_with_endpoint, discover_graph_schema, execute_cypher_query,
+    generate_cypher_query_with_skills_and_usage, generate_final_answer_with_usage,
 };
 use crate::skills::SkillCatalog;
 use crate::usage::TokenUsage;
@@ -21,6 +21,9 @@ pub struct TextToCypherRequest {
     pub model: Option<String>,
     pub key: Option<String>,
     pub falkordb_connection: Option<String>,
+    /// Optional LLM provider endpoint/base URL override.
+    #[serde(default, alias = "endpoint", alias = "base_url", alias = "baseUrl")]
+    pub llm_endpoint: Option<String>,
     /// When true, returns only the generated Cypher query without executing it
     #[serde(default)]
     pub cypher_only: bool,
@@ -170,7 +173,7 @@ pub async fn process_text_to_cypher_with_skills(
     };
 
     // Create GenAI client
-    let client = create_genai_client(key.as_deref());
+    let client = create_genai_client_with_endpoint(key.as_deref(), request.llm_endpoint.as_deref());
 
     // Resolve service target
     let service_target = match client.resolve_service_target(&model).await {
@@ -448,6 +451,7 @@ mod tests {
             model: Some("gpt-4o-mini".to_string()),
             key: Some("test-key".to_string()),
             falkordb_connection: Some("falkor://localhost:6379".to_string()),
+            llm_endpoint: Some("http://localhost:1234/v1".to_string()),
             cypher_only: false,
         };
 
@@ -456,7 +460,23 @@ mod tests {
 
         assert_eq!(deserialized.graph_name, "test_graph");
         assert_eq!(deserialized.model, Some("gpt-4o-mini".to_string()));
+        assert_eq!(deserialized.llm_endpoint, Some("http://localhost:1234/v1".to_string()));
         assert!(!deserialized.cypher_only);
+    }
+
+    #[test]
+    fn test_request_endpoint_alias_deserialization() {
+        let json = r#"{
+            "graph_name": "test",
+            "chat_request": {
+                "messages": []
+            },
+            "endpoint": "http://localhost:1234/v1"
+        }"#;
+
+        let request: TextToCypherRequest = serde_json::from_str(json).unwrap();
+
+        assert_eq!(request.llm_endpoint, Some("http://localhost:1234/v1".to_string()));
     }
 
     #[test]
@@ -473,6 +493,7 @@ mod tests {
         assert_eq!(request.graph_name, "test");
         assert_eq!(request.model, None);
         assert_eq!(request.key, None);
+        assert_eq!(request.llm_endpoint, None);
         assert!(!request.cypher_only);
     }
 
@@ -540,6 +561,7 @@ mod tests {
             model: Some("gpt-4".to_string()),
             key: None,
             falkordb_connection: None,
+            llm_endpoint: None,
             cypher_only: true,
         };
 
