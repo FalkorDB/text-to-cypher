@@ -2,6 +2,7 @@
 #![allow(clippy::needless_for_each)]
 
 use crate::usage::TokenUsage;
+use ::text_to_cypher::core::{clean_generated_cypher_response, create_genai_client_with_endpoint};
 use ::text_to_cypher::skills::{self, SkillCatalog};
 use actix_multipart::Multipart;
 use actix_web::HttpResponse;
@@ -12,10 +13,7 @@ use falkordb::ConfigValue;
 use falkordb::FalkorClientBuilder;
 use falkordb::FalkorConnectionInfo;
 use futures_util::StreamExt;
-use genai::ModelIden;
 use genai::chat::ChatMessage as GenAiChatMessage;
-use genai::resolver::AuthData;
-use genai::resolver::AuthResolver;
 use moka::sync::Cache;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -266,6 +264,9 @@ struct TextToCypherRequest {
     model: Option<String>,
     key: Option<String>,
     falkordb_connection: Option<String>,
+    /// Optional LLM provider endpoint/base URL override.
+    #[serde(default, alias = "endpoint", alias = "base_url", alias = "baseUrl")]
+    llm_endpoint: Option<String>,
     /// When true, returns only the validated Cypher query without executing it
     #[serde(default)]
     #[schema(default = false)]
@@ -289,6 +290,9 @@ impl std::fmt::Debug for TextToCypherRequest {
         }
         if self.falkordb_connection.is_some() {
             debug_struct.field("falkordb_connection", &"***");
+        }
+        if self.llm_endpoint.is_some() {
+            debug_struct.field("llm_endpoint", &self.llm_endpoint);
         }
 
         debug_struct.finish()
@@ -1039,22 +1043,7 @@ async fn text_to_cypher(req: actix_web::web::Json<TextToCypherRequest>) -> Resul
 
     let model = request.model.as_ref().unwrap(); // Safe to unwrap after the check above
 
-    let client = request.key.as_ref().map_or_else(genai::Client::default, |key| {
-        let key = key.clone(); // Clone the key for use in the closure
-        let auth_resolver = AuthResolver::from_resolver_fn(
-            move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
-                let ModelIden {
-                    adapter_kind,
-                    model_name,
-                } = model_iden;
-                tracing::info!("Using custom auth provider for {adapter_kind} (model: {model_name})");
-
-                // Use the provided key instead of reading from environment
-                Ok(Some(AuthData::from_single(key.clone())))
-            },
-        );
-        genai::Client::builder().with_auth_resolver(auth_resolver).build()
-    });
+    let client = create_genai_client_with_endpoint(request.key.as_deref(), request.llm_endpoint.as_deref());
 
     // Handle service target resolution errors via SSE
     let service_target = match client.resolve_service_target(model).await {
@@ -1264,7 +1253,7 @@ async fn attempt_query_self_healing(
         return None;
     }
 
-    let clean_query = retry_query.replace('\n', " ").replace("```", "").trim().to_string();
+    let clean_query = clean_generated_cypher_response(&retry_query);
 
     // Validate the regenerated query using shared validation logic
     if let Some(validated) = validate_and_log_query(&clean_query, tx).await {
@@ -1327,7 +1316,7 @@ async fn generate_cypher_query(
         return None;
     }
 
-    let clean_query = query.replace('\n', " ").replace("```", "").trim().to_string();
+    let clean_query = clean_generated_cypher_response(&query);
 
     // Validate the generated query using shared validation logic
     if validate_and_log_query(&clean_query, tx).await.is_none() {
@@ -1344,7 +1333,7 @@ async fn generate_cypher_query(
             execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx, token_usage).await;
 
         if !retry_query.trim().is_empty() && retry_query.trim() != "NO ANSWER" {
-            let retry_clean = retry_query.replace('\n', " ").replace("```", "").trim().to_string();
+            let retry_clean = clean_generated_cypher_response(&retry_query);
 
             // Use shared validation for retry as well
             if let Some(validated) = validate_and_log_query(&retry_clean, tx).await {
