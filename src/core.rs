@@ -13,7 +13,7 @@ use crate::validator::CypherValidator;
 use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo};
 use genai::adapter::AdapterKind;
 use genai::chat::ChatMessage as GenAiChatMessage;
-use genai::resolver::{AuthData, AuthResolver};
+use genai::resolver::{AuthData, AuthResolver, Endpoint, ServiceTargetResolver};
 use genai::{Client as GenAiClient, ModelIden};
 use std::error::Error;
 
@@ -167,7 +167,7 @@ fn validate_generated_query(query: &str) -> Result<String, Box<dyn Error + Send 
         return Err("No valid query was generated".into());
     }
 
-    let clean_query = query.replace('\n', " ").replace("```", "").trim().to_string();
+    let clean_query = clean_generated_cypher_response(query);
 
     let validation_result = CypherValidator::validate(&clean_query);
     if !validation_result.is_valid {
@@ -175,6 +175,126 @@ fn validate_generated_query(query: &str) -> Result<String, Box<dyn Error + Send 
     }
 
     Ok(clean_query)
+}
+
+/// Clean common formatting that LLMs may add around generated Cypher.
+#[must_use]
+pub fn clean_generated_cypher_response(response: &str) -> String {
+    let mut query = extract_fenced_block(response).unwrap_or(response).trim();
+
+    query = strip_known_prefixes(query);
+    query = strip_surrounding_quotes(query);
+    query = trim_to_first_cypher_keyword(query);
+    query = strip_explanation_suffix(query);
+    query = strip_surrounding_quotes(query);
+
+    query.replace('\n', " ").replace("```", "").trim().to_string()
+}
+
+fn extract_fenced_block(response: &str) -> Option<&str> {
+    let start = response.find("```")?;
+    let after_opening_fence = &response[start + 3..];
+    let content_start = after_opening_fence.find('\n').map_or(0, |newline| newline + 1);
+    let content = &after_opening_fence[content_start..];
+    let end = content.find("```").unwrap_or(content.len());
+    Some(&content[..end])
+}
+
+fn strip_known_prefixes(mut query: &str) -> &str {
+    loop {
+        let trimmed = query.trim_start();
+        let lower = trimmed.to_ascii_lowercase();
+        let Some(prefix_len) = ["cypher query:", "cypher:", "query:", "generated query:", "generated cypher:"]
+            .iter()
+            .find_map(|prefix| lower.starts_with(prefix).then_some(prefix.len()))
+        else {
+            return trimmed;
+        };
+        query = &trimmed[prefix_len..];
+    }
+}
+
+fn strip_surrounding_quotes(mut query: &str) -> &str {
+    loop {
+        let trimmed = query.trim();
+        let Some(first) = trimmed.chars().next() else {
+            return trimmed;
+        };
+        let Some(last) = trimmed.chars().last() else {
+            return trimmed;
+        };
+
+        let matching_quotes = matches!((first, last), ('"', '"') | ('\'', '\'') | ('`', '`'));
+        if !matching_quotes || trimmed.len() < 2 {
+            return trimmed;
+        }
+
+        query = &trimmed[first.len_utf8()..trimmed.len() - last.len_utf8()];
+    }
+}
+
+fn trim_to_first_cypher_keyword(query: &str) -> &str {
+    let trimmed = query.trim_start();
+    if starts_with_cypher_keyword(trimmed) {
+        return trimmed;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    ["match", "call", "return", "with", "unwind", "create", "merge"]
+        .iter()
+        .filter_map(|keyword| find_word(&lower, keyword))
+        .min()
+        .map_or(trimmed, |index| &trimmed[index..])
+}
+
+fn starts_with_cypher_keyword(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    ["match", "call", "return", "with", "unwind", "create", "merge"]
+        .iter()
+        .any(|keyword| lower.starts_with(keyword) && is_word_boundary(&lower, keyword.len()))
+}
+
+fn find_word(
+    haystack: &str,
+    needle: &str,
+) -> Option<usize> {
+    haystack.match_indices(needle).find_map(|(index, _)| {
+        let before_is_boundary = index == 0 || is_word_boundary(haystack, index);
+        let after_is_boundary = is_word_boundary(haystack, index + needle.len());
+        (before_is_boundary && after_is_boundary).then_some(index)
+    })
+}
+
+fn is_word_boundary(
+    value: &str,
+    index: usize,
+) -> bool {
+    value
+        .as_bytes()
+        .get(index)
+        .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_')
+}
+
+fn strip_explanation_suffix(query: &str) -> &str {
+    [
+        "\nExplanation:",
+        "\nNote:",
+        "\nRationale:",
+        " Explanation:",
+        " Note:",
+        " Rationale:",
+    ]
+    .iter()
+    .filter_map(|marker| find_case_insensitive(query, marker))
+    .min()
+    .map_or(query, |index| &query[..index])
+}
+
+fn find_case_insensitive(
+    haystack: &str,
+    needle: &str,
+) -> Option<usize> {
+    haystack.to_ascii_lowercase().find(&needle.to_ascii_lowercase())
 }
 
 /// Executes a Cypher query against the graph database
@@ -260,7 +380,25 @@ pub async fn generate_final_answer_with_usage(
 /// Creates a `GenAI` client with optional custom API key
 #[must_use]
 pub fn create_genai_client(api_key: Option<&str>) -> GenAiClient {
-    api_key.map_or_else(GenAiClient::default, |key| {
+    create_genai_client_with_endpoint(api_key, None)
+}
+
+/// Creates a `GenAI` client with optional custom API key and provider endpoint.
+#[must_use]
+pub fn create_genai_client_with_endpoint(
+    api_key: Option<&str>,
+    llm_endpoint: Option<&str>,
+) -> GenAiClient {
+    let has_api_key = api_key.is_some();
+    let has_endpoint = llm_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty());
+
+    if !has_api_key && !has_endpoint {
+        return GenAiClient::default();
+    }
+
+    let mut builder = GenAiClient::builder();
+
+    if let Some(key) = api_key {
         let key = key.to_string();
         let auth_resolver = AuthResolver::from_resolver_fn(
             move |model_iden: ModelIden| -> Result<Option<AuthData>, genai::resolver::Error> {
@@ -272,7 +410,32 @@ pub fn create_genai_client(api_key: Option<&str>) -> GenAiClient {
                 Ok(Some(AuthData::from_single(key.clone())))
             },
         );
-        GenAiClient::builder().with_auth_resolver(auth_resolver).build()
+        builder = builder.with_auth_resolver(auth_resolver);
+    }
+
+    if let Some(endpoint) = llm_endpoint.and_then(normalize_llm_endpoint) {
+        let service_target_resolver = ServiceTargetResolver::from_resolver_fn(
+            move |mut service_target: genai::ServiceTarget| -> Result<genai::ServiceTarget, genai::resolver::Error> {
+                service_target.endpoint = Endpoint::from_owned(endpoint.clone());
+                Ok(service_target)
+            },
+        );
+        builder = builder.with_service_target_resolver(service_target_resolver);
+    }
+
+    builder.build()
+}
+
+fn normalize_llm_endpoint(endpoint: &str) -> Option<String> {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() {
+        return None;
+    }
+
+    Some(if endpoint.ends_with('/') {
+        endpoint.to_string()
+    } else {
+        format!("{endpoint}/")
     })
 }
 
@@ -447,9 +610,24 @@ pub async fn list_adapter_models(
     adapter_kind: AdapterKind,
     client: &GenAiClient,
 ) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
-    let statics = crate::models_catalog::static_models(adapter_kind);
+    list_adapter_models_with_endpoint(adapter_kind, client, None).await
+}
 
-    match client.all_model_names(adapter_kind, ()).await {
+/// Lists available model names for a specific AI provider with an optional endpoint override.
+///
+/// # Errors
+///
+/// Returns an error only when the dynamic listing fails *and* no curated static models
+/// exist for the provider.
+pub async fn list_adapter_models_with_endpoint(
+    adapter_kind: AdapterKind,
+    client: &GenAiClient,
+    llm_endpoint: Option<&str>,
+) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
+    let statics = crate::models_catalog::static_models(adapter_kind);
+    let endpoint = llm_endpoint.and_then(normalize_llm_endpoint).map(Endpoint::from_owned);
+
+    match client.all_model_names(adapter_kind, (endpoint, None::<AuthData>)).await {
         Ok(dynamic) => Ok(crate::models_catalog::merge_models(dynamic, statics)),
         Err(e) => crate::models_catalog::static_fallback(statics).map_or_else(
             || Err(format!("Failed to fetch models for {adapter_kind}: {e}").into()),
@@ -500,6 +678,18 @@ pub async fn list_adapter_models(
 pub async fn list_all_models(
     client: &GenAiClient
 ) -> Result<std::collections::HashMap<AdapterKind, Vec<String>>, Box<dyn Error + Send + Sync>> {
+    list_all_models_with_endpoint(client, None).await
+}
+
+/// Lists all available models across all supported AI providers with an optional endpoint override.
+///
+/// # Errors
+///
+/// This function returns `Ok` with partial results even when individual adapters fail.
+pub async fn list_all_models_with_endpoint(
+    client: &GenAiClient,
+    llm_endpoint: Option<&str>,
+) -> Result<std::collections::HashMap<AdapterKind, Vec<String>>, Box<dyn Error + Send + Sync>> {
     use std::collections::HashMap;
 
     const ADAPTERS: &[AdapterKind] = &[
@@ -516,7 +706,7 @@ pub async fn list_all_models(
     let mut results = HashMap::new();
 
     for &adapter in ADAPTERS {
-        match list_adapter_models(adapter, client).await {
+        match list_adapter_models_with_endpoint(adapter, client, llm_endpoint).await {
             Ok(models) => {
                 results.insert(adapter, models);
             }
@@ -533,6 +723,36 @@ pub async fn list_all_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clean_generated_cypher_response_strips_surrounding_quotes() {
+        assert_eq!(
+            clean_generated_cypher_response("\"MATCH (n) RETURN count(n)\""),
+            "MATCH (n) RETURN count(n)"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_extracts_fenced_query() {
+        assert_eq!(
+            clean_generated_cypher_response("```cypher\nMATCH (n) RETURN n\n```"),
+            "MATCH (n) RETURN n"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_strips_explanation_suffix() {
+        assert_eq!(
+            clean_generated_cypher_response("MATCH (n) RETURN count(n) Explanation: this counts all nodes"),
+            "MATCH (n) RETURN count(n)"
+        );
+    }
+
+    #[test]
+    fn validate_generated_query_accepts_quoted_query() {
+        let query = validate_generated_query("\"MATCH (n) RETURN count(n)\"").expect("quoted query should validate");
+        assert_eq!(query, "MATCH (n) RETURN count(n)");
+    }
 
     #[tokio::test]
     #[ignore = "Requires valid API key"]
