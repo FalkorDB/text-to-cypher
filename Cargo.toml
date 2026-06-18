@@ -45,7 +45,7 @@ serde_yaml_ng = "0.10"
 tracing = { version = "0.1", features = ["default"] }
 tokio = { version = "1.52.3", features = ["full"] }
 genai = "0.6.5"
-falkordb = { version = "0.3.0", features = ["tokio"] }
+falkordb = { version = "0.8.0", features = ["tokio"] }
 async-trait = "0.1.89"
 futures = "0.3.31"
 regex = "1.12"
