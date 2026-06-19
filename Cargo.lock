@@ -491,6 +491,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "backon"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cffb0e931875b666fc4fcb20fee52e9bbd1ef836fd9e9e04ec21555f9f85f7ef"
+dependencies = [
+ "fastrand",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1052,10 +1061,11 @@ dependencies = [
 
 [[package]]
 name = "falkordb"
-version = "0.3.0"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "828bd750fcaf183b8126548bef16abb75ee93ba06a248213c07a9ad2cebed0ee"
+checksum = "9ac188475634c3f22556c112d584e92d2807b47ac6f394b56fb5e1cf2da53564"
 dependencies = [
+ "futures-core",
  "parking_lot",
  "redis",
  "regex",
@@ -2222,11 +2232,14 @@ version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a12e6b5f4d8ef33944e833e2b1859ad478deab6e431d7337b30ee2efe21f7543"
 dependencies = [
+ "arc-swap",
  "arcstr",
  "async-lock",
+ "backon",
  "bytes",
  "cfg-if",
  "combine",
+ "futures-channel",
  "futures-util",
  "itoa",
  "log",
