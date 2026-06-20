@@ -155,7 +155,7 @@ mod usage {
 }
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
-use formatter::{format_as_json, format_query_records};
+use formatter::{format_as_json, format_query_records, rows_lossy};
 use mcp::run_mcp_server;
 use template::TemplateEngine;
 use validator::CypherValidator;
@@ -1690,11 +1690,7 @@ fn execute_query_blocking(
                 .map_err(|e| format!("Query execution failed: {e}"))?
         };
 
-        let mut records = Vec::new();
-        for record in query_result.data {
-            records.push(record);
-        }
-        Ok(records)
+        Ok(rows_lossy(query_result.data))
     })
 }
 
@@ -1756,10 +1752,7 @@ fn execute_query_with_csv_import_blocking(
 
         tracing::info!("Query {query} executed, processing results...");
 
-        let mut records = Vec::new();
-        for record in query_result.data {
-            records.push(record);
-        }
+        let records = rows_lossy(query_result.data);
 
         tracing::info!(
             "Query executed successfully with CSV import, records count: {}",
@@ -1824,10 +1817,7 @@ fn execute_query_with_existing_csv_blocking(
 
         tracing::info!("Query {query} executed, processing results...");
 
-        let mut records = Vec::new();
-        for record in query_result.data {
-            records.push(record);
-        }
+        let records = rows_lossy(query_result.data);
 
         tracing::info!(
             "Query executed successfully with existing CSV file, records count: {}",

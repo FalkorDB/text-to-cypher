@@ -4,7 +4,7 @@
 //! in both the standalone HTTP server and library contexts.
 
 use crate::chat::{ChatRequest, ChatRole};
-use crate::formatter::format_query_records;
+use crate::formatter::{format_query_records, rows_lossy};
 use crate::schema::discovery::Schema;
 use crate::skills::{self, SkillCatalog};
 use crate::template::TemplateEngine;
@@ -558,11 +558,7 @@ fn execute_query_blocking(
                 .map_err(|e| format!("Query execution failed: {e}"))?
         };
 
-        let mut records = Vec::new();
-        for record in query_result.data {
-            records.push(record);
-        }
-        Ok(records)
+        Ok(rows_lossy(query_result.data))
     })
 }
 

@@ -13,8 +13,21 @@
 //! - Single record: `[(:Person {name: "John"}), 25, "Engineer"]`
 //! - Multiple records: `1. (:Person {name: "John"})\n2. (:Person {name: "Jane"})`
 
-use falkordb::FalkorValue;
+use falkordb::{FalkorValue, RowStream};
 use std::fmt::Write;
+
+/// Bridges a query result's rows back to the pre-0.7 `Vec<FalkorValue>` shape.
+///
+/// `falkordb` 0.7 made `QueryResult::data` header-aware (yielding `Row`) and 0.8 turned it into a
+/// `Stream` on the async client. This shim restores the flat `Vec<Vec<FalkorValue>>` that the
+/// formatter and schema-discovery code were written against (parse errors collapse to
+/// `FalkorValue::Unparseable`), so the REST/JSON output is unchanged across the upgrade. It is the
+/// single place that performs this conversion — the one thing to revisit when migrating to the
+/// typed, header-aware `Row` API.
+#[must_use]
+pub fn rows_lossy(data: RowStream) -> Vec<Vec<FalkorValue>> {
+    data.into_values_lossy().collect()
+}
 
 /// Formats query results in a compact, LLM-friendly format
 pub fn format_query_records(records: &[Vec<FalkorValue>]) -> String {
