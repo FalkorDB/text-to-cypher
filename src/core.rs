@@ -4,13 +4,13 @@
 //! in both the standalone HTTP server and library contexts.
 
 use crate::chat::{ChatRequest, ChatRole};
-use crate::formatter::{format_query_records, rows_lossy};
+use crate::formatter::{build_falkordb_async_client, format_query_records, rows_lossy};
 use crate::schema::discovery::Schema;
 use crate::skills::{self, SkillCatalog};
 use crate::template::TemplateEngine;
 use crate::usage::TokenUsage;
 use crate::validator::CypherValidator;
-use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo};
+use falkordb::{FalkorAsyncClient, FalkorConnectionInfo};
 use genai::adapter::AdapterKind;
 use genai::chat::ChatMessage as GenAiChatMessage;
 use genai::resolver::{AuthData, AuthResolver, Endpoint, ServiceTargetResolver};
@@ -30,9 +30,7 @@ pub async fn discover_graph_schema(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
@@ -312,9 +310,7 @@ pub async fn execute_cypher_query(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 

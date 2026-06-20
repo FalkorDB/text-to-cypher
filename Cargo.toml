@@ -19,7 +19,11 @@ unsafe_code = "forbid"
 multiple-crate-versions = "allow"
 
 [features]
-default = ["server"]
+default = ["server", "falkordb-tracing"]
+# Emit FalkorDB tracing spans (privacy-safe query fingerprints). Default-on for the binary/Docker
+# image; dependents that build the library with `default-features = false` (e.g. the napi bindings)
+# opt out, keeping their build lean and avoiding the deep async+tracing recursion-limit cost.
+falkordb-tracing = ["falkordb/tracing"]
 server = [
     "dep:actix-web",
     "dep:actix-multipart",

@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+#![doc(test(attr(recursion_limit = "256")))]
 //! # text-to-cypher
 //!
 //! A library for translating natural language text to Cypher queries using AI models.
