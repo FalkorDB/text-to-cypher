@@ -13,8 +13,37 @@
 //! - Single record: `[(:Person {name: "John"}), 25, "Engineer"]`
 //! - Multiple records: `1. (:Person {name: "John"})\n2. (:Person {name: "Jane"})`
 
-use falkordb::{FalkorValue, RowStream};
+use falkordb::{
+    FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo, FalkorResult, FalkorValue, RetryPolicy, RowStream,
+};
 use std::fmt::Write;
+
+/// Builds an asynchronous `FalkorDB` client with the read-only retry policy applied.
+///
+/// Centralizing client construction here ensures every connection retries only idempotent
+/// read operations (queries issued via `ro_query` and schema discovery) on transient failures,
+/// using exponential backoff. Writes are never retried, so a failed write is surfaced
+/// immediately and can never be duplicated.
+///
+/// Kept `pub(crate)` so `FalkorDB` types are not exposed in this crate's public API. It lives in
+/// this module (compiled into both the library and the binary) so the binary can share it without
+/// a public re-export.
+///
+/// # Errors
+///
+/// Returns an error if the client cannot be built (for example, when the connection fails).
+// `pub(crate)` keeps FalkorDB types out of the public API in the library (this is a `pub mod`); it
+// looks redundant only in the binary, where `formatter` is a private `mod`.
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) async fn build_falkordb_async_client(
+    connection_info: FalkorConnectionInfo
+) -> FalkorResult<FalkorAsyncClient> {
+    FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .with_retry_policy(RetryPolicy::read_only())
+        .build()
+        .await
+}
 
 /// Bridges a query result's rows back to the pre-0.7 `Vec<FalkorValue>` shape.
 ///

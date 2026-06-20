@@ -2,9 +2,7 @@
 #![allow(clippy::needless_for_each)]
 
 use crate::usage::TokenUsage;
-use ::text_to_cypher::core::{
-    build_falkordb_async_client, clean_generated_cypher_response, create_genai_client_with_endpoint,
-};
+use ::text_to_cypher::core::{clean_generated_cypher_response, create_genai_client_with_endpoint};
 use ::text_to_cypher::skills::{self, SkillCatalog};
 use actix_multipart::Multipart;
 use actix_web::HttpResponse;
@@ -156,7 +154,7 @@ mod usage {
 }
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
-use formatter::{format_as_json, format_query_records, rows_lossy};
+use formatter::{build_falkordb_async_client, format_as_json, format_query_records, rows_lossy};
 use mcp::run_mcp_server;
 use template::TemplateEngine;
 use validator::CypherValidator;
