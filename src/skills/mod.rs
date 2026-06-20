@@ -46,9 +46,14 @@ impl SkillCatalog {
     /// image (which loads skills from `SKILLS_DIR`).
     #[must_use]
     pub fn builtin() -> Self {
-        Self {
-            skills: builtin::builtin_skills(),
-        }
+        // Parse the embedded skills once, then clone the cached catalog. `builtin()` is on the
+        // per-request hot path (e.g. `process_text_to_cypher`), so avoid re-parsing YAML each call.
+        static BUILTIN: std::sync::OnceLock<SkillCatalog> = std::sync::OnceLock::new();
+        BUILTIN
+            .get_or_init(|| Self {
+                skills: builtin::builtin_skills(),
+            })
+            .clone()
     }
 
     /// Merge `other` into this catalog, returning the combined catalog. Skills in `other` override
@@ -72,7 +77,9 @@ impl SkillCatalog {
         profile: SkillProfile,
     ) -> Self {
         match profile {
-            SkillProfile::ReadOnly => self.skills.retain(|id, _| !builtin::is_write_skill(id)),
+            SkillProfile::ReadOnly => self
+                .skills
+                .retain(|id, skill| !builtin::is_write_skill(id) && !builtin::teaches_write_cypher(&skill.content)),
         }
         self
     }
@@ -330,6 +337,34 @@ mod tests {
 
         assert!(catalog.get_skill("create-range-indexes").is_none());
         assert!(catalog.get_skill("match-patterns-and-return-projections").is_some());
+    }
+
+    #[test]
+    fn test_with_profile_filters_content_based_write_skills() {
+        // A skill not in the ID denylist but whose code teaches a write clause is still filtered.
+        let mut skills = HashMap::new();
+        skills.insert(
+            "custom-writer".to_string(),
+            Skill {
+                id: "custom-writer".to_string(),
+                name: "Custom writer".to_string(),
+                description: "not in the ID denylist".to_string(),
+                content: "```cypher\nMATCH (n) SET n.flag = true\n```".to_string(),
+            },
+        );
+        skills.insert(
+            "custom-reader".to_string(),
+            Skill {
+                id: "custom-reader".to_string(),
+                name: "Custom reader".to_string(),
+                description: "read only".to_string(),
+                content: "```cypher\nMATCH (n) RETURN n\n```".to_string(),
+            },
+        );
+        let catalog = SkillCatalog { skills }.with_profile(SkillProfile::ReadOnly);
+
+        assert!(catalog.get_skill("custom-writer").is_none());
+        assert!(catalog.get_skill("custom-reader").is_some());
     }
 
     #[test]
