@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::formatter::rows_lossy;
 use falkordb::{AsyncGraph, FalkorDBError, FalkorValue};
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -116,7 +117,7 @@ impl Schema {
         let entity_attributes = graph.ro_query(query).execute().await?;
         let mut attributes = Vec::new();
 
-        for record in entity_attributes.data {
+        for record in rows_lossy(entity_attributes.data) {
             // Extract both kt (key-type info) and count from the record
             if let (Some(FalkorValue::Array(kt_array)), Some(FalkorValue::I64(count))) = (record.first(), record.get(1))
             {
@@ -185,7 +186,7 @@ impl Schema {
             match graph.ro_query(&query).execute().await {
                 Ok(result) => {
                     let mut examples = Vec::new();
-                    for record in result.data {
+                    for record in rows_lossy(result.data) {
                         if let Some(FalkorValue::String(value)) = record.first() {
                             examples.push(value.clone());
                         }
@@ -264,7 +265,7 @@ impl Schema {
 
         // Collect labels first to avoid borrowing issues
         let mut entity_labels = Vec::new();
-        for record in labels_result.data {
+        for record in rows_lossy(labels_result.data) {
             if let Some(FalkorValue::String(label)) = record.first() {
                 entity_labels.push(label.clone());
             }
@@ -277,7 +278,7 @@ impl Schema {
         let relations_result = graph.ro_query("CALL db.relationshipTypes()").execute().await?;
 
         let mut relationship_labels = Vec::new();
-        for record in relations_result.data {
+        for record in rows_lossy(relations_result.data) {
             if let Some(FalkorValue::String(relation_label)) = record.first() {
                 relationship_labels.push(relation_label.clone());
             }
