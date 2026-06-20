@@ -1,6 +1,8 @@
+mod builtin;
 mod loader;
 mod parser;
 
+pub use builtin::SkillProfile;
 pub use loader::SkillCatalog;
 pub use parser::Skill;
 
@@ -35,6 +37,44 @@ impl SkillCatalog {
     #[must_use]
     pub fn empty() -> Self {
         Self { skills: HashMap::new() }
+    }
+
+    /// Build a catalog from the curated, read-only `FalkorDB` Cypher skills embedded in the binary.
+    ///
+    /// Unlike [`from_directory`](Self::from_directory) this needs no filesystem access, so library,
+    /// napi, and browser consumers get `FalkorDB`-specific context by default — not only the Docker
+    /// image (which loads skills from `SKILLS_DIR`).
+    #[must_use]
+    pub fn builtin() -> Self {
+        Self {
+            skills: builtin::builtin_skills(),
+        }
+    }
+
+    /// Merge `other` into this catalog, returning the combined catalog. Skills in `other` override
+    /// skills already present under the same ID.
+    #[must_use]
+    pub fn merged_with(
+        mut self,
+        other: Self,
+    ) -> Self {
+        self.skills.extend(other.skills);
+        self
+    }
+
+    /// Drop any skills not permitted under `profile`.
+    ///
+    /// Under [`SkillProfile::ReadOnly`] known write/DDL skills are removed, so an externally supplied
+    /// catalog (e.g. the server's `SKILLS_DIR`) cannot reintroduce write instructions into the prompt.
+    #[must_use]
+    pub fn with_profile(
+        mut self,
+        profile: SkillProfile,
+    ) -> Self {
+        match profile {
+            SkillProfile::ReadOnly => self.skills.retain(|id, _| !builtin::is_write_skill(id)),
+        }
+        self
     }
 
     /// Render a compact catalog for inclusion in the system prompt.
@@ -247,6 +287,101 @@ const fn is_tool_capable_adapter(kind: genai::adapter::AdapterKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_builtin_catalog_loads_read_only_skills() {
+        let catalog = SkillCatalog::builtin();
+        assert!(!catalog.is_empty());
+        assert_eq!(catalog.len(), 5);
+        for id in [
+            "falkordb-index-aware-predicates",
+            "falkordb-fulltext-search",
+            "falkordb-vector-search",
+            "falkordb-parameterized-queries",
+            "falkordb-path-finding",
+        ] {
+            assert!(catalog.get_skill(id).is_some(), "missing built-in skill {id}");
+        }
+        assert!(catalog.render_catalog().contains("falkordb-fulltext-search"));
+    }
+
+    #[test]
+    fn test_with_profile_read_only_filters_write_skills() {
+        let mut skills = HashMap::new();
+        skills.insert(
+            "create-range-indexes".to_string(),
+            Skill {
+                id: "create-range-indexes".to_string(),
+                name: "Create range indexes".to_string(),
+                description: "DDL".to_string(),
+                content: "creates an index".to_string(),
+            },
+        );
+        skills.insert(
+            "match-patterns-and-return-projections".to_string(),
+            Skill {
+                id: "match-patterns-and-return-projections".to_string(),
+                name: "Match patterns".to_string(),
+                description: "read".to_string(),
+                content: "MATCH (n) RETURN n".to_string(),
+            },
+        );
+        let catalog = SkillCatalog { skills }.with_profile(SkillProfile::ReadOnly);
+
+        assert!(catalog.get_skill("create-range-indexes").is_none());
+        assert!(catalog.get_skill("match-patterns-and-return-projections").is_some());
+    }
+
+    #[test]
+    fn test_merged_with_overrides_by_id() {
+        let mut base = HashMap::new();
+        base.insert(
+            "a".to_string(),
+            Skill {
+                id: "a".to_string(),
+                name: "Base A".to_string(),
+                description: "base".to_string(),
+                content: "base".to_string(),
+            },
+        );
+        let mut other = HashMap::new();
+        other.insert(
+            "a".to_string(),
+            Skill {
+                id: "a".to_string(),
+                name: "Override A".to_string(),
+                description: "override".to_string(),
+                content: "override".to_string(),
+            },
+        );
+        other.insert(
+            "b".to_string(),
+            Skill {
+                id: "b".to_string(),
+                name: "B".to_string(),
+                description: "b".to_string(),
+                content: "b".to_string(),
+            },
+        );
+
+        let merged = SkillCatalog { skills: base }.merged_with(SkillCatalog { skills: other });
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged.get_skill("a").unwrap().name, "Override A");
+        assert!(merged.get_skill("b").is_some());
+    }
+
+    #[test]
+    fn test_builtin_render_all_content_within_budget() {
+        // Non-tool providers inline the full built-in bodies; guard against unbounded prompt growth.
+        let rendered = SkillCatalog::builtin().render_all_content();
+        assert!(!rendered.is_empty());
+        assert!(
+            rendered.len() < 8_000,
+            "built-in inline content too large: {} bytes",
+            rendered.len()
+        );
+    }
 
     #[test]
     fn test_empty_catalog() {

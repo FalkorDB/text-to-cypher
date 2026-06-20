@@ -6,7 +6,7 @@ A high-performance Rust library and API service that translates natural language
 
 ## ✨ What's New
 
-**Dynamic Cypher Skills**: Load FalkorDB-specific Cypher best practices at runtime from external skill files. The LLM can request detailed skill content on-demand via tool calling, keeping prompts compact while enabling deep expertise when needed. See [Dynamic Cypher Skills](#dynamic-cypher-skills) for details.
+**FalkorDB Cypher Skills**: Curated, read-only FalkorDB-specific Cypher best practices are **built in by default** (and extensible from external skill files). The LLM can request detailed skill content on-demand via tool calling, keeping prompts compact while enabling deep expertise when needed. See [Dynamic Cypher Skills](#dynamic-cypher-skills) for details.
 
 **Library Support**: Now available as a Rust library! Use text-to-cypher directly in your Rust applications without the REST API overhead.
 
@@ -37,7 +37,7 @@ A high-performance Rust library and API service that translates natural language
 
 ### AI & Quality
 - **AI Model Integration**: Powered by genai for natural language processing with support for multiple providers
-- **Dynamic Cypher Skills**: Load FalkorDB-specific best practices from external skill files with on-demand tool calling
+- **Dynamic Cypher Skills**: Built-in FalkorDB-specific best practices by default, extensible from external skill files, with on-demand tool calling
 - **Schema-Aware Generation**: Uses schema with example values for better query accuracy
 - **Production Ready**: Comprehensive error handling, logging, and robust architecture
 - **Environment Configuration**: Flexible configuration via `.env` file with fallback to request parameters
@@ -879,7 +879,7 @@ The library is published with:
 
 ## Dynamic Cypher Skills
 
-Text-to-cypher supports loading FalkorDB-specific Cypher expertise from external skill files at runtime. This allows the LLM to generate better, more efficient Cypher queries by leveraging domain-specific knowledge about FalkorDB's query engine.
+Text-to-cypher ships a curated set of **read-only, FalkorDB-specific Cypher skills built in** — every consumer (library, napi bindings, browser, and server) gets them by default, with no setup. You can additionally load or override skills from external skill files at runtime. This allows the LLM to generate better, more efficient Cypher queries by leveraging domain-specific knowledge about FalkorDB's query engine.
 
 ### How It Works
 
@@ -1048,6 +1048,10 @@ Prefer: `MATCH (n:Person) WHERE n.age > 30 OR n.age < 30 RETURN n`
 ```
 
 ### Library Usage with Skills
+
+The built-in, read-only FalkorDB skills are enabled **by default** — `TextToCypherClient::new(...)` already
+includes them, so no setup is required. Use `.with_additional_skills(catalog)` to extend them,
+`.with_skills(catalog)` to replace them, or `.without_skills()` to disable them.
 
 **Basic — load skills from a directory:**
 

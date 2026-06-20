@@ -7,6 +7,7 @@ impl TemplateEngine {
     const SYSTEM_PROMPT: &'static str = include_str!("../templates/system_prompt.txt");
     const USER_PROMPT: &'static str = include_str!("../templates/user_prompt.txt");
     const LAST_REQUEST_PROMPT: &'static str = include_str!("../templates/last_request_prompt.txt");
+    const FALKORDB_REFERENCE: &'static str = include_str!("../templates/falkordb_reference.txt");
 
     #[must_use]
     pub fn render(
@@ -39,6 +40,7 @@ impl TemplateEngine {
         let mut variables = HashMap::new();
         variables.insert("ONTOLOGY", ontology);
         variables.insert("SKILLS_CATALOG", skills_catalog);
+        variables.insert("FALKORDB_REFERENCE", Self::FALKORDB_REFERENCE);
         let rendered = Self::render(Self::SYSTEM_PROMPT, &variables);
 
         if !skills_catalog.trim().is_empty() {
@@ -91,5 +93,30 @@ impl TemplateEngine {
         variables.insert("CYPHER_RESULT", cypher_result);
         variables.insert("USER_QUESTION", question);
         Self::render(Self::LAST_REQUEST_PROMPT, &variables)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_prompt_includes_falkordb_reference() {
+        let prompt = TemplateEngine::render_system_prompt("{}");
+        assert!(prompt.contains("db.idx.fulltext.queryNodes"));
+        assert!(prompt.contains("db.idx.vector.queryNodes"));
+        assert!(prompt.contains("algo.SPpaths"));
+        assert!(!prompt.contains("{{FALKORDB_REFERENCE}}"));
+        assert!(!prompt.contains("{{ONTOLOGY}}"));
+        assert!(!prompt.contains("{{SKILLS_CATALOG}}"));
+    }
+
+    #[test]
+    fn system_prompt_with_skills_includes_catalog_and_reference() {
+        let prompt = TemplateEngine::render_system_prompt_with_skills("{}", "Available skills:\n- foo: bar");
+        assert!(prompt.contains("db.idx.fulltext.queryNodes"));
+        assert!(prompt.contains("Available skills:"));
+        assert!(!prompt.contains("{{SKILLS_CATALOG}}"));
+        assert!(!prompt.contains("{{FALKORDB_REFERENCE}}"));
     }
 }

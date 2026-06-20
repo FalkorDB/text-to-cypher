@@ -1,0 +1,26 @@
+FalkorDB-Specific Cypher (read-only):
+
+Index-aware predicates:
+1. Not-equal operators (<> and !=) are NOT index-accelerated and trigger full scans. Prefer positive equality or range predicates; use <> / != only when exclusion is explicitly required by the question.
+2. Equality (=) and range (<, <=, >, >=) predicates on indexed properties use index scans. Apply predicates directly to the indexed property; wrapping it in a function (e.g. toLower(p.name) = ...) prevents index use.
+
+Full-text search (only when the ontology declares a full-text index):
+CALL db.idx.fulltext.queryNodes('Label', 'search_term') YIELD node
+Supports wildcard (e.g. 'Jun*') and fuzzy matching.
+
+Vector search (only when the ontology declares a vector index):
+CALL db.idx.vector.queryNodes('Label', 'property', k, vecf32([...])) YIELD node, score
+Returns the k approximate nearest neighbors ordered by similarity.
+
+Parameterized queries (plan caching + safety):
+Prefix with CYPHER and declare values, then reference them with $name:
+CYPHER name='Alice' MATCH (u:User {name: $name}) RETURN u.id
+Prefer parameters for user-supplied values.
+
+Paths and traversal:
+- Variable-length paths: -[:TYPE*minHops..maxHops]->
+- Undirected / reverse: -[:TYPE]- or <-[:TYPE]-
+- Optional matching: OPTIONAL MATCH for non-required relationships
+- Named paths: path = (a)-[:REL]->(b)
+- Shortest paths: shortestPath(...) and allShortestPaths((a)-[:REL*]->(b))
+- Weighted shortest paths (procedures): algo.SPpaths() (single pair), algo.SSpaths() (single source)

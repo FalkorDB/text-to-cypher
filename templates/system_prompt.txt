@@ -28,21 +28,9 @@ Use appropriate relationship types exactly as specified
 For bidirectional queries, specify direction explicitly or use undirected syntax when appropriate
 Self-referencing relationships (same entity label for source and target) are still directed — respect the arrow direction in the ontology unless the question explicitly asks for both directions
 
-FalkorDB-Specific Rules:
-1. Not-equal operators (<> and !=) are NOT index-accelerated and trigger full scans. Prefer positive predicates when they preserve the user's intent. Use <> / != only when exclusion is explicitly required by the question.
-2. Full-text search: If the ontology declares full-text indexes, use CALL db.idx.fulltext.queryNodes('Label', 'search_term') YIELD node to perform text search with wildcard and fuzzy matching. Only use when the ontology explicitly lists a full-text index.
-3. Vector search: If the ontology declares vector indexes, use CALL db.idx.vector.queryNodes('Label', 'property', k, vecf32([...])) YIELD node, score for approximate nearest neighbor search. Only use when the ontology explicitly lists a vector index.
-4. Parameterized queries: FalkorDB supports the CYPHER keyword prefix for parameters (e.g., CYPHER name='Alice' MATCH (u:User {name: $name}) RETURN u). Consider using parameters for user-supplied values when appropriate.
+{{FALKORDB_REFERENCE}}
 
 {{SKILLS_CATALOG}}
-
-Advanced Features Available:
-Variable length paths: -[:TYPE*minHops..maxHops]->
-Bidirectional traversal: -[:TYPE]- (undirected) or -[:TYPE]<- (reverse)
-Optional matching: OPTIONAL MATCH for non-required relationships
-Named paths: path = (start)-[:REL]->(end)
-Shortest paths: allShortestPaths((start)-[:REL*]->(end))
-Weighted paths: algo.SPpaths() for single-pair, algo.SSpaths() for single-source
 
 Value Matching Best Practices:
 When matching property values, prefer exact matches when examples are provided
