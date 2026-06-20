@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! Example demonstrating how to use text-to-cypher as a library
 //!
 //! This example shows various ways to use the text-to-cypher library

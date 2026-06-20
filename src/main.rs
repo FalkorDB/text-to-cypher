@@ -2,7 +2,9 @@
 #![allow(clippy::needless_for_each)]
 
 use crate::usage::TokenUsage;
-use ::text_to_cypher::core::{clean_generated_cypher_response, create_genai_client_with_endpoint};
+use ::text_to_cypher::core::{
+    build_falkordb_async_client, clean_generated_cypher_response, create_genai_client_with_endpoint,
+};
 use ::text_to_cypher::skills::{self, SkillCatalog};
 use actix_multipart::Multipart;
 use actix_web::HttpResponse;
@@ -10,7 +12,6 @@ use actix_web::http::StatusCode;
 use actix_web::{App, HttpServer, Responder, Result, post};
 use actix_web_lab::sse::{self, Sse};
 use falkordb::ConfigValue;
-use falkordb::FalkorClientBuilder;
 use falkordb::FalkorConnectionInfo;
 use futures_util::StreamExt;
 use genai::chat::ChatMessage as GenAiChatMessage;
@@ -819,11 +820,7 @@ async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<
 
     // List all files in IMPORT_FOLDER at the start
     if let Ok(connection_info) = AppConfig::get().falkordb_connection.as_str().try_into() {
-        if let Ok(client) = FalkorClientBuilder::new_async()
-            .with_connection_info(connection_info)
-            .build()
-            .await
-        {
+        if let Ok(client) = build_falkordb_async_client(connection_info).await {
             match list_import_folder_files(&client).await {
                 Ok(files) => {
                     tracing::info!("Files currently in IMPORT_FOLDER: {:?}", files);
@@ -1411,9 +1408,7 @@ async fn graph_query(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
     let graph_name = graph_name.to_string();
@@ -1452,9 +1447,7 @@ async fn graph_query_with_csv(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
@@ -1506,9 +1499,7 @@ async fn graph_query_with_existing_csv(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
@@ -1550,9 +1541,7 @@ async fn execute_query(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
@@ -1604,9 +1593,7 @@ async fn get_graphs_list() -> Result<Vec<String>, Box<dyn std::error::Error + Se
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
@@ -1638,9 +1625,7 @@ async fn delete_graph(graph_name: &str) -> Result<String, Box<dyn std::error::Er
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
@@ -2156,9 +2141,7 @@ async fn discover_graph_schema(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 

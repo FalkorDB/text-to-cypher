@@ -10,12 +10,30 @@ use crate::skills::{self, SkillCatalog};
 use crate::template::TemplateEngine;
 use crate::usage::TokenUsage;
 use crate::validator::CypherValidator;
-use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo};
+use falkordb::{FalkorAsyncClient, FalkorClientBuilder, FalkorConnectionInfo, FalkorResult, RetryPolicy};
 use genai::adapter::AdapterKind;
 use genai::chat::ChatMessage as GenAiChatMessage;
 use genai::resolver::{AuthData, AuthResolver, Endpoint, ServiceTargetResolver};
 use genai::{Client as GenAiClient, ModelIden};
 use std::error::Error;
+
+/// Builds an asynchronous `FalkorDB` client with the read-only retry policy applied.
+///
+/// Centralizing client construction here ensures every connection retries only idempotent
+/// read operations (queries issued via `ro_query` and schema discovery) on transient failures,
+/// using exponential backoff. Writes are never retried, so a failed write is surfaced
+/// immediately and can never be duplicated.
+///
+/// # Errors
+///
+/// Returns an error if the client cannot be built (for example, when the connection fails).
+pub async fn build_falkordb_async_client(connection_info: FalkorConnectionInfo) -> FalkorResult<FalkorAsyncClient> {
+    FalkorClientBuilder::new_async()
+        .with_connection_info(connection_info)
+        .with_retry_policy(RetryPolicy::read_only())
+        .build()
+        .await
+}
 
 /// Discovers the graph schema and returns it as a JSON string
 ///
@@ -30,9 +48,7 @@ pub async fn discover_graph_schema(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
@@ -312,9 +328,7 @@ pub async fn execute_cypher_query(
         .try_into()
         .map_err(|e| format!("Invalid connection info: {e}"))?;
 
-    let client = FalkorClientBuilder::new_async()
-        .with_connection_info(connection_info)
-        .build()
+    let client = build_falkordb_async_client(connection_info)
         .await
         .map_err(|e| format!("Failed to build client: {e}"))?;
 
