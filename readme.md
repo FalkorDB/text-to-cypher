@@ -8,6 +8,8 @@ A high-performance Rust library and API service that translates natural language
 
 **FalkorDB Cypher Skills**: Curated, read-only FalkorDB-specific Cypher best practices are **built in by default** (and extensible from external skill files). The LLM can request detailed skill content on-demand via tool calling, keeping prompts compact while enabling deep expertise when needed. See [Dynamic Cypher Skills](#dynamic-cypher-skills) for details.
 
+**UDF Context** (opt-in): Surface a FalkorDB instance's user-defined functions to the model so generated Cypher can call them. Enable per client with `.with_discovered_udfs()` or on the server with `DISCOVER_UDFS=true`. See [UDF Context](#udf-context) for details.
+
 **Library Support**: Now available as a Rust library! Use text-to-cypher directly in your Rust applications without the REST API overhead.
 
 **All-in-One Docker Solution**: Our Docker image includes everything you need in a single container:
@@ -259,6 +261,7 @@ The application supports flexible configuration via environment variables or `.e
 
 - `FALKORDB_CONNECTION`: FalkorDB connection string (default: "falkor://127.0.0.1:6379")
 - `SKILLS_DIR`: Path to a directory containing FalkorDB Cypher skill files (optional, see [Dynamic Cypher Skills](#dynamic-cypher-skills))
+- `DISCOVER_UDFS`: Set to `true` to surface the instance's user-defined functions to the model (default: `false`, see [UDF Context](#udf-context))
 
 Create a `.env` file from the provided example:
 
@@ -393,6 +396,7 @@ Configure the application using environment variables or `.env` file:
 - `DEFAULT_KEY`: Default API key for the AI service
 - `FALKORDB_CONNECTION`: FalkorDB connection URL (default: "falkor://127.0.0.1:6379")
 - `SKILLS_DIR`: Path to Cypher skills directory (default: `/app/skills` in Docker, see [Dynamic Cypher Skills](#dynamic-cypher-skills))
+- `DISCOVER_UDFS`: Set to `true` to surface instance user-defined functions to the model (default: `false`, see [UDF Context](#udf-context))
 
 ## MCP Server Usage
 
@@ -553,6 +557,7 @@ The library includes comprehensive unit tests with 33+ test cases covering:
 - **Validator tests** ([src/validator.rs](src/validator.rs)): Cypher query validation and security checks
 - **Formatter tests** ([src/formatter.rs](src/formatter.rs)): Result formatting for various data types
 - **Schema tests** ([src/schema/discovery.rs](src/schema/discovery.rs)): Schema discovery and validation
+- **UDF tests** ([src/udf.rs](src/udf.rs)): `GRAPH.UDF LIST` parsing (RESP2/RESP3), prompt rendering, and error classification
 
 Run all tests:
 ```bash
@@ -1137,6 +1142,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379");
 let response = client.text_to_cypher("graph", request).await?;
 ```
+
+## UDF Context
+
+FalkorDB instances can host JavaScript [user-defined functions (UDFs)](https://docs.falkordb.com/cypher/functions.html). When enabled, text-to-cypher discovers the available UDFs (via `GRAPH.UDF LIST`) and surfaces their `library.function` call targets to the model, so generated Cypher can call them (for example `RETURN mylib.myFunc(x)`).
+
+Key points:
+
+- **Opt-in.** UDF context is **off by default** (the server-side UDF feature is not yet in a stable FalkorDB release). Enable it per client with `.with_discovered_udfs()`, or on the server with `DISCOVER_UDFS=true`.
+- **Instance-global.** UDFs are not graph-scoped — `GRAPH.UDF LIST` returns every library loaded on the connected server, so the same UDFs apply to all graphs on that instance.
+- **Graceful degradation.** On a server that does not support UDFs, discovery is silently skipped (no error, no UDF section in the prompt).
+- **Names only.** FalkorDB does not expose UDF signatures, so the model is given the `library.function` names and instructed to use only the listed functions (never to invent one) and that signatures are unknown.
+
+### Library usage with UDFs
+
+```rust
+use text_to_cypher::{TextToCypherClient, ChatRequest, ChatMessage, ChatRole};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Discover the connected instance's UDFs on each request.
+    let client = TextToCypherClient::new("gpt-4o-mini", "your-api-key", "falkor://127.0.0.1:6379")
+        .with_discovered_udfs();
+
+    let request = ChatRequest {
+        messages: vec![ChatMessage {
+            role: ChatRole::User,
+            content: "Use the distance UDF to find nearby stores".to_string(),
+        }],
+    };
+
+    let response = client.text_to_cypher("stores", request).await?;
+    println!("Query: {}", response.cypher_query.unwrap());
+    Ok(())
+}
+```
+
+You can also supply a pre-fetched / cached catalog instead of discovering on each request — useful when you already have the `GRAPH.UDF LIST` output, or for `cypher_only` mode without a live database:
+
+```rust
+use text_to_cypher::{TextToCypherClient, UdfCatalog, UdfLibrary, UdfFunction};
+
+let catalog = UdfCatalog::from_libraries(vec![UdfLibrary {
+    name: "geo".to_string(),
+    functions: vec![UdfFunction::new("distance"), UdfFunction::new("within")],
+}]);
+
+let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379")
+    .with_udfs(catalog);
+```
+
+Use `.without_udfs()` to disable UDF context (the default).
+
+### Server usage with UDFs
+
+Set `DISCOVER_UDFS=true` to have the REST/MCP server discover instance UDFs. Results are cached per
+connection (with a short TTL) so changes from `GRAPH.UDF LOAD`/`DELETE`/`FLUSH` are picked up without a
+`GRAPH.UDF LIST` call on every request; `POST /clear_udf_cache` invalidates the cache immediately.
 
 ## Recent Improvements
 

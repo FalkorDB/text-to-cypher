@@ -8,6 +8,7 @@ use crate::formatter::{build_falkordb_async_client, format_query_records, rows_l
 use crate::schema::discovery::Schema;
 use crate::skills::{self, SkillCatalog};
 use crate::template::TemplateEngine;
+use crate::udf::{UdfCatalog, UdfError};
 use crate::usage::TokenUsage;
 use crate::validator::CypherValidator;
 use falkordb::{FalkorAsyncClient, FalkorConnectionInfo};
@@ -42,6 +43,28 @@ pub async fn discover_graph_schema(
     let json_schema = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))?;
 
     Ok(json_schema)
+}
+
+/// Discovers the user-defined functions (UDFs) loaded on a `FalkorDB` instance.
+///
+/// UDFs are instance-global, so the returned catalog reflects every library on the connected
+/// server regardless of graph.
+///
+/// # Errors
+///
+/// Returns [`UdfError::Unsupported`] when the server does not support the `GRAPH.UDF` command
+/// (older `FalkorDB`), and [`UdfError::Transport`] when the connection cannot be established or the
+/// command fails for another reason.
+pub async fn discover_udfs(falkordb_connection: &str) -> Result<UdfCatalog, UdfError> {
+    let connection_info: FalkorConnectionInfo = falkordb_connection
+        .try_into()
+        .map_err(|e| UdfError::Transport(format!("Invalid connection info: {e}")))?;
+
+    let client = build_falkordb_async_client(connection_info)
+        .await
+        .map_err(|e| UdfError::Transport(format!("Failed to build client: {e}")))?;
+
+    UdfCatalog::discover(&client).await
 }
 
 /// Generates a Cypher query from natural language using AI
@@ -98,10 +121,32 @@ pub async fn generate_cypher_query_with_skills_and_usage(
     skill_catalog: Option<&SkillCatalog>,
     token_usage: &mut TokenUsage,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
+    generate_cypher_query_with_context_and_usage(chat_request, schema, client, model, skill_catalog, "", token_usage)
+        .await
+}
+
+/// Generates a Cypher query with optional skills and optional UDF context, accumulating token usage.
+///
+/// Like [`generate_cypher_query_with_skills_and_usage`], but also injects the rendered `udfs`
+/// block (see [`crate::udf::UdfCatalog::render`]) into the system prompt so the model can call
+/// instance user-defined functions. Pass an empty `udfs` string for no UDF context.
+///
+/// # Errors
+///
+/// Returns an error if AI chat request fails, validation fails, or no query is generated
+pub async fn generate_cypher_query_with_context_and_usage(
+    chat_request: &ChatRequest,
+    schema: &str,
+    client: &GenAiClient,
+    model: &str,
+    skill_catalog: Option<&SkillCatalog>,
+    udfs: &str,
+    token_usage: &mut TokenUsage,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
     let use_tools = skill_catalog.is_some_and(|c| !c.is_empty()) && skills::supports_tool_calling(model);
 
     let mut genai_chat_request =
-        create_cypher_query_chat_request_with_skills(chat_request, schema, skill_catalog, use_tools);
+        create_cypher_query_chat_request_with_skills(chat_request, schema, skill_catalog, udfs, use_tools);
 
     // Register the read_skill tool if supported
     if use_tools {
@@ -116,7 +161,7 @@ pub async fn generate_cypher_query_with_skills_and_usage(
             Err(err) if use_tools => {
                 tracing::warn!("Tool-enabled chat request failed; retrying without tools: {err}");
                 let fallback_request =
-                    create_cypher_query_chat_request_with_skills(chat_request, schema, skill_catalog, false);
+                    create_cypher_query_chat_request_with_skills(chat_request, schema, skill_catalog, udfs, false);
                 let fallback_response = client
                     .exec_chat(model, fallback_request, None)
                     .await
@@ -442,6 +487,7 @@ fn create_cypher_query_chat_request_with_skills(
     chat_request: &ChatRequest,
     ontology: &str,
     skill_catalog: Option<&SkillCatalog>,
+    udfs: &str,
     use_tools: bool,
 ) -> genai::chat::ChatRequest {
     let mut chat_req = genai::chat::ChatRequest::default();
@@ -479,11 +525,7 @@ fn create_cypher_query_chat_request_with_skills(
         _ => String::new(),
     };
 
-    let system_prompt = if skills_text.is_empty() {
-        TemplateEngine::render_system_prompt(ontology)
-    } else {
-        TemplateEngine::render_system_prompt_with_skills(ontology, &skills_text)
-    };
+    let system_prompt = TemplateEngine::render_system_prompt_with_context(ontology, &skills_text, udfs);
     chat_req = chat_req.with_system(system_prompt);
 
     chat_req

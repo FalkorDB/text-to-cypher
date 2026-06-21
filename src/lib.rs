@@ -12,6 +12,7 @@
 //!
 //! - **Text to Cypher Translation**: Convert natural language queries to Cypher database queries using AI
 //! - **Schema Discovery**: Automatically discover and analyze graph database schemas
+//! - **UDF Context**: Optionally surface a `FalkorDB` instance's user-defined functions to the model
 //! - **Query Validation**: Built-in validation system to catch syntax errors before execution
 //! - **Self-Healing Queries**: Automatic retry with error feedback when queries fail
 //! - **Flexible AI Integration**: Support for multiple AI providers through the genai crate
@@ -163,6 +164,7 @@ pub mod processor;
 pub mod schema;
 pub mod skills;
 pub mod template;
+pub mod udf;
 pub mod usage;
 pub mod validator;
 
@@ -170,8 +172,11 @@ pub mod validator;
 pub use chat::{ChatMessage, ChatRequest, ChatRole};
 pub use error::ErrorResponse;
 pub use genai::adapter::AdapterKind;
-pub use processor::{TextToCypherRequest, TextToCypherResponse, process_text_to_cypher_with_skills};
+pub use processor::{
+    TextToCypherRequest, TextToCypherResponse, process_text_to_cypher_with_context, process_text_to_cypher_with_skills,
+};
 pub use skills::{SkillCatalog, SkillProfile};
+pub use udf::{UdfCatalog, UdfError, UdfFunction, UdfLibrary, UdfSource};
 pub use usage::TokenUsage;
 // Server-specific modules - only when server feature is enabled
 #[cfg(feature = "server")]
@@ -214,6 +219,7 @@ pub struct TextToCypherClient {
     falkordb_connection: String,
     llm_endpoint: Option<String>,
     skill_catalog: Option<SkillCatalog>,
+    udf_source: UdfSource,
 }
 
 impl TextToCypherClient {
@@ -253,6 +259,7 @@ impl TextToCypherClient {
             falkordb_connection: falkordb_connection.into(),
             llm_endpoint: None,
             skill_catalog: Some(SkillCatalog::builtin()),
+            udf_source: UdfSource::Off,
         }
     }
 
@@ -318,6 +325,63 @@ impl TextToCypherClient {
         self
     }
 
+    /// Enables discovery of the connected instance's user-defined functions (UDFs).
+    ///
+    /// On each request the client runs `GRAPH.UDF LIST` and surfaces the available
+    /// `library.function` call targets to the model so generated Cypher can use them. UDFs are
+    /// **instance-global** (shared across every graph on the server). On a `FalkorDB` server that
+    /// does not support UDFs this degrades to no UDF context rather than failing the request.
+    ///
+    /// UDF context is **off by default**; call this to opt in.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use text_to_cypher::TextToCypherClient;
+    ///
+    /// let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379")
+    ///     .with_discovered_udfs();
+    /// ```
+    #[must_use]
+    pub fn with_discovered_udfs(mut self) -> Self {
+        self.udf_source = UdfSource::Discover;
+        self
+    }
+
+    /// Supplies a caller-built UDF catalog to surface to the model.
+    ///
+    /// Use this to provide pre-fetched or cached UDF metadata — for example in `cypher_only` mode
+    /// without a live database, or to avoid a `GRAPH.UDF LIST` call per request. A provided catalog
+    /// is used as-is (no discovery is performed).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use text_to_cypher::{TextToCypherClient, UdfCatalog, UdfLibrary, UdfFunction};
+    ///
+    /// let catalog = UdfCatalog::from_libraries(vec![UdfLibrary {
+    ///     name: "mylib".to_string(),
+    ///     functions: vec![UdfFunction::new("Foo")],
+    /// }]);
+    /// let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379")
+    ///     .with_udfs(catalog);
+    /// ```
+    #[must_use]
+    pub fn with_udfs(
+        mut self,
+        catalog: UdfCatalog,
+    ) -> Self {
+        self.udf_source = UdfSource::Provided(catalog);
+        self
+    }
+
+    /// Disables UDF context for this client (the default).
+    #[must_use]
+    pub fn without_udfs(mut self) -> Self {
+        self.udf_source = UdfSource::Off;
+        self
+    }
+
     /// Converts natural language text to Cypher and executes the query.
     ///
     /// This is the main method for full text-to-cypher processing:
@@ -370,12 +434,13 @@ impl TextToCypherClient {
             cypher_only: false,
         };
 
-        let response = processor::process_text_to_cypher_with_skills(
+        let response = processor::process_text_to_cypher_with_context(
             req,
             Some(self.model.clone()),
             Some(self.api_key.clone()),
             self.falkordb_connection.clone(),
             self.skill_catalog.as_ref(),
+            &self.udf_source,
         )
         .await;
 
@@ -436,12 +501,13 @@ impl TextToCypherClient {
             cypher_only: true,
         };
 
-        let response = processor::process_text_to_cypher_with_skills(
+        let response = processor::process_text_to_cypher_with_context(
             req,
             Some(self.model.clone()),
             Some(self.api_key.clone()),
             self.falkordb_connection.clone(),
             self.skill_catalog.as_ref(),
+            &self.udf_source,
         )
         .await;
 
@@ -630,6 +696,36 @@ mod tests {
     fn test_with_skills_replaces_builtin() {
         let client = TextToCypherClient::new("m", "k", "falkor://127.0.0.1:6379").with_skills(SkillCatalog::empty());
         assert!(client.skill_catalog.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_new_client_has_udf_off_by_default() {
+        let client = TextToCypherClient::new("m", "k", "falkor://127.0.0.1:6379");
+        assert_eq!(client.udf_source, UdfSource::Off);
+    }
+
+    #[test]
+    fn test_with_discovered_udfs_sets_discover() {
+        let client = TextToCypherClient::new("m", "k", "falkor://127.0.0.1:6379").with_discovered_udfs();
+        assert_eq!(client.udf_source, UdfSource::Discover);
+    }
+
+    #[test]
+    fn test_with_udfs_sets_provided_catalog() {
+        let catalog = UdfCatalog::from_libraries(vec![UdfLibrary {
+            name: "mylib".to_string(),
+            functions: vec![UdfFunction::new("Foo")],
+        }]);
+        let client = TextToCypherClient::new("m", "k", "falkor://127.0.0.1:6379").with_udfs(catalog.clone());
+        assert_eq!(client.udf_source, UdfSource::Provided(catalog));
+    }
+
+    #[test]
+    fn test_without_udfs_resets_to_off() {
+        let client = TextToCypherClient::new("m", "k", "falkor://127.0.0.1:6379")
+            .with_discovered_udfs()
+            .without_udfs();
+        assert_eq!(client.udf_source, UdfSource::Off);
     }
 
     #[test]

@@ -32,6 +32,8 @@ Self-referencing relationships (same entity label for source and target) are sti
 
 {{SKILLS_CATALOG}}
 
+{{UDFS}}
+
 Value Matching Best Practices:
 When matching property values, prefer exact matches when examples are provided
 Use the example values as a guide for formatting and case sensitivity
