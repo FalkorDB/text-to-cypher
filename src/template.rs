@@ -46,9 +46,10 @@ impl TemplateEngine {
 
     /// Render the system prompt template with ontology and optional skills catalog and UDF context.
     ///
-    /// Empty `skills_catalog` / `udfs` sections are omitted. When no skills are present the leftover
-    /// blank lines from empty placeholders are collapsed; when skills are present their content
-    /// (which may contain meaningful blank lines) is preserved verbatim.
+    /// Empty `skills_catalog` / `udfs` sections are omitted: the blank lines an empty placeholder
+    /// leaves behind are collapsed unless **both** sections are present, in which case the rendered
+    /// prompt is returned verbatim so externally supplied skill content (which may contain
+    /// meaningful blank lines) is never altered.
     #[must_use]
     pub fn render_system_prompt_with_context(
         ontology: &str,
@@ -62,7 +63,7 @@ impl TemplateEngine {
         variables.insert("FALKORDB_REFERENCE", Self::FALKORDB_REFERENCE);
         let rendered = Self::render(Self::SYSTEM_PROMPT, &variables);
 
-        if !skills_catalog.trim().is_empty() {
+        if !skills_catalog.trim().is_empty() && !udfs.trim().is_empty() {
             return rendered;
         }
 
@@ -159,5 +160,14 @@ mod tests {
         assert!(prompt.contains("- mylib.Foo"));
         assert!(!prompt.contains("{{UDFS}}"));
         assert!(!prompt.contains("{{SKILLS_CATALOG}}"));
+    }
+
+    #[test]
+    fn system_prompt_collapses_empty_udf_spacer_when_skills_present() {
+        // Default flow (skills on, UDFs off): the empty {{UDFS}} placeholder must not leave a
+        // stray blank block.
+        let prompt = TemplateEngine::render_system_prompt_with_context("{}", "Available skills:\n- foo: bar", "");
+        assert!(prompt.contains("Available skills:"));
+        assert!(!prompt.contains("\n\n\n"));
     }
 }

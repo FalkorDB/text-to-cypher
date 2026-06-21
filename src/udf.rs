@@ -61,6 +61,20 @@ pub enum UdfError {
     Transport(String),
 }
 
+impl std::fmt::Display for UdfError {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Unsupported => write!(f, "the FalkorDB server does not support user-defined functions"),
+            Self::Transport(message) => write!(f, "UDF discovery failed: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for UdfError {}
+
 /// Whether (and how) a client surfaces UDF context to the model.
 ///
 /// The default is [`UdfSource::Off`]: UDF context is opt-in, because the server-side UDF feature
@@ -508,5 +522,14 @@ mod tests {
     #[test]
     fn udf_source_default_is_off() {
         assert_eq!(UdfSource::default(), UdfSource::Off);
+    }
+
+    #[test]
+    fn udf_error_displays_and_is_boxable_std_error() {
+        assert!(UdfError::Unsupported.to_string().contains("does not support"));
+        let transport = UdfError::Transport("boom".to_string());
+        assert!(transport.to_string().contains("boom"));
+        // UdfError integrates with the repository-wide Box<dyn Error + Send + Sync> contract.
+        let _boxed: Box<dyn std::error::Error + Send + Sync> = Box::new(transport);
     }
 }
