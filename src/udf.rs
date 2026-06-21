@@ -156,20 +156,35 @@ impl UdfCatalog {
     /// Render a compact prompt block listing `library.function` call targets.
     ///
     /// Returns an empty string for an empty catalog so the prompt placeholder collapses cleanly.
-    /// The block constrains the model to the listed functions and notes that signatures are unknown.
+    /// The block constrains the model to the listed functions. Discovered catalogs are names-only and
+    /// note that signatures are unknown; caller-supplied catalogs may add inline signatures and
+    /// descriptions, in which case that note is omitted.
     #[must_use]
     pub fn render(&self) -> String {
         if self.is_empty() {
             return String::new();
         }
 
+        let has_signatures = self
+            .libraries
+            .iter()
+            .flat_map(|library| &library.functions)
+            .any(|function| function.signature_hint.is_some());
+
         let mut lines = vec![
             "Available User-Defined Functions on this FalkorDB instance.".to_string(),
-            "Call them as library.function(...) inside RETURN/WHERE clauses. Signatures are not provided."
-                .to_string(),
+            "Call them as library.function(...) inside RETURN/WHERE clauses.".to_string(),
+        ];
+        if !has_signatures {
+            lines.push(
+                "Signatures are not provided; infer arguments from the question and do not assume a fixed arity."
+                    .to_string(),
+            );
+        }
+        lines.push(
             "Use ONLY the functions listed below; never invent a UDF. If none is clearly relevant to the question, write normal Cypher."
                 .to_string(),
-        ];
+        );
 
         let mut libraries: Vec<&UdfLibrary> = self.libraries.iter().filter(|lib| !lib.functions.is_empty()).collect();
         libraries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -418,7 +433,7 @@ mod tests {
         let rendered = catalog.render();
 
         assert!(rendered.contains("Use ONLY the functions listed below; never invent a UDF."));
-        assert!(rendered.contains("Signatures are not provided."));
+        assert!(rendered.contains("Signatures are not provided"));
         // Libraries and functions are sorted; alib before zlib, A before B.
         let a_pos = rendered.find("- alib.A").unwrap();
         let b_pos = rendered.find("- alib.B").unwrap();
@@ -448,6 +463,8 @@ mod tests {
         let rendered = catalog.render();
         assert!(rendered.contains("- lib.Desc — does a thing"));
         assert!(rendered.contains("- lib.Sig (x, y)"));
+        // When a signature is present the "signatures unknown" guardrail is omitted.
+        assert!(!rendered.contains("Signatures are not provided"));
     }
 
     #[test]

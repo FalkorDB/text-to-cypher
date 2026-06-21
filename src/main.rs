@@ -1324,8 +1324,9 @@ async fn attempt_query_self_healing(
 /// instance-scoped UDF cache.
 ///
 /// Returns an empty string when discovery is disabled, when the server does not support UDFs, or on
-/// any transport error — so UDF resolution never fails a request. Results (including the negative
-/// "no UDFs" result) are cached per connection with a short TTL.
+/// any transport error — so UDF resolution never fails a request. Successful results and the stable
+/// "unsupported" result are cached per connection (short TTL); transient transport failures are not
+/// cached, so the next request retries discovery.
 async fn resolve_udf_context(falkordb_connection: &str) -> String {
     let config = AppConfig::get();
     if !config.discover_udfs {
@@ -1337,20 +1338,24 @@ async fn resolve_udf_context(falkordb_connection: &str) -> String {
         return cached;
     }
 
-    let rendered = match discover_udfs(falkordb_connection).await {
-        Ok(catalog) => catalog.render(),
+    match discover_udfs(falkordb_connection).await {
+        Ok(catalog) => {
+            let rendered = catalog.render();
+            cache.insert(falkordb_connection.to_string(), rendered.clone());
+            rendered
+        }
         Err(UdfError::Unsupported) => {
             tracing::debug!("FalkorDB instance does not support UDFs; skipping UDF context");
+            // Negative-cache the stable "unsupported" result so we don't probe every request.
+            cache.insert(falkordb_connection.to_string(), String::new());
             String::new()
         }
         Err(UdfError::Transport(message)) => {
+            // Transient failure: do NOT cache, so the next request can retry discovery.
             tracing::warn!("UDF discovery failed; continuing without UDF context: {message}");
             String::new()
         }
-    };
-
-    cache.insert(falkordb_connection.to_string(), rendered.clone());
-    rendered
+    }
 }
 
 async fn get_or_discover_schema(
