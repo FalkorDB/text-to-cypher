@@ -2,8 +2,9 @@
 #![allow(clippy::needless_for_each)]
 
 use crate::usage::TokenUsage;
-use ::text_to_cypher::core::{clean_generated_cypher_response, create_genai_client_with_endpoint};
+use ::text_to_cypher::core::{clean_generated_cypher_response, create_genai_client_with_endpoint, discover_udfs};
 use ::text_to_cypher::skills::{self, SkillCatalog, SkillProfile};
+use ::text_to_cypher::udf::UdfError;
 use actix_multipart::Multipart;
 use actix_web::HttpResponse;
 use actix_web::http::StatusCode;
@@ -171,6 +172,11 @@ struct AppConfig {
     rest_port: u16,
     mcp_port: u16,
     skill_catalog: Option<SkillCatalog>,
+    /// When true, the server runs `GRAPH.UDF LIST` and surfaces instance UDFs to the model.
+    discover_udfs: bool,
+    /// Instance-scoped cache of rendered UDF context, keyed by connection string. Holds a short TTL
+    /// and negatively caches "no UDFs" so an unsupported server is only probed occasionally.
+    udf_cache: Cache<String, String>,
 }
 
 static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
@@ -191,6 +197,18 @@ impl AppConfig {
         let rest_port = std::env::var("REST_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
 
         let mcp_port = std::env::var("MCP_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3001);
+
+        // UDF context is opt-in (the server-side UDF feature is not yet in a stable FalkorDB
+        // release). Enable with DISCOVER_UDFS=true. Discovered UDFs are cached per connection with a
+        // short TTL so changes (UDF LOAD/DELETE/FLUSH) are eventually picked up without per-request
+        // GRAPH.UDF LIST calls.
+        let discover_udfs = std::env::var("DISCOVER_UDFS")
+            .ok()
+            .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"));
+        let udf_cache = Cache::builder()
+            .time_to_live(std::time::Duration::from_secs(300))
+            .max_capacity(100)
+            .build();
 
         // Start from the built-in read-only FalkorDB skills, then let SKILLS_DIR override/extend them.
         // External skills are filtered to the read-only profile so the read-only contract holds for the
@@ -236,6 +254,8 @@ impl AppConfig {
             rest_port,
             mcp_port,
             skill_catalog,
+            discover_udfs,
+            udf_cache,
         }
     }
 
@@ -369,6 +389,11 @@ fn process_clear_schema_cache(graph_name: &str) {
     tracing::info!("Clearing schema cache for graph: {graph_name}");
     let cache = AppConfig::get().schema_cache.clone();
     cache.invalidate(graph_name);
+}
+
+fn process_clear_udf_cache() {
+    tracing::info!("Clearing UDF cache");
+    AppConfig::get().udf_cache.invalidate_all();
 }
 
 #[utoipa::path(
@@ -804,6 +829,19 @@ async fn clear_schema_cache(graph_name: actix_web::web::Path<String>) -> impl Re
 
 #[utoipa::path(
     post,
+    path = "/clear_udf_cache",
+    responses(
+        (status = 200, description = "UDF cache cleared successfully")
+    )
+)]
+#[post("/clear_udf_cache")]
+async fn clear_udf_cache() -> impl Responder {
+    process_clear_udf_cache();
+    HttpResponse::new(StatusCode::OK)
+}
+
+#[utoipa::path(
+    post,
     path = "/load_csv",
     request_body = LoadCsvRequest,
     responses(
@@ -1093,6 +1131,9 @@ async fn process_text_to_cypher_request(
         .falkordb_connection
         .unwrap_or_else(|| AppConfig::get().falkordb_connection.clone());
 
+    // Resolve instance UDF context once per request (cached, opt-in). Reused for self-healing.
+    let udfs = resolve_udf_context(&falkordb_connection).await;
+
     // Step 1: Send processing status
     send_processing_status(&request, &service_target, &tx).await;
 
@@ -1106,7 +1147,8 @@ async fn process_text_to_cypher_request(
     let mut token_usage = TokenUsage::new();
 
     // Step 3: Generate and execute cypher query with self-healing retry
-    let Some(initial_query) = generate_cypher_query(&request, &schema, &client, model, &tx, &mut token_usage).await
+    let Some(initial_query) =
+        generate_cypher_query(&request, &schema, &udfs, &client, model, &tx, &mut token_usage).await
     else {
         return;
     };
@@ -1144,6 +1186,7 @@ async fn process_text_to_cypher_request(
             error_msg,
             &client,
             model,
+            &udfs,
             &tx,
             &mut token_usage,
         )
@@ -1228,6 +1271,7 @@ async fn attempt_query_self_healing(
     error_message: &str,
     client: &genai::Client,
     model: &str,
+    udfs: &str,
     tx: &mpsc::Sender<sse::Event>,
     token_usage: &mut TokenUsage,
 ) -> Option<String> {
@@ -1248,8 +1292,17 @@ async fn attempt_query_self_healing(
 
     // Generate new query using the same skill-loading path as the initial request.
     let skill_catalog = AppConfig::get().skill_catalog.as_ref();
-    let retry_query =
-        execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx, token_usage).await;
+    let retry_query = execute_chat_with_skills(
+        client,
+        model,
+        &retry_request,
+        schema,
+        skill_catalog,
+        udfs,
+        tx,
+        token_usage,
+    )
+    .await;
 
     if retry_query.trim().is_empty() || retry_query.trim() == "NO ANSWER" {
         tracing::warn!("Self-healing failed: no valid query generated");
@@ -1264,6 +1317,45 @@ async fn attempt_query_self_healing(
         Some(validated)
     } else {
         None
+    }
+}
+
+/// Resolve the rendered UDF context block for the server, honoring `DISCOVER_UDFS` and the
+/// instance-scoped UDF cache.
+///
+/// Returns an empty string when discovery is disabled, when the server does not support UDFs, or on
+/// any transport error — so UDF resolution never fails a request. Successful results and the stable
+/// "unsupported" result are cached per connection (short TTL); transient transport failures are not
+/// cached, so the next request retries discovery.
+async fn resolve_udf_context(falkordb_connection: &str) -> String {
+    let config = AppConfig::get();
+    if !config.discover_udfs {
+        return String::new();
+    }
+
+    let cache = config.udf_cache.clone();
+    if let Some(cached) = cache.get(falkordb_connection) {
+        return cached;
+    }
+
+    match discover_udfs(falkordb_connection).await {
+        Ok(catalog) => {
+            let rendered = catalog.render();
+            cache.insert(falkordb_connection.to_string(), rendered.clone());
+            rendered
+        }
+        Err(UdfError::Unsupported) => {
+            tracing::debug!("FalkorDB instance does not support UDFs; skipping UDF context");
+            // Negative-cache the stable "unsupported" result so we don't probe every request.
+            cache.insert(falkordb_connection.to_string(), String::new());
+            String::new()
+        }
+        Err(UdfError::Transport(message)) => {
+            // Transient failure: do NOT cache, so the next request can retry discovery.
+            tracing::warn!("UDF discovery failed; continuing without UDF context");
+            tracing::debug!("UDF discovery failure detail: {message}");
+            String::new()
+        }
     }
 }
 
@@ -1289,6 +1381,7 @@ async fn get_or_discover_schema(
 async fn generate_cypher_query(
     request: &TextToCypherRequest,
     schema: &str,
+    udfs: &str,
     client: &genai::Client,
     model: &str,
     tx: &mpsc::Sender<sse::Event>,
@@ -1307,6 +1400,7 @@ async fn generate_cypher_query(
         &request.chat_request,
         schema,
         skill_catalog,
+        udfs,
         tx,
         token_usage,
     )
@@ -1332,8 +1426,17 @@ async fn generate_cypher_query(
         let validation_result = CypherValidator::validate(&clean_query);
         let error_feedback = validation_result.errors.join("; ");
         let retry_request = append_validation_feedback(&request.chat_request, &clean_query, &error_feedback);
-        let retry_query =
-            execute_chat_with_skills(client, model, &retry_request, schema, skill_catalog, tx, token_usage).await;
+        let retry_query = execute_chat_with_skills(
+            client,
+            model,
+            &retry_request,
+            schema,
+            skill_catalog,
+            udfs,
+            tx,
+            token_usage,
+        )
+        .await;
 
         if !retry_query.trim().is_empty() && retry_query.trim() != "NO ANSWER" {
             let retry_clean = clean_generated_cypher_response(&retry_query);
@@ -1921,6 +2024,7 @@ fn generate_create_cypher_query_chat_request_with_skills(
     chat_request: &ChatRequest,
     ontology: &str,
     skill_catalog: Option<&SkillCatalog>,
+    udfs: &str,
     use_tools: bool,
     model: &str,
 ) -> genai::chat::ChatRequest {
@@ -1957,11 +2061,7 @@ fn generate_create_cypher_query_chat_request_with_skills(
         _ => String::new(),
     };
 
-    let system_prompt = if skills_text.is_empty() {
-        TemplateEngine::render_system_prompt(ontology)
-    } else {
-        TemplateEngine::render_system_prompt_with_skills(ontology, &skills_text)
-    };
+    let system_prompt = TemplateEngine::render_system_prompt_with_context(ontology, &skills_text, udfs);
     let system_prompt_len = system_prompt.len();
     let should_summarize_log = !skills_text.is_empty() || system_prompt_len > CHAT_REQUEST_LOG_SUMMARY_THRESHOLD;
     let expected_tool_count = usize::from(use_tools);
@@ -2033,6 +2133,7 @@ fn process_last_request_prompt(
     paths(
         text_to_cypher,
         clear_schema_cache,
+        clear_udf_cache,
         load_csv_endpoint,
         echo_endpoint,
         list_graphs_endpoint,
@@ -2098,6 +2199,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .service(text_to_cypher)
             .service(clear_schema_cache)
+            .service(clear_udf_cache)
             .service(load_csv_endpoint)
             .service(echo_endpoint)
             .service(list_graphs_endpoint)
@@ -2220,19 +2322,27 @@ async fn send_processing_status(
 ///
 /// If skills are present and the model supports tool calling, registers a `read_skill`
 /// tool and handles the tool-call loop. Otherwise falls back to standard chat.
+#[allow(clippy::too_many_arguments)]
 async fn execute_chat_with_skills(
     client: &genai::Client,
     model: &str,
     chat_request: &ChatRequest,
     schema: &str,
     skill_catalog: Option<&SkillCatalog>,
+    udfs: &str,
     tx: &mpsc::Sender<sse::Event>,
     token_usage: &mut TokenUsage,
 ) -> String {
     let use_tools = skill_catalog.is_some_and(|c| !c.is_empty()) && skills::supports_tool_calling(model);
 
-    let mut genai_request =
-        generate_create_cypher_query_chat_request_with_skills(chat_request, schema, skill_catalog, use_tools, model);
+    let mut genai_request = generate_create_cypher_query_chat_request_with_skills(
+        chat_request,
+        schema,
+        skill_catalog,
+        udfs,
+        use_tools,
+        model,
+    );
 
     // Register the read_skill tool if supported
     if use_tools {
@@ -2254,6 +2364,7 @@ async fn execute_chat_with_skills(
                     chat_request,
                     schema,
                     skill_catalog,
+                    udfs,
                     false,
                     model,
                 );

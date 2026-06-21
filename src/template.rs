@@ -25,6 +25,9 @@ impl TemplateEngine {
     }
 
     /// Render the system prompt template with ontology.
+    // Retained as public API and used by the library/tests; the binary recompiles this module but
+    // only calls `render_system_prompt_with_context`, so allow dead_code for the bin build.
+    #[allow(dead_code)]
     #[must_use]
     pub fn render_system_prompt(ontology: &str) -> String {
         Self::render_system_prompt_with_skills(ontology, "")
@@ -32,18 +35,35 @@ impl TemplateEngine {
 
     /// Render the system prompt template with ontology and optional skills catalog.
     /// When `skills_catalog` is empty, renders the prompt without any skills section.
+    #[allow(dead_code)]
     #[must_use]
     pub fn render_system_prompt_with_skills(
         ontology: &str,
         skills_catalog: &str,
     ) -> String {
+        Self::render_system_prompt_with_context(ontology, skills_catalog, "")
+    }
+
+    /// Render the system prompt template with ontology and optional skills catalog and UDF context.
+    ///
+    /// Empty `skills_catalog` / `udfs` sections are omitted: the blank lines an empty placeholder
+    /// leaves behind are collapsed unless **both** sections are present, in which case the rendered
+    /// prompt is returned verbatim so externally supplied skill content (which may contain
+    /// meaningful blank lines) is never altered.
+    #[must_use]
+    pub fn render_system_prompt_with_context(
+        ontology: &str,
+        skills_catalog: &str,
+        udfs: &str,
+    ) -> String {
         let mut variables = HashMap::new();
         variables.insert("ONTOLOGY", ontology);
         variables.insert("SKILLS_CATALOG", skills_catalog);
+        variables.insert("UDFS", udfs);
         variables.insert("FALKORDB_REFERENCE", Self::FALKORDB_REFERENCE);
         let rendered = Self::render(Self::SYSTEM_PROMPT, &variables);
 
-        if !skills_catalog.trim().is_empty() {
+        if !skills_catalog.trim().is_empty() && !udfs.trim().is_empty() {
             return rendered;
         }
 
@@ -109,6 +129,7 @@ mod tests {
         assert!(!prompt.contains("{{FALKORDB_REFERENCE}}"));
         assert!(!prompt.contains("{{ONTOLOGY}}"));
         assert!(!prompt.contains("{{SKILLS_CATALOG}}"));
+        assert!(!prompt.contains("{{UDFS}}"));
     }
 
     #[test]
@@ -118,5 +139,35 @@ mod tests {
         assert!(prompt.contains("Available skills:"));
         assert!(!prompt.contains("{{SKILLS_CATALOG}}"));
         assert!(!prompt.contains("{{FALKORDB_REFERENCE}}"));
+        assert!(!prompt.contains("{{UDFS}}"));
+    }
+
+    #[test]
+    fn system_prompt_with_context_includes_udfs() {
+        let udfs = "Available User-Defined Functions on this FalkorDB instance.\n- mylib.Foo";
+        let prompt = TemplateEngine::render_system_prompt_with_context("{}", "", udfs);
+        assert!(prompt.contains("- mylib.Foo"));
+        assert!(prompt.contains("db.idx.fulltext.queryNodes"));
+        assert!(!prompt.contains("{{UDFS}}"));
+        assert!(!prompt.contains("{{SKILLS_CATALOG}}"));
+    }
+
+    #[test]
+    fn system_prompt_with_context_includes_both_skills_and_udfs() {
+        let prompt =
+            TemplateEngine::render_system_prompt_with_context("{}", "Available skills:\n- foo: bar", "- mylib.Foo");
+        assert!(prompt.contains("Available skills:"));
+        assert!(prompt.contains("- mylib.Foo"));
+        assert!(!prompt.contains("{{UDFS}}"));
+        assert!(!prompt.contains("{{SKILLS_CATALOG}}"));
+    }
+
+    #[test]
+    fn system_prompt_collapses_empty_udf_spacer_when_skills_present() {
+        // Default flow (skills on, UDFs off): the empty {{UDFS}} placeholder must not leave a
+        // stray blank block.
+        let prompt = TemplateEngine::render_system_prompt_with_context("{}", "Available skills:\n- foo: bar", "");
+        assert!(prompt.contains("Available skills:"));
+        assert!(!prompt.contains("\n\n\n"));
     }
 }

@@ -5,10 +5,11 @@
 
 use crate::chat::ChatRequest;
 use crate::core::{
-    create_genai_client_with_endpoint, discover_graph_schema, execute_cypher_query,
-    generate_cypher_query_with_skills_and_usage, generate_final_answer_with_usage,
+    create_genai_client_with_endpoint, discover_graph_schema, discover_udfs, execute_cypher_query,
+    generate_cypher_query_with_context_and_usage, generate_final_answer_with_usage,
 };
 use crate::skills::SkillCatalog;
+use crate::udf::{UdfError, UdfSource};
 use crate::usage::TokenUsage;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -144,6 +145,42 @@ pub async fn process_text_to_cypher(
 /// Cypher skills for better query generation. Providers that support tool calling
 /// load skills on-demand; others get skill content injected into the prompt.
 ///
+/// This is equivalent to [`process_text_to_cypher_with_context`] with UDF context disabled.
+///
+/// # Errors
+///
+/// This function does not return errors. All errors are captured and returned
+/// as `TextToCypherResponse::error` with appropriate error messages.
+///
+/// # Panics
+///
+/// This function does not panic. All errors are handled gracefully and returned
+/// as error responses within the `TextToCypherResponse` structure.
+pub async fn process_text_to_cypher_with_skills(
+    request: TextToCypherRequest,
+    default_model: Option<String>,
+    default_key: Option<String>,
+    default_connection: String,
+    skill_catalog: Option<&SkillCatalog>,
+) -> TextToCypherResponse {
+    process_text_to_cypher_with_context(
+        request,
+        default_model,
+        default_key,
+        default_connection,
+        skill_catalog,
+        &UdfSource::Off,
+    )
+    .await
+}
+
+/// Process a text-to-cypher request with optional skills and optional UDF context.
+///
+/// In addition to the behavior of [`process_text_to_cypher_with_skills`], the `udf_source`
+/// controls whether the connected instance's user-defined functions are surfaced to the model:
+/// [`UdfSource::Off`] adds nothing, [`UdfSource::Provided`] uses a caller-supplied catalog, and
+/// [`UdfSource::Discover`] runs `GRAPH.UDF LIST` (degrading to no UDF context when unsupported).
+///
 /// # Errors
 ///
 /// This function does not return errors. All errors are captured and returned
@@ -154,12 +191,13 @@ pub async fn process_text_to_cypher(
 /// This function does not panic. All errors are handled gracefully and returned
 /// as error responses within the `TextToCypherResponse` structure.
 #[allow(clippy::too_many_lines)]
-pub async fn process_text_to_cypher_with_skills(
+pub async fn process_text_to_cypher_with_context(
     request: TextToCypherRequest,
     default_model: Option<String>,
     default_key: Option<String>,
     default_connection: String,
     skill_catalog: Option<&SkillCatalog>,
+    udf_source: &UdfSource,
 ) -> TextToCypherResponse {
     // Apply defaults
     let model = request.model.clone().or(default_model);
@@ -208,16 +246,27 @@ pub async fn process_text_to_cypher_with_skills(
         }
     };
 
+    // Step 1b: Resolve UDF context (instance-global). Discovery degrades to empty on
+    // servers without UDF support; an empty string adds no UDF section to the prompt.
+    let udfs_text = resolve_udfs(
+        udf_source,
+        &falkordb_connection,
+        request.cypher_only,
+        has_custom_connection,
+    )
+    .await;
+
     // Track token usage across every LLM call made for this request.
     let mut token_usage = TokenUsage::new();
 
     // Step 2: Generate Cypher query
-    let cypher_query = match generate_cypher_query_with_skills_and_usage(
+    let cypher_query = match generate_cypher_query_with_context_and_usage(
         &request.chat_request,
         &schema,
         &client,
         &model,
         skill_catalog,
+        &udfs_text,
         &mut token_usage,
     )
     .await
@@ -252,6 +301,7 @@ pub async fn process_text_to_cypher_with_skills(
                 &model,
                 &falkordb_connection,
                 skill_catalog,
+                &udfs_text,
                 &mut token_usage,
             )
             .await
@@ -319,6 +369,42 @@ pub async fn process_text_to_cypher_with_skills(
     TextToCypherResponse::success_with_usage(schema, cypher_query, Some(cypher_result), answer, Some(token_usage))
 }
 
+/// Resolve the UDF context block for a request based on its [`UdfSource`].
+///
+/// Returns the rendered prompt block (empty string for no UDF context). [`UdfSource::Discover`]
+/// runs `GRAPH.UDF LIST`; an unsupported server (older `FalkorDB`) or a `cypher_only` request
+/// without a live connection yields an empty block, and transport errors are logged and treated
+/// as "no UDFs" so they never fail the request.
+async fn resolve_udfs(
+    udf_source: &UdfSource,
+    falkordb_connection: &str,
+    cypher_only: bool,
+    has_custom_connection: bool,
+) -> String {
+    match udf_source {
+        UdfSource::Off => String::new(),
+        UdfSource::Provided(catalog) => catalog.render(),
+        UdfSource::Discover => {
+            // No live database to query in cypher_only mode without a connection.
+            if cypher_only && !has_custom_connection {
+                return String::new();
+            }
+            match discover_udfs(falkordb_connection).await {
+                Ok(catalog) => catalog.render(),
+                Err(UdfError::Unsupported) => {
+                    tracing::debug!("FalkorDB instance does not support UDFs; skipping UDF context");
+                    String::new()
+                }
+                Err(UdfError::Transport(message)) => {
+                    tracing::warn!("UDF discovery failed; continuing without UDF context");
+                    tracing::debug!("UDF discovery failure detail: {message}");
+                    String::new()
+                }
+            }
+        }
+    }
+}
+
 /// Attempts to self-heal a failed query by regenerating with error context
 ///
 /// Token usage from the regeneration call is accumulated into `token_usage` even when the
@@ -333,6 +419,7 @@ async fn attempt_self_healing(
     model: &str,
     falkordb_connection: &str,
     skill_catalog: Option<&SkillCatalog>,
+    udfs: &str,
     token_usage: &mut TokenUsage,
 ) -> Result<(String, String), Box<dyn Error + Send + Sync>> {
     use crate::chat::{ChatMessage, ChatRole};
@@ -352,11 +439,18 @@ async fn attempt_self_healing(
         ),
     });
 
-    // Generate new query (include skill catalog for consistent prompt).
+    // Generate new query (include skill catalog and UDF context for consistent prompt).
     // Usage is accumulated into `token_usage` even if generation/execution below fails.
-    let healed_query =
-        generate_cypher_query_with_skills_and_usage(&retry_request, schema, client, model, skill_catalog, token_usage)
-            .await?;
+    let healed_query = generate_cypher_query_with_context_and_usage(
+        &retry_request,
+        schema,
+        client,
+        model,
+        skill_catalog,
+        udfs,
+        token_usage,
+    )
+    .await?;
 
     tracing::info!("Self-healed query generated: {}", healed_query);
 
@@ -370,6 +464,30 @@ async fn attempt_self_healing(
 mod tests {
     use super::*;
     use crate::chat::{ChatMessage, ChatRole};
+    use crate::udf::{UdfCatalog, UdfFunction, UdfLibrary};
+
+    #[tokio::test]
+    async fn resolve_udfs_off_returns_empty() {
+        let text = resolve_udfs(&UdfSource::Off, "falkor://127.0.0.1:6379", false, false).await;
+        assert!(text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_udfs_provided_renders_catalog() {
+        let catalog = UdfCatalog::from_libraries(vec![UdfLibrary {
+            name: "mylib".to_string(),
+            functions: vec![UdfFunction::new("Foo")],
+        }]);
+        let text = resolve_udfs(&UdfSource::Provided(catalog), "falkor://127.0.0.1:6379", false, false).await;
+        assert!(text.contains("- mylib.Foo"));
+    }
+
+    #[tokio::test]
+    async fn resolve_udfs_discover_skips_when_cypher_only_without_connection() {
+        // cypher_only with no custom connection => no live database => empty (no discovery attempted).
+        let text = resolve_udfs(&UdfSource::Discover, "falkor://127.0.0.1:6379", true, false).await;
+        assert!(text.is_empty());
+    }
 
     #[test]
     fn test_response_is_success() {
