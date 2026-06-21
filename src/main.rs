@@ -1352,7 +1352,8 @@ async fn resolve_udf_context(falkordb_connection: &str) -> String {
         }
         Err(UdfError::Transport(message)) => {
             // Transient failure: do NOT cache, so the next request can retry discovery.
-            tracing::warn!("UDF discovery failed; continuing without UDF context: {message}");
+            tracing::warn!("UDF discovery failed; continuing without UDF context");
+            tracing::debug!("UDF discovery failure detail: {message}");
             String::new()
         }
     }

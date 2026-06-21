@@ -396,7 +396,8 @@ async fn resolve_udfs(
                     String::new()
                 }
                 Err(UdfError::Transport(message)) => {
-                    tracing::warn!("UDF discovery failed; continuing without UDF context: {message}");
+                    tracing::warn!("UDF discovery failed; continuing without UDF context");
+                    tracing::debug!("UDF discovery failure detail: {message}");
                     String::new()
                 }
             }
