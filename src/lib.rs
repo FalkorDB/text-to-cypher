@@ -171,7 +171,7 @@ pub use chat::{ChatMessage, ChatRequest, ChatRole};
 pub use error::ErrorResponse;
 pub use genai::adapter::AdapterKind;
 pub use processor::{TextToCypherRequest, TextToCypherResponse, process_text_to_cypher_with_skills};
-pub use skills::SkillCatalog;
+pub use skills::{SkillCatalog, SkillProfile};
 pub use usage::TokenUsage;
 // Server-specific modules - only when server feature is enabled
 #[cfg(feature = "server")]
@@ -219,6 +219,11 @@ pub struct TextToCypherClient {
 impl TextToCypherClient {
     /// Creates a new `TextToCypherClient`.
     ///
+    /// The client includes the built-in, read-only `FalkorDB` Cypher skills by default, so generated
+    /// queries account for `FalkorDB`-specific syntax without any extra setup. Use
+    /// [`without_skills`](Self::without_skills) to disable them, or
+    /// [`with_additional_skills`](Self::with_additional_skills) to extend them.
+    ///
     /// # Arguments
     ///
     /// * `model` - The AI model to use (e.g., "gpt-4o-mini", "anthropic:claude-3")
@@ -247,7 +252,7 @@ impl TextToCypherClient {
             api_key: api_key.into(),
             falkordb_connection: falkordb_connection.into(),
             llm_endpoint: None,
-            skill_catalog: None,
+            skill_catalog: Some(SkillCatalog::builtin()),
         }
     }
 
@@ -264,7 +269,10 @@ impl TextToCypherClient {
         self
     }
 
-    /// Sets the skill catalog for dynamic Cypher skill loading.
+    /// Replaces the skill catalog used for Cypher skill loading.
+    ///
+    /// This **replaces** the built-in `FalkorDB` skills that [`new`](Self::new) installs by default. To
+    /// keep the built-in skills and add your own, use [`with_additional_skills`](Self::with_additional_skills).
     ///
     /// When set, the AI model can access specialized `FalkorDB` Cypher skills
     /// for better query generation. Providers that support tool calling load
@@ -286,6 +294,27 @@ impl TextToCypherClient {
         catalog: SkillCatalog,
     ) -> Self {
         self.skill_catalog = Some(catalog);
+        self
+    }
+
+    /// Adds `catalog` to the current skills (the built-in `FalkorDB` skills by default), with `catalog`
+    /// overriding any skill that shares an ID.
+    #[must_use]
+    pub fn with_additional_skills(
+        mut self,
+        catalog: SkillCatalog,
+    ) -> Self {
+        self.skill_catalog = Some(match self.skill_catalog.take() {
+            Some(existing) => existing.merged_with(catalog),
+            None => catalog,
+        });
+        self
+    }
+
+    /// Disables all Cypher skills for this client, including the built-in `FalkorDB` skills.
+    #[must_use]
+    pub fn without_skills(mut self) -> Self {
+        self.skill_catalog = None;
         self
     }
 
@@ -564,7 +593,8 @@ mod tests {
         assert_eq!(client.api_key, "key123");
         assert_eq!(client.falkordb_connection, "falkor://localhost:6379");
         assert_eq!(client.llm_endpoint, None);
-        assert!(client.skill_catalog.is_none());
+        // new() installs the built-in FalkorDB skills by default
+        assert!(client.skill_catalog.is_some());
     }
 
     #[test]
@@ -580,6 +610,40 @@ mod tests {
         let catalog = SkillCatalog::empty();
         let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://localhost:6379").with_skills(catalog);
         assert!(client.skill_catalog.is_some());
+    }
+
+    #[test]
+    fn test_new_client_includes_builtin_skills() {
+        let client = TextToCypherClient::new("gpt-4o-mini", "key", "falkor://127.0.0.1:6379");
+        let catalog = client.skill_catalog.as_ref().expect("builtin skills by default");
+        assert!(!catalog.is_empty());
+        assert!(catalog.get_skill("falkordb-fulltext-search").is_some());
+    }
+
+    #[test]
+    fn test_without_skills_clears_builtin() {
+        let client = TextToCypherClient::new("m", "k", "falkor://127.0.0.1:6379").without_skills();
+        assert!(client.skill_catalog.is_none());
+    }
+
+    #[test]
+    fn test_with_skills_replaces_builtin() {
+        let client = TextToCypherClient::new("m", "k", "falkor://127.0.0.1:6379").with_skills(SkillCatalog::empty());
+        assert!(client.skill_catalog.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_with_additional_skills_keeps_builtin() {
+        let client =
+            TextToCypherClient::new("m", "k", "falkor://127.0.0.1:6379").with_additional_skills(SkillCatalog::empty());
+        assert!(
+            client
+                .skill_catalog
+                .as_ref()
+                .unwrap()
+                .get_skill("falkordb-fulltext-search")
+                .is_some()
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 use crate::usage::TokenUsage;
 use ::text_to_cypher::core::{clean_generated_cypher_response, create_genai_client_with_endpoint};
-use ::text_to_cypher::skills::{self, SkillCatalog};
+use ::text_to_cypher::skills::{self, SkillCatalog, SkillProfile};
 use actix_multipart::Multipart;
 use actix_web::HttpResponse;
 use actix_web::http::StatusCode;
@@ -192,24 +192,32 @@ impl AppConfig {
 
         let mcp_port = std::env::var("MCP_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(3001);
 
-        // Load skills from SKILLS_DIR if configured
-        let skill_catalog = std::env::var("SKILLS_DIR").ok().and_then(|dir| {
-            let path = std::path::Path::new(&dir);
-            match SkillCatalog::from_directory(path) {
-                Ok(catalog) if !catalog.is_empty() => {
-                    tracing::info!("Loaded {} skills from {}", catalog.len(), dir);
-                    Some(catalog)
-                }
-                Ok(_) => {
-                    tracing::warn!("SKILLS_DIR set to '{dir}' but no skills were found");
-                    None
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load skills from {dir}: {e}");
-                    None
+        // Start from the built-in read-only FalkorDB skills, then let SKILLS_DIR override/extend them.
+        // External skills are filtered to the read-only profile so the read-only contract holds for the
+        // operator override too, not just the built-in set.
+        let builtin = SkillCatalog::builtin();
+        let skill_catalog = match std::env::var("SKILLS_DIR").ok() {
+            Some(dir) => {
+                let path = std::path::Path::new(&dir);
+                match SkillCatalog::from_directory(path) {
+                    Ok(catalog) if !catalog.is_empty() => {
+                        let external = catalog.with_profile(SkillProfile::ReadOnly);
+                        let merged = builtin.merged_with(external);
+                        tracing::info!("Loaded {} skills (built-in + SKILLS_DIR {})", merged.len(), dir);
+                        Some(merged)
+                    }
+                    Ok(_) => {
+                        tracing::warn!("SKILLS_DIR set to '{dir}' but no skills were found; using built-in skills");
+                        Some(builtin)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load skills from {dir}: {e}; using built-in skills");
+                        Some(builtin)
+                    }
                 }
             }
-        });
+            None => Some(builtin),
+        };
 
         tracing::info!(
             "Loaded configuration - env_file_loaded: {}, default_model: {:?}, rest_port: {}, mcp_port: {}, skills_loaded: {}",

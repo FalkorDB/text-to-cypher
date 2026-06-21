@@ -134,7 +134,8 @@ pub async fn process_text_to_cypher(
     default_key: Option<String>,
     default_connection: String,
 ) -> TextToCypherResponse {
-    process_text_to_cypher_with_skills(request, default_model, default_key, default_connection, None).await
+    let builtin = SkillCatalog::builtin();
+    process_text_to_cypher_with_skills(request, default_model, default_key, default_connection, Some(&builtin)).await
 }
 
 /// Process a text-to-cypher request with optional dynamic skill support.
