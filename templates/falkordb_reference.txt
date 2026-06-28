@@ -22,5 +22,10 @@ Paths and traversal:
 - Undirected / reverse: -[:TYPE]- or <-[:TYPE]-
 - Optional matching: OPTIONAL MATCH for non-required relationships
 - Named paths: path = (a)-[:REL]->(b)
-- Shortest paths: shortestPath(...) and allShortestPaths((a)-[:REL*]->(b))
-- Weighted shortest paths (procedures): algo.SPpaths() (single pair), algo.SSpaths() (single source)
+- Shortest path between two specific nodes: prefer the algo.SPpaths() procedure (single pair).
+  Syntax: MATCH (a:Label {..}), (b:Label {..})
+          CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: ['REL'], relDirection: 'outgoing', pathCount: 1})
+          YIELD path RETURN path
+  Add weightProp (e.g. 'dist', 'time', 'price') to minimize a weighted property; use pathCount: 0 for all shortest paths.
+- Shortest paths from one source to all reachable nodes: algo.SSpaths() (single source).
+- Unweighted pattern helpers also exist: shortestPath(...) and allShortestPaths((a)-[:REL*]->(b)).
