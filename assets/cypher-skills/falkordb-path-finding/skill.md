@@ -30,7 +30,7 @@ RETURN [n IN nodes(path) | n.name] AS route
   `pathCount` (1 = single shortest, 0 = all shortest, n = up to n paths).
 - Add `weightProp` (e.g. `'dist'`, `'time'`) to minimize a weighted property, and `costProp`/`maxCost`
   to constrain total cost. It `YIELD`s `path`, `pathWeight`, and `pathCost`.
-- Use `algo.SSpaths()` (single source) for shortest paths from one node to all reachable destinations.
+- Use `algo.SSpaths()` (single source) for all shortest paths from one node to all reachable destinations.
 - Variable-length paths use `-[:TYPE*minHops..maxHops]->`; bound the hops to avoid expensive traversals.
 - `shortestPath(...)`/`allShortestPaths(...)` are unweighted pattern helpers for simple cases.
 - Use `-[:TYPE]-` for undirected traversal and `<-[:TYPE]-` to follow relationships in reverse.
