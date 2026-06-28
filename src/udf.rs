@@ -199,6 +199,10 @@ impl UdfCatalog {
             "Use ONLY the functions listed below; never invent a UDF. If none is clearly relevant to the question, write normal Cypher."
                 .to_string(),
         );
+        lines.push(
+            "When the question explicitly names one of these functions or libraries, or asks to \"use\" a listed function, you MUST call that UDF as library.function(...) in the generated query — do not substitute a built-in operator or equivalent expression."
+                .to_string(),
+        );
 
         let mut libraries: Vec<&UdfLibrary> = self.libraries.iter().filter(|lib| !lib.functions.is_empty()).collect();
         libraries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -473,6 +477,8 @@ mod tests {
 
         assert!(rendered.contains("Use ONLY the functions listed below; never invent a UDF."));
         assert!(rendered.contains("Signatures are not provided"));
+        // An explicit request to use a listed UDF must be honored over a built-in equivalent.
+        assert!(rendered.contains("you MUST call that UDF as library.function(...)"));
         // Libraries and functions are sorted; alib before zlib, A before B.
         let a_pos = rendered.find("- alib.A").unwrap();
         let b_pos = rendered.find("- alib.B").unwrap();
