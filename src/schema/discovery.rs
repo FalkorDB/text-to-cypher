@@ -79,7 +79,7 @@ impl Schema {
         let mut attributes = Self::collect_attributes(graph, label, &query).await?;
 
         // Collect example values for each attribute
-        Self::collect_example_values(graph, label, &mut attributes, sample_size).await?;
+        Self::collect_example_values(graph, label, &mut attributes, sample_size, false).await?;
 
         Ok(attributes)
     }
@@ -104,7 +104,13 @@ impl Schema {
             "
         );
 
-        Self::collect_attributes(graph, label, &query).await
+        let mut attributes = Self::collect_attributes(graph, label, &query).await?;
+
+        // Collect example values (e.g. rel_type = "MARRIED_TO") so the model can filter on
+        // structured relationship properties instead of fuzzy-matching free-text fields.
+        Self::collect_example_values(graph, label, &mut attributes, sample_size, true).await?;
+
+        Ok(attributes)
     }
 
     async fn collect_attributes(
@@ -149,6 +155,7 @@ impl Schema {
         label: &str,
         attributes: &mut [Attribute],
         sample_size: usize,
+        is_relationship: bool,
     ) -> Result<(), FalkorDBError> {
         // Validate label to prevent injection attacks
         // Labels should start with letter/underscore and contain alphanumeric/underscore
@@ -176,8 +183,13 @@ impl Schema {
             // Even with validation, this provides defense-in-depth
             let escaped_name = Self::escape_property_name(&attribute.name);
             let escaped_label = Self::escape_property_name(label);
+            let match_clause = if is_relationship {
+                format!("MATCH ()-[n:{escaped_label}]->()")
+            } else {
+                format!("MATCH (n:{escaped_label})")
+            };
             let query = format!(
-                r"MATCH (n:{escaped_label})
+                r"{match_clause}
                 WHERE n.{escaped_name} IS NOT NULL
                 RETURN DISTINCT toString(n.{escaped_name}) AS value
                 LIMIT {max_examples}"
