@@ -195,6 +195,7 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
     let mut result_buffer = String::new();
     let mut final_result = String::new();
     let mut token_usage: Option<TokenUsage> = None;
+    let mut confidence: Option<u8> = None;
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
@@ -202,7 +203,13 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
 
         for line in chunk_str.lines() {
             if let Some(data) = line.strip_prefix("data: ") {
-                process_sse_event(data, &mut result_buffer, &mut final_result, &mut token_usage)?;
+                process_sse_event(
+                    data,
+                    &mut result_buffer,
+                    &mut final_result,
+                    &mut token_usage,
+                    &mut confidence,
+                )?;
             }
         }
     }
@@ -211,6 +218,7 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
         &result_buffer,
         &final_result,
         token_usage.as_ref(),
+        confidence,
     ))
 }
 
@@ -220,6 +228,7 @@ fn process_sse_event(
     result_buffer: &mut String,
     final_result: &mut String,
     token_usage: &mut Option<TokenUsage>,
+    confidence: &mut Option<u8>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Ok(progress) = serde_json::from_str::<serde_json::Value>(data)
         && let Some(event_type) = progress.as_object().and_then(|obj| obj.keys().next())
@@ -231,6 +240,7 @@ fn process_sse_event(
             "CypherResult" => handle_cypher_result_event(&progress, result_buffer),
             "ModelOutputChunk" => handle_model_output_chunk(&progress, final_result),
             "Result" => handle_result_event(&progress, final_result),
+            "Confidence" => handle_confidence_event(&progress, confidence),
             "Usage" => handle_usage_event(&progress, token_usage),
             "Error" => return handle_error_event(&progress),
             _ => tracing::debug!("Unknown event type: {}", event_type),
@@ -294,6 +304,17 @@ fn handle_result_event(
     }
 }
 
+fn handle_confidence_event(
+    progress: &serde_json::Value,
+    confidence: &mut Option<u8>,
+) {
+    if let Some(value) = progress.get("Confidence").and_then(serde_json::Value::as_u64) {
+        let value = u8::try_from(value.min(100)).unwrap_or(100);
+        tracing::info!("Answer confidence: {}", value);
+        *confidence = Some(value);
+    }
+}
+
 fn handle_error_event(progress: &serde_json::Value) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Some(error) = progress.get("Error").and_then(|v| v.as_str()) {
         tracing::error!("Error from HTTP endpoint: {}", error);
@@ -325,12 +346,17 @@ fn build_complete_response(
     result_buffer: &str,
     final_result: &str,
     token_usage: Option<&TokenUsage>,
+    confidence: Option<u8>,
 ) -> String {
     let mut response = if final_result.is_empty() {
         result_buffer.trim().to_string()
     } else {
         format!("{}\n\nFinal Answer:\n{}", result_buffer.trim(), final_result)
     };
+
+    if let Some(confidence) = confidence {
+        write!(response, "\n\nConfidence: {confidence}%").unwrap();
+    }
 
     if let Some(usage) = token_usage {
         write!(
@@ -377,5 +403,45 @@ async fn get_graph_schema_via_api(graph_name: &str) -> Result<String, Box<dyn st
         Ok(schema)
     } else {
         Err(format!("API returned error status: {}", response.status()).into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Feeds the SSE events a real run emits and returns the assembled MCP response.
+    fn assemble(events: &[&str]) -> String {
+        let mut result_buffer = String::new();
+        let mut final_result = String::new();
+        let mut token_usage: Option<TokenUsage> = None;
+        let mut confidence: Option<u8> = None;
+        for data in events {
+            process_sse_event(
+                data,
+                &mut result_buffer,
+                &mut final_result,
+                &mut token_usage,
+                &mut confidence,
+            )
+            .unwrap();
+        }
+        build_complete_response(&result_buffer, &final_result, token_usage.as_ref(), confidence)
+    }
+
+    #[test]
+    fn confidence_event_is_surfaced_in_mcp_response() {
+        let response = assemble(&[r#"{"Result":"The city names are A, B, C, and D."}"#, r#"{"Confidence":100}"#]);
+        assert!(response.contains("Final Answer:\nThe city names are A, B, C, and D."));
+        assert!(response.contains("Confidence: 100%"));
+    }
+
+    #[test]
+    fn confidence_is_omitted_when_absent_and_clamped_when_high() {
+        let without = assemble(&[r#"{"Result":"An answer."}"#]);
+        assert!(!without.contains("Confidence:"));
+
+        let clamped = assemble(&[r#"{"Result":"An answer."}"#, r#"{"Confidence":250}"#]);
+        assert!(clamped.contains("Confidence: 100%"));
     }
 }
