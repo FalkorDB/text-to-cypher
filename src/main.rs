@@ -334,6 +334,7 @@ enum Progress {
     CypherResult(String),
     ModelOutputChunk(String),
     Result(String),
+    Confidence(u8),
     Usage(TokenUsage),
     Error(String),
 }
@@ -2468,7 +2469,12 @@ async fn process_chat_stream(
     tx: &mpsc::Sender<sse::Event>,
     token_usage: &mut TokenUsage,
 ) -> String {
-    let mut answer = String::new();
+    // Number of trailing bytes withheld from live streaming so a trailing
+    // `CONFIDENCE: <0-100>` marker is never surfaced to the client mid-stream.
+    const HOLD_BYTES: usize = 48;
+
+    let mut full = String::new();
+    let mut sent = 0usize;
 
     // Extract the response stream
     let mut stream = chat_response.stream;
@@ -2485,8 +2491,14 @@ async fn process_chat_stream(
         match stream_event {
             genai::chat::ChatStreamEvent::Start => {}
             genai::chat::ChatStreamEvent::Chunk(chunk) => {
-                answer.push_str(&chunk.content);
-                send_or_empty!(tx, Progress::ModelOutputChunk(chunk.content));
+                full.push_str(&chunk.content);
+                // Stream everything except the last HOLD_BYTES so the marker,
+                // which may be split across chunks, is caught before emission.
+                let safe_end = floor_char_boundary(&full, full.len().saturating_sub(HOLD_BYTES));
+                if safe_end > sent {
+                    send_or_empty!(tx, Progress::ModelOutputChunk(full[sent..safe_end].to_string()));
+                    sent = safe_end;
+                }
             }
             genai::chat::ChatStreamEvent::ReasoningChunk(_chunk) => {}
             genai::chat::ChatStreamEvent::End(end_event) => {
@@ -2499,10 +2511,33 @@ async fn process_chat_stream(
         }
     }
 
-    tracing::info!("Final answer: {}", answer);
+    let (answer, confidence) = ::text_to_cypher::core::parse_answer_confidence(&full);
+
+    // Flush any remaining clean answer text that was held back during streaming.
+    let start = floor_char_boundary(&answer, sent.min(answer.len()));
+    if start < answer.len() {
+        send_or_empty!(tx, Progress::ModelOutputChunk(answer[start..].to_string()));
+    }
+
+    tracing::info!("Final answer: {} (confidence: {:?})", answer, confidence);
     // Emit the aggregated token usage before the terminal Result event so consumers
     // that treat Result as terminal still receive the usage.
     send_or_empty!(tx, Progress::Usage(*token_usage));
+    if let Some(confidence) = confidence {
+        send_or_empty!(tx, Progress::Confidence(confidence));
+    }
     send_or_empty!(tx, Progress::Result(answer.clone()));
     answer
+}
+
+/// Returns the largest byte index `<= index` that lies on a UTF-8 char boundary.
+fn floor_char_boundary(
+    s: &str,
+    index: usize,
+) -> usize {
+    let mut i = index.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
