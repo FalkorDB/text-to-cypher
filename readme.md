@@ -41,6 +41,7 @@ A high-performance Rust library and API service that translates natural language
 - **AI Model Integration**: Powered by genai for natural language processing with support for multiple providers
 - **Dynamic Cypher Skills**: Built-in FalkorDB-specific best practices by default, extensible from external skill files, with on-demand tool calling
 - **Schema-Aware Generation**: Uses schema with example values for better query accuracy
+- **Answer Confidence**: Each answer includes a model self-reported confidence score (0-100), available via the library, REST SSE stream, and MCP tool response
 - **Production Ready**: Comprehensive error handling, logging, and robust architecture
 - **Environment Configuration**: Flexible configuration via `.env` file with fallback to request parameters
 

@@ -59,6 +59,7 @@ interface TextToCypherResponse {
   cypher_query?: string;
   cypher_result?: string;
   answer?: string;
+  confidence?: number; // model self-reported confidence (0-100) in the answer
   error?: string;
 }
 

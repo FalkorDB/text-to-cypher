@@ -64,6 +64,7 @@ class TextToCypherResponse:
     cypher_query: Optional[str] = None
     cypher_result: Optional[str] = None
     answer: Optional[str] = None
+    confidence: Optional[int] = None  # model self-reported confidence (0-100)
     error: Optional[str] = None
 
 class TextToCypherClient:
@@ -131,6 +132,7 @@ class TextToCypherClient:
             cypher_query=data.get("cypher_query"),
             cypher_result=data.get("cypher_result"),
             answer=data.get("answer"),
+            confidence=data.get("confidence"),
             error=data.get("error")
         )
 
@@ -195,6 +197,7 @@ class TextToCypherClient:
             cypher_query=data.get("cypher_query"),
             cypher_result=data.get("cypher_result"),
             answer=data.get("answer"),
+            confidence=data.get("confidence"),
             error=data.get("error")
         )
 
