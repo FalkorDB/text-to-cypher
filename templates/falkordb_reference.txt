@@ -25,7 +25,8 @@ Paths and traversal:
 - Shortest path between two specific nodes: prefer the algo.SPpaths() procedure (single pair).
   Syntax: MATCH (a:Label {..}), (b:Label {..})
           CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: ['REL'], relDirection: 'outgoing', pathCount: 1})
-          YIELD path RETURN path
+          YIELD path, pathWeight RETURN [n IN nodes(path) | n.name] AS route, pathWeight
+  Do NOT return a bare path object (e.g. RETURN path); always project readable node fields such as names so the answer is human-readable.
   Add weightProp (e.g. 'dist', 'time', 'price') to minimize a weighted property; use pathCount: 0 for all shortest paths.
 - Shortest paths from one source to all reachable nodes: algo.SSpaths() (single source).
 - Unweighted pattern helpers also exist: shortestPath(...) and allShortestPaths((a)-[:REL*]->(b)).
