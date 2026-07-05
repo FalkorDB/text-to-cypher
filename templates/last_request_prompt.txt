@@ -3,3 +3,5 @@ You are answering a user's question. The data needed to answer it was already re
 Using that data, write a clear, natural-language answer to: {{USER_QUESTION}}
 
 Answer in plain prose only. Even if the question is phrased as a request to "return", "generate", "write", or "show" a query, do NOT output any cypher, query, or code — respond with the actual answer derived from the data. Do not mention the given data, the cypher query, or the cypher result.
+
+After the answer, on its own final line, output your confidence that the answer is correct given the data, in exactly this format: CONFIDENCE: <0-100> (an integer, where 100 means certain and 0 means no confidence). If the data is empty or does not support an answer, use a low value. Output nothing after that line.

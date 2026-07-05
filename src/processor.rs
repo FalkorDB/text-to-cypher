@@ -6,7 +6,7 @@
 use crate::chat::ChatRequest;
 use crate::core::{
     create_genai_client_with_endpoint, discover_graph_schema, discover_udfs, execute_cypher_query,
-    generate_cypher_query_with_context_and_usage, generate_final_answer_with_usage,
+    generate_cypher_query_with_context_and_usage, generate_final_answer_with_confidence,
 };
 use crate::skills::SkillCatalog;
 use crate::udf::{UdfError, UdfSource};
@@ -43,6 +43,9 @@ pub struct TextToCypherResponse {
     pub cypher_result: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// Model self-reported confidence (0-100) that the answer is correct given the data.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<u8>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Aggregated token usage across all LLM calls made while serving the request.
@@ -87,6 +90,7 @@ impl TextToCypherResponse {
             cypher_query: Some(cypher_query),
             cypher_result,
             answer,
+            confidence: None,
             error: None,
             token_usage,
         }
@@ -112,6 +116,7 @@ impl TextToCypherResponse {
             cypher_query: None,
             cypher_result: None,
             answer: None,
+            confidence: None,
             error: Some(error_message),
             token_usage,
         }
@@ -309,7 +314,7 @@ pub async fn process_text_to_cypher_with_context(
                 Ok((healed_query, healed_result)) => {
                     tracing::info!("Self-healing successful");
                     // Return the healed version
-                    let answer = match generate_final_answer_with_usage(
+                    let (answer, confidence) = match generate_final_answer_with_confidence(
                         &request.chat_request,
                         &healed_query,
                         &healed_result,
@@ -319,20 +324,22 @@ pub async fn process_text_to_cypher_with_context(
                     )
                     .await
                     {
-                        Ok(a) => Some(a),
+                        Ok((a, c)) => (Some(a), c),
                         Err(e) => {
                             tracing::error!("Failed to generate answer: {}", e);
-                            None
+                            (None, None)
                         }
                     };
 
-                    return TextToCypherResponse::success_with_usage(
+                    let mut response = TextToCypherResponse::success_with_usage(
                         schema,
                         healed_query,
                         Some(healed_result),
                         answer,
                         Some(token_usage),
                     );
+                    response.confidence = confidence;
+                    return response;
                 }
                 Err(heal_error) => {
                     return TextToCypherResponse::error_with_usage(
@@ -347,7 +354,7 @@ pub async fn process_text_to_cypher_with_context(
     tracing::info!("Query executed successfully");
 
     // Step 4: Generate final answer
-    let answer = match generate_final_answer_with_usage(
+    let (answer, confidence) = match generate_final_answer_with_confidence(
         &request.chat_request,
         &cypher_query,
         &cypher_result,
@@ -357,7 +364,7 @@ pub async fn process_text_to_cypher_with_context(
     )
     .await
     {
-        Ok(a) => Some(a),
+        Ok((a, c)) => (Some(a), c),
         Err(e) => {
             return TextToCypherResponse::error_with_usage(
                 format!("Failed to generate answer: {e}"),
@@ -366,7 +373,10 @@ pub async fn process_text_to_cypher_with_context(
         }
     };
 
-    TextToCypherResponse::success_with_usage(schema, cypher_query, Some(cypher_result), answer, Some(token_usage))
+    let mut response =
+        TextToCypherResponse::success_with_usage(schema, cypher_query, Some(cypher_result), answer, Some(token_usage));
+    response.confidence = confidence;
+    response
 }
 
 /// Resolve the UDF context block for a request based on its [`UdfSource`].

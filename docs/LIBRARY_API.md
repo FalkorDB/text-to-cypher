@@ -327,6 +327,10 @@ pub struct TextToCypherResponse {
     pub cypher_query: Option<String>,
     pub cypher_result: Option<String>,
     pub answer: Option<String>,
+    /// Model self-reported confidence (0-100) that the answer is correct given
+    /// the query results, parsed from a trailing marker and stripped from
+    /// `answer`. Omitted from JSON when the model does not report a value.
+    pub confidence: Option<u8>,
     pub error: Option<String>,
     /// Aggregated token usage across all LLM calls made while serving the request.
     /// Present on successful responses, and also on error responses when at least
