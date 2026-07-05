@@ -16,7 +16,34 @@ use genai::adapter::AdapterKind;
 use genai::chat::ChatMessage as GenAiChatMessage;
 use genai::resolver::{AuthData, AuthResolver, Endpoint, ServiceTargetResolver};
 use genai::{Client as GenAiClient, ModelIden};
+use regex::Regex;
 use std::error::Error;
+use std::sync::OnceLock;
+
+/// Matches a trailing `CONFIDENCE: <0-100>` marker emitted by the answer prompt.
+fn confidence_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?is)\s*CONFIDENCE:\s*(\d{1,3})\s*\.?\s*$").expect("valid confidence regex"))
+}
+
+/// Extracts a trailing `CONFIDENCE: <0-100>` marker from an answer.
+///
+/// Returns the answer with the marker removed (trimmed at the end) and the
+/// parsed confidence value clamped to `0..=100`, or `None` if no marker is present.
+#[must_use]
+pub fn parse_answer_confidence(answer: &str) -> (String, Option<u8>) {
+    confidence_regex().captures(answer).map_or_else(
+        || (answer.trim_end().to_string(), None),
+        |caps| {
+            let whole = caps.get(0).map_or(0, |m| m.start());
+            let confidence = caps
+                .get(1)
+                .and_then(|m| m.as_str().parse::<u16>().ok())
+                .map(|v| u8::try_from(v.min(100)).unwrap_or(100));
+            (answer[..whole].trim_end().to_string(), confidence)
+        },
+    )
+}
 
 /// Discovers the graph schema and returns it as a JSON string
 ///
@@ -402,6 +429,30 @@ pub async fn generate_final_answer_with_usage(
     model: &str,
     token_usage: &mut TokenUsage,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let (answer, _confidence) =
+        generate_final_answer_with_confidence(chat_request, cypher_query, cypher_result, client, model, token_usage)
+            .await?;
+    Ok(answer)
+}
+
+/// Generates a final answer, returning both the prose answer and the model's
+/// self-reported confidence (0-100) that the answer is correct given the data.
+///
+/// The confidence is parsed from a trailing `CONFIDENCE: <0-100>` marker emitted
+/// by the answer prompt and stripped from the returned answer. Returns `None`
+/// when the model does not emit a marker.
+///
+/// # Errors
+///
+/// Returns an error if the AI chat request fails
+pub async fn generate_final_answer_with_confidence(
+    chat_request: &ChatRequest,
+    cypher_query: &str,
+    cypher_result: &str,
+    client: &GenAiClient,
+    model: &str,
+    token_usage: &mut TokenUsage,
+) -> Result<(String, Option<u8>), Box<dyn Error + Send + Sync>> {
     let genai_chat_request = create_answer_chat_request(chat_request, cypher_query, cypher_result);
 
     let chat_response = client
@@ -415,7 +466,7 @@ pub async fn generate_final_answer_with_usage(
         .into_first_text()
         .unwrap_or_else(|| "Unable to generate answer".to_string());
 
-    Ok(answer)
+    Ok(parse_answer_confidence(&answer))
 }
 
 /// Creates a `GenAI` client with optional custom API key
@@ -757,6 +808,23 @@ pub async fn list_all_models_with_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_answer_confidence_extracts_and_strips_marker() {
+        let (answer, confidence) = parse_answer_confidence("The route is A to C to D.\nCONFIDENCE: 85");
+        assert_eq!(answer, "The route is A to C to D.");
+        assert_eq!(confidence, Some(85));
+    }
+
+    #[test]
+    fn parse_answer_confidence_clamps_and_handles_missing() {
+        let (_, over) = parse_answer_confidence("Answer. CONFIDENCE: 250");
+        assert_eq!(over, Some(100));
+
+        let (answer, none) = parse_answer_confidence("Just an answer with no marker.");
+        assert_eq!(answer, "Just an answer with no marker.");
+        assert_eq!(none, None);
+    }
 
     #[test]
     fn clean_generated_cypher_response_strips_surrounding_quotes() {
