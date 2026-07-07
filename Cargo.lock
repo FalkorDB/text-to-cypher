@@ -3049,7 +3049,7 @@ dependencies = [
 
 [[package]]
 name = "text-to-cypher"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "actix-multipart",
  "actix-web",
