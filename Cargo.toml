@@ -1,6 +1,6 @@
 [package]
 name = "text-to-cypher"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 rust-version = "1.85"
 description = "A library and REST API for translating natural language text to Cypher queries using AI models"
