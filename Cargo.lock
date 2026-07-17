@@ -1063,9 +1063,9 @@ dependencies = [
 
 [[package]]
 name = "falkordb"
-version = "0.10.2"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2642bab7a651e90c78c2ea4c9ae79f4b7d1a9f4e2c6e1dd398e25c46816488d"
+checksum = "5c7e37608174b8f407267ee0b795bdfc0da5eb579075056396876c33cb865d5d"
 dependencies = [
  "backon",
  "futures-core",
