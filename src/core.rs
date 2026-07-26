@@ -272,7 +272,7 @@ fn param_header_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r#"(?is)^\s*(?:cypher\s+)?((?:[a-z_][a-z0-9_]*\s*=\s*(?:'[^']*'|"[^"]*"|\[[^\]]*\]|[^\s,]+)\s*,?\s*)+)(match|optional|call|return|with|unwind)\b"#,
+            r#"(?is)^\s*(?:cypher\s+)?((?:[a-z_][a-z0-9_]*\s*=\s*(?:'[^']*'|"[^"]*"|\[[^\]]*\]|[^\s,]+)\s*,?\s*)+)(match|optional|call|return|with|unwind|create|merge)\b"#,
         )
         .expect("valid param header regex")
     })
@@ -304,7 +304,7 @@ fn strip_top_level_commas(pairs: &str) -> String {
             None => match c {
                 '\'' | '"' => quote = Some(c),
                 '[' | '{' | '(' => depth += 1,
-                ']' | '}' | ')' => depth -= 1,
+                ']' | '}' | ')' => depth = (depth - 1).max(0),
                 ',' if depth == 0 => c = ' ',
                 _ => {}
             },
@@ -941,6 +941,23 @@ mod tests {
             clean_generated_cypher_response("Here is the query you asked for: MATCH (n) RETURN n"),
             "MATCH (n) RETURN n"
         );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_normalizes_param_header_before_create() {
+        assert_eq!(
+            clean_generated_cypher_response("x=1, y='a' CREATE (n {v: $x, w: $y}) RETURN n"),
+            "CYPHER x=1 y='a' CREATE (n {v: $x, w: $y}) RETURN n"
+        );
+        assert_eq!(
+            clean_generated_cypher_response("CYPHER x=1 MERGE (n {v: $x}) RETURN n"),
+            "CYPHER x=1 MERGE (n {v: $x}) RETURN n"
+        );
+    }
+
+    #[test]
+    fn strip_top_level_commas_clamps_on_unmatched_closer() {
+        assert_eq!(strip_top_level_commas("a=) , b=1 , c=2"), "a=) b=1 c=2");
     }
 
     #[test]
