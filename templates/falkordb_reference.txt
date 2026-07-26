@@ -15,6 +15,9 @@ Returns the k approximate nearest neighbors ordered by similarity.
 Parameterized queries (plan caching + safety):
 Prefix with CYPHER and declare values, then reference them with $name:
 CYPHER name='Alice' MATCH (u:User {name: $name}) RETURN u.id
+The CYPHER keyword is mandatory and parameter pairs are separated by spaces, NOT commas
+(e.g. CYPHER a='x' b='y' MATCH ...). A query that starts with bare name=value pairs or
+uses commas between pairs fails to parse.
 Prefer parameters for user-supplied values.
 
 Paths and traversal:
