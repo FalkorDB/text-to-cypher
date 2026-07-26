@@ -17,6 +17,7 @@ use genai::chat::ChatMessage as GenAiChatMessage;
 use genai::resolver::{AuthData, AuthResolver, Endpoint, ServiceTargetResolver};
 use genai::{Client as GenAiClient, ModelIden};
 use regex::Regex;
+use std::borrow::Cow;
 use std::error::Error;
 use std::sync::OnceLock;
 
@@ -254,11 +255,69 @@ pub fn clean_generated_cypher_response(response: &str) -> String {
 
     query = strip_known_prefixes(query);
     query = strip_surrounding_quotes(query);
+
+    let normalized = normalize_parameter_header(query);
+    let mut query = normalized.as_ref();
+
     query = trim_to_first_cypher_keyword(query);
     query = strip_explanation_suffix(query);
     query = strip_surrounding_quotes(query);
 
     query.replace('\n', " ").replace("```", "").trim().to_string()
+}
+
+/// Matches a leading `FalkorDB` parameter header: an optional `CYPHER` keyword followed by
+/// one or more `name=value` pairs (possibly comma-separated) before the first query clause.
+fn param_header_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"(?is)^\s*(?:cypher\s+)?((?:[a-z_][a-z0-9_]*\s*=\s*(?:'[^']*'|"[^"]*"|\[[^\]]*\]|\{[^}]*\}|\([^)]*\)|[^\s,]+)\s*,?\s*)+)(match|optional|call|return|with|unwind|create|merge)\b"#,
+        )
+        .expect("valid param header regex")
+    })
+}
+
+/// Normalizes a `FalkorDB` parameter header so the query parses:
+/// ensures the mandatory `CYPHER` prefix and replaces comma separators
+/// between `name=value` pairs with spaces (`FalkorDB` accepts spaces only).
+fn normalize_parameter_header(query: &str) -> Cow<'_, str> {
+    let Some(caps) = param_header_regex().captures(query) else {
+        return Cow::Borrowed(query);
+    };
+
+    let pairs = caps.get(1).map_or("", |m| m.as_str());
+    let rest = caps.get(2).map_or(query, |m| &query[m.start()..]);
+    Cow::Owned(format!("CYPHER {} {rest}", strip_top_level_commas(pairs).trim()))
+}
+
+/// Replaces commas outside quoted values and brackets with spaces,
+/// collapsing runs of whitespace outside quotes.
+fn strip_top_level_commas(pairs: &str) -> String {
+    let mut quote: Option<char> = None;
+    let mut depth = 0_i32;
+    let mut out = String::with_capacity(pairs.len());
+    for mut c in pairs.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '\'' | '"' => quote = Some(c),
+                '[' | '{' | '(' => depth += 1,
+                ']' | '}' | ')' => depth = (depth - 1).max(0),
+                ',' if depth == 0 => c = ' ',
+                _ => {}
+            },
+        }
+        if quote.is_none() && c.is_whitespace() {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn extract_fenced_block(response: &str) -> Option<&str> {
@@ -305,12 +364,12 @@ fn strip_surrounding_quotes(mut query: &str) -> &str {
 
 fn trim_to_first_cypher_keyword(query: &str) -> &str {
     let trimmed = query.trim_start();
-    if starts_with_cypher_keyword(trimmed) {
+    if starts_with_cypher_keyword(trimmed) || param_header_regex().is_match(trimmed) {
         return trimmed;
     }
 
     let lower = trimmed.to_ascii_lowercase();
-    ["match", "call", "return", "with", "unwind", "create", "merge"]
+    ["match", "optional", "call", "return", "with", "unwind", "create", "merge"]
         .iter()
         .filter_map(|keyword| find_word(&lower, keyword))
         .min()
@@ -319,7 +378,7 @@ fn trim_to_first_cypher_keyword(query: &str) -> &str {
 
 fn starts_with_cypher_keyword(query: &str) -> bool {
     let lower = query.to_ascii_lowercase();
-    ["match", "call", "return", "with", "unwind", "create", "merge"]
+    ["match", "optional", "call", "return", "with", "unwind", "create", "merge"]
         .iter()
         .any(|keyword| lower.starts_with(keyword) && is_word_boundary(&lower, keyword.len()))
 }
@@ -329,7 +388,7 @@ fn find_word(
     needle: &str,
 ) -> Option<usize> {
     haystack.match_indices(needle).find_map(|(index, _)| {
-        let before_is_boundary = index == 0 || is_word_boundary(haystack, index);
+        let before_is_boundary = index == 0 || is_word_boundary(haystack, index - 1);
         let after_is_boundary = is_word_boundary(haystack, index + needle.len());
         (before_is_boundary && after_is_boundary).then_some(index)
     })
@@ -847,6 +906,81 @@ mod tests {
         assert_eq!(
             clean_generated_cypher_response("MATCH (n) RETURN count(n) Explanation: this counts all nodes"),
             "MATCH (n) RETURN count(n)"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_adds_missing_cypher_prefix_to_param_header() {
+        assert_eq!(
+            clean_generated_cypher_response(
+                "sourceCode='MAD' , targetCode='BUD' MATCH (src:airport {code: $sourceCode}) RETURN src.code"
+            ),
+            "CYPHER sourceCode='MAD' targetCode='BUD' MATCH (src:airport {code: $sourceCode}) RETURN src.code"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_removes_commas_from_param_header() {
+        assert_eq!(
+            clean_generated_cypher_response("CYPHER a='x', b=2, ids=[1,2,3] MATCH (n) RETURN n"),
+            "CYPHER a='x' b=2 ids=[1,2,3] MATCH (n) RETURN n"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_preserves_commas_in_quoted_param_values() {
+        assert_eq!(
+            clean_generated_cypher_response("name='Doe, John', city=\"a, b\" MATCH (n {name: $name}) RETURN n"),
+            "CYPHER name='Doe, John' city=\"a, b\" MATCH (n {name: $name}) RETURN n"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_preserves_commas_in_map_param_values() {
+        assert_eq!(
+            clean_generated_cypher_response("opts={x:1,y:2}, ids=[1,2] MATCH (n) RETURN n"),
+            "CYPHER opts={x:1,y:2} ids=[1,2] MATCH (n) RETURN n"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_keeps_valid_param_header() {
+        assert_eq!(
+            clean_generated_cypher_response("CYPHER name='Alice' MATCH (u:User {name: $name}) RETURN u.id"),
+            "CYPHER name='Alice' MATCH (u:User {name: $name}) RETURN u.id"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_trims_leading_prose() {
+        assert_eq!(
+            clean_generated_cypher_response("Here is the query you asked for: MATCH (n) RETURN n"),
+            "MATCH (n) RETURN n"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_normalizes_param_header_before_create() {
+        assert_eq!(
+            clean_generated_cypher_response("x=1, y='a' CREATE (n {v: $x, w: $y}) RETURN n"),
+            "CYPHER x=1 y='a' CREATE (n {v: $x, w: $y}) RETURN n"
+        );
+        assert_eq!(
+            clean_generated_cypher_response("CYPHER x=1 MERGE (n {v: $x}) RETURN n"),
+            "CYPHER x=1 MERGE (n {v: $x}) RETURN n"
+        );
+    }
+
+    #[test]
+    fn strip_top_level_commas_clamps_on_unmatched_closer() {
+        assert_eq!(strip_top_level_commas("a=) , b=1 , c=2"), "a=) b=1 c=2");
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_keeps_optional_match_start() {
+        assert_eq!(
+            clean_generated_cypher_response("OPTIONAL MATCH (n) RETURN n"),
+            "OPTIONAL MATCH (n) RETURN n"
         );
     }
 
