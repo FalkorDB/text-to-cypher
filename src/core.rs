@@ -272,7 +272,7 @@ fn param_header_regex() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r#"(?is)^\s*(?:cypher\s+)?((?:[a-z_][a-z0-9_]*\s*=\s*(?:'[^']*'|"[^"]*"|\[[^\]]*\]|[^\s,]+)\s*,?\s*)+)(match|optional|call|return|with|unwind|create|merge)\b"#,
+            r#"(?is)^\s*(?:cypher\s+)?((?:[a-z_][a-z0-9_]*\s*=\s*(?:'[^']*'|"[^"]*"|\[[^\]]*\]|\{[^}]*\}|\([^)]*\)|[^\s,]+)\s*,?\s*)+)(match|optional|call|return|with|unwind|create|merge)\b"#,
         )
         .expect("valid param header regex")
     })
@@ -924,6 +924,22 @@ mod tests {
         assert_eq!(
             clean_generated_cypher_response("CYPHER a='x', b=2, ids=[1,2,3] MATCH (n) RETURN n"),
             "CYPHER a='x' b=2 ids=[1,2,3] MATCH (n) RETURN n"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_preserves_commas_in_quoted_param_values() {
+        assert_eq!(
+            clean_generated_cypher_response("name='Doe, John', city=\"a, b\" MATCH (n {name: $name}) RETURN n"),
+            "CYPHER name='Doe, John' city=\"a, b\" MATCH (n {name: $name}) RETURN n"
+        );
+    }
+
+    #[test]
+    fn clean_generated_cypher_response_preserves_commas_in_map_param_values() {
+        assert_eq!(
+            clean_generated_cypher_response("opts={x:1,y:2}, ids=[1,2] MATCH (n) RETURN n"),
+            "CYPHER opts={x:1,y:2} ids=[1,2] MATCH (n) RETURN n"
         );
     }
 
