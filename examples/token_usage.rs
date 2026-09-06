@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Example demonstrating token-usage tracking with the text-to-cypher library.
 //!
 //! A single `text_to_cypher` request may issue several LLM calls (schema-aware Cypher

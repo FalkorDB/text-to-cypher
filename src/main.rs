@@ -203,8 +203,7 @@ impl AppConfig {
         // short TTL so changes (UDF LOAD/DELETE/FLUSH) are eventually picked up without per-request
         // GRAPH.UDF LIST calls.
         let discover_udfs = std::env::var("DISCOVER_UDFS")
-            .ok()
-            .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"));
+            .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"));
         let udf_cache = Cache::builder()
             .time_to_live(std::time::Duration::from_secs(300))
             .max_capacity(100)
