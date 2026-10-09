@@ -277,6 +277,7 @@ fn falkor_value_to_json(value: &FalkorValue) -> String {
             json.push(']');
             json
         }
+        FalkorValue::None => "null".to_string(),
         _ => {
             // For other types, serialize as string representation
             let debug_str = format!("{value:?}");
@@ -376,5 +377,15 @@ mod tests {
         let value = FalkorValue::Array(array);
         let formatted = format_falkor_value(&value);
         assert_eq!(formatted, "[1, 2, 3]");
+    }
+
+    // Customer report: `RETURN null AS x` and `RETURN "None" AS x` both came back as [["None"]]
+    #[test]
+    fn test_json_null_is_distinct_from_none_string() {
+        let null_result = format_as_json(&[vec![FalkorValue::None]]);
+        let none_string_result = format_as_json(&[vec![FalkorValue::String("None".to_string())]]);
+        assert_eq!(null_result, "[[null]]");
+        assert_eq!(none_string_result, "[[\"None\"]]");
+        assert_ne!(null_result, none_string_result);
     }
 }
