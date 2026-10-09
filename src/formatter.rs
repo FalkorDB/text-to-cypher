@@ -175,130 +175,79 @@ fn format_falkor_value(value: &FalkorValue) -> String {
 /// Formats a query result as JSON for programmatic consumption
 #[must_use]
 pub fn format_as_json(records: &[Vec<FalkorValue>]) -> String {
-    if records.is_empty() {
-        return "[]".to_string();
-    }
+    serde_json::Value::Array(records.iter().map(|record| record_to_json(record)).collect()).to_string()
+}
 
-    let mut result = String::from("[");
-    for (i, record) in records.iter().enumerate() {
-        if i > 0 {
-            result.push(',');
-        }
+fn record_to_json(record: &[FalkorValue]) -> serde_json::Value {
+    serde_json::Value::Array(record.iter().map(falkor_value_to_json).collect())
+}
 
-        result.push('[');
-        for (j, value) in record.iter().enumerate() {
-            if j > 0 {
-                result.push(',');
-            }
-            result.push_str(&falkor_value_to_json(value));
-        }
-        result.push(']');
-    }
-    result.push(']');
+fn properties_to_json(properties: &std::collections::HashMap<String, FalkorValue>) -> serde_json::Value {
+    serde_json::Value::Object(properties.iter().map(|(k, v)| (k.clone(), falkor_value_to_json(v))).collect())
+}
 
-    result
+fn f64_to_json(f: f64) -> serde_json::Value {
+    serde_json::Number::from_f64(f).map_or(serde_json::Value::Null, serde_json::Value::Number)
+}
+
+fn node_to_json(node: &falkordb::Node) -> serde_json::Value {
+    serde_json::json!({
+        "type": "node",
+        "id": node.entity_id,
+        "labels": node.labels,
+        "properties": properties_to_json(&node.properties),
+    })
+}
+
+fn edge_to_json(edge: &falkordb::Edge) -> serde_json::Value {
+    serde_json::json!({
+        "type": "edge",
+        "id": edge.entity_id,
+        "relationship_type": edge.relationship_type,
+        "src_node_id": edge.src_node_id,
+        "dst_node_id": edge.dst_node_id,
+        "properties": properties_to_json(&edge.properties),
+    })
 }
 
 /// Converts a `FalkorValue` to its JSON representation
-fn falkor_value_to_json(value: &FalkorValue) -> String {
+fn falkor_value_to_json(value: &FalkorValue) -> serde_json::Value {
+    use serde_json::Value;
     match value {
-        FalkorValue::Bool(b) => b.to_string(),
-        FalkorValue::I64(i) => i.to_string(),
-        FalkorValue::F64(f) => f.to_string(),
-        FalkorValue::String(s) => format!("\"{}\"", escape_json_string(s)),
-        FalkorValue::Node(node) => {
-            let mut json = String::from("{\"type\":\"node\",\"id\":");
-            json.push_str(&node.entity_id.to_string());
-
-            json.push_str(",\"labels\":[");
-            for (i, label) in node.labels.iter().enumerate() {
-                if i > 0 {
-                    json.push(',');
-                }
-                write!(json, "\"{}\"", escape_json_string(label)).unwrap();
-            }
-            json.push_str("],\"properties\":{");
-
-            for (i, (k, v)) in node.properties.iter().enumerate() {
-                if i > 0 {
-                    json.push(',');
-                }
-                write!(json, "\"{}\":{}", escape_json_string(k), falkor_value_to_json(v)).unwrap();
-            }
-            json.push_str("}}");
-            json
-        }
-        FalkorValue::Edge(edge) => {
-            let mut json = String::from("{\"type\":\"edge\",\"id\":");
-            json.push_str(&edge.entity_id.to_string());
-            json.push_str(",\"relationship_type\":\"");
-            json.push_str(&escape_json_string(&edge.relationship_type));
-            json.push_str("\",\"src_node_id\":");
-            json.push_str(&edge.src_node_id.to_string());
-            json.push_str(",\"dst_node_id\":");
-            json.push_str(&edge.dst_node_id.to_string());
-            json.push_str(",\"properties\":{");
-
-            for (i, (k, v)) in edge.properties.iter().enumerate() {
-                if i > 0 {
-                    json.push(',');
-                }
-                write!(json, "\"{}\":{}", escape_json_string(k), falkor_value_to_json(v)).unwrap();
-            }
-            json.push_str("}}");
-            json
-        }
-        FalkorValue::Path(path) => {
-            let mut json = String::from("{\"type\":\"path\",\"nodes\":[");
-            for (i, node) in path.nodes.iter().enumerate() {
-                if i > 0 {
-                    json.push(',');
-                }
-                json.push_str(&falkor_value_to_json(&FalkorValue::Node(node.clone())));
-            }
-            json.push_str("],\"relationships\":[");
-            for (i, edge) in path.relationships.iter().enumerate() {
-                if i > 0 {
-                    json.push(',');
-                }
-                json.push_str(&falkor_value_to_json(&FalkorValue::Edge(edge.clone())));
-            }
-            json.push_str("]}");
-            json
-        }
-        FalkorValue::Array(arr) => {
-            let mut json = String::from("[");
-            for (i, item) in arr.iter().enumerate() {
-                if i > 0 {
-                    json.push(',');
-                }
-                json.push_str(&falkor_value_to_json(item));
-            }
-            json.push(']');
-            json
-        }
-        FalkorValue::None => "null".to_string(),
-        _ => {
-            // For other types, serialize as string representation
-            let debug_str = format!("{value:?}");
-            format!("\"{}\"", escape_json_string(&debug_str))
-        }
+        FalkorValue::None => Value::Null,
+        FalkorValue::Bool(b) => Value::Bool(*b),
+        FalkorValue::I64(i) => Value::from(*i),
+        FalkorValue::F64(f) => f64_to_json(*f),
+        FalkorValue::String(s) | FalkorValue::Unparseable(s) => Value::String(s.clone()),
+        FalkorValue::Node(node) => node_to_json(node),
+        FalkorValue::Edge(edge) => edge_to_json(edge),
+        FalkorValue::Path(path) => serde_json::json!({
+            "type": "path",
+            "nodes": path.nodes.iter().map(node_to_json).collect::<Vec<_>>(),
+            "relationships": path.relationships.iter().map(edge_to_json).collect::<Vec<_>>(),
+        }),
+        FalkorValue::Array(arr) => Value::Array(arr.iter().map(falkor_value_to_json).collect()),
+        FalkorValue::Map(map) => properties_to_json(map),
+        FalkorValue::Vec32(vec) => Value::Array(vec.values.iter().map(|f| f64_to_json(f64::from(*f))).collect()),
+        FalkorValue::Point(point) => serde_json::json!({
+            "latitude": f64_to_json(point.latitude),
+            "longitude": f64_to_json(point.longitude),
+        }),
+        FalkorValue::DateTime(v) => temporal_to_json(&v.to_string()),
+        FalkorValue::Date(v) => temporal_to_json(&v.to_string()),
+        FalkorValue::Time(v) => temporal_to_json(&v.to_string()),
+        FalkorValue::Duration(v) => temporal_to_json(&v.to_string()),
+        // `FalkorValue` is non-exhaustive: fall back to a string for any future variant
+        other => Value::String(format!("{other:?}")),
     }
 }
 
-/// Escapes a string for JSON format
-fn escape_json_string(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '"' => "\\\"".to_string(),
-            '\\' => "\\\\".to_string(),
-            '\n' => "\\n".to_string(),
-            '\r' => "\\r".to_string(),
-            '\t' => "\\t".to_string(),
-            c if c.is_control() => format!("\\u{:04x}", c as u32),
-            c => c.to_string(),
-        })
-        .collect()
+/// Temporal values are exposed by `falkordb` as a whole number of seconds.
+fn temporal_to_json(seconds: &str) -> serde_json::Value {
+    seconds.parse::<i64>().map_or_else(
+        |_| serde_json::Value::String(seconds.to_string()),
+        serde_json::Value::from,
+    )
 }
 
 #[cfg(test)]
@@ -387,5 +336,36 @@ mod tests {
         assert_eq!(null_result, "[[null]]");
         assert_eq!(none_string_result, "[[\"None\"]]");
         assert_ne!(null_result, none_string_result);
+    }
+
+    // Customer report: `RETURN {x: null, y: "None", z: 1} AS row` came back as
+    // "Map({\"x\": None, \"y\": String(\"None\"), \"z\": I64(1)})"
+    #[test]
+    fn test_json_map_is_a_real_json_object() {
+        let map = HashMap::from([
+            ("x".to_string(), FalkorValue::None),
+            ("y".to_string(), FalkorValue::String("None".to_string())),
+            ("z".to_string(), FalkorValue::I64(1)),
+        ]);
+        let result = format_as_json(&[vec![FalkorValue::Map(map)]]);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed, serde_json::json!([[{"x": null, "y": "None", "z": 1}]]));
+        assert!(!result.contains("Map("));
+        assert!(!result.contains("I64("));
+        assert!(!result.contains("String("));
+    }
+
+    #[test]
+    fn test_json_nested_values_have_no_rust_debug_output() {
+        let inner = HashMap::from([("n".to_string(), FalkorValue::None)]);
+        let value = FalkorValue::Array(vec![
+            FalkorValue::None,
+            FalkorValue::Map(inner),
+            FalkorValue::F64(1.5),
+            FalkorValue::Bool(true),
+        ]);
+        let result = format_as_json(&[vec![value]]);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed, serde_json::json!([[[null, {"n": null}, 1.5, true]]]));
     }
 }
