@@ -178,6 +178,20 @@ pub fn format_as_json(records: &[Vec<FalkorValue>]) -> String {
     serde_json::Value::Array(records.iter().map(|record| record_to_json(record)).collect()).to_string()
 }
 
+/// Formats a query result as a JSON object that also carries the column names:
+/// `{"columns": [...], "data": [[...], ...]}`
+#[must_use]
+pub fn format_as_json_with_columns(
+    columns: &[String],
+    records: &[Vec<FalkorValue>],
+) -> String {
+    serde_json::json!({
+        "columns": columns,
+        "data": records.iter().map(|record| record_to_json(record)).collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
 fn record_to_json(record: &[FalkorValue]) -> serde_json::Value {
     serde_json::Value::Array(record.iter().map(falkor_value_to_json).collect())
 }
@@ -367,5 +381,30 @@ mod tests {
         let result = format_as_json(&[vec![value]]);
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed, serde_json::json!([[[null, {"n": null}, 1.5, true]]]));
+    }
+
+    // Customer report: no column information, only positional arrays
+    #[test]
+    fn test_json_with_columns_includes_column_names() {
+        let columns = vec!["name".to_string(), "age".to_string()];
+        let records = vec![
+            vec![FalkorValue::String("Alice".to_string()), FalkorValue::I64(30)],
+            vec![FalkorValue::String("Bob".to_string()), FalkorValue::None],
+        ];
+        let parsed: serde_json::Value = serde_json::from_str(&format_as_json_with_columns(&columns, &records)).unwrap();
+        assert_eq!(
+            parsed,
+            serde_json::json!({
+                "columns": ["name", "age"],
+                "data": [["Alice", 30], ["Bob", null]]
+            })
+        );
+    }
+
+    #[test]
+    fn test_json_with_columns_empty_result_keeps_columns() {
+        let columns = vec!["x".to_string()];
+        let parsed: serde_json::Value = serde_json::from_str(&format_as_json_with_columns(&columns, &[])).unwrap();
+        assert_eq!(parsed, serde_json::json!({"columns": ["x"], "data": []}));
     }
 }

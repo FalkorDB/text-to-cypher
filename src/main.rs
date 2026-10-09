@@ -155,7 +155,9 @@ mod usage {
 }
 
 use chat::{ChatMessage, ChatRequest, ChatRole};
-use formatter::{build_falkordb_async_client, format_as_json, format_query_records, rows_lossy};
+use formatter::{
+    build_falkordb_async_client, format_as_json, format_as_json_with_columns, format_query_records, rows_lossy,
+};
 use mcp::run_mcp_server;
 use template::TemplateEngine;
 use validator::CypherValidator;
@@ -1524,12 +1526,14 @@ async fn graph_query(
     let query = query.to_string();
 
     // Run the FalkorDB operations in a blocking context
-    let result = tokio::task::spawn_blocking(move || execute_query_blocking(&client, &graph_name, &query, read_only))
-        .await
-        .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
+    let result = tokio::task::spawn_blocking(move || {
+        execute_query_with_columns_blocking(&client, &graph_name, &query, read_only)
+    })
+    .await
+    .map_err(|e| format!("Failed to execute blocking task: {e}"))?;
 
     let json_result = match result {
-        Ok(records) => format_as_json(&records),
+        Ok((columns, records)) => format_as_json_with_columns(&columns, &records),
         Err(e) => {
             let error_msg = format!("Query execution failed: {e}");
             return Err(error_msg.into());
@@ -1785,6 +1789,37 @@ fn execute_query_blocking(
         };
 
         Ok(rows_lossy(query_result.data))
+    })
+}
+
+/// Same as [`execute_query_blocking`], but also returns the column names of the result.
+#[allow(clippy::type_complexity)]
+fn execute_query_with_columns_blocking(
+    client: &falkordb::FalkorAsyncClient,
+    graph_name: &str,
+    query: &str,
+    read_only: bool,
+) -> Result<(Vec<String>, Vec<Vec<falkordb::FalkorValue>>), Box<dyn std::error::Error + Send + Sync>> {
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
+
+    rt.block_on(async {
+        let mut graph = client.select_graph(graph_name);
+        let query_result = if read_only {
+            graph
+                .ro_query(query)
+                .execute()
+                .await
+                .map_err(|e| format!("Query execution failed: {e}"))?
+        } else {
+            graph
+                .query(query)
+                .execute()
+                .await
+                .map_err(|e| format!("Query execution failed: {e}"))?
+        };
+
+        let columns = query_result.header.to_vec();
+        Ok((columns, rows_lossy(query_result.data)))
     })
 }
 
