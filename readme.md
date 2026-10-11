@@ -271,6 +271,7 @@ Values are returned as JSON:
 | relationship | `{"type": "edge", "id": ..., "relationship_type": "...", "src_node_id": ..., "dst_node_id": ..., "properties": {...}}` |
 | point | `{"latitude": ..., "longitude": ...}` |
 | vector | array of numbers |
+| path | `{"type": "path", "nodes": [...], "relationships": [...]}` |
 | date, time, datetime, duration | `{"type": "date", "seconds": ...}` (and `time`, `datetime`, `duration`) |
 | NaN, Infinity | `"NaN"`, `"Infinity"`, `"-Infinity"` |
 | value the client could not parse | `{"type": "unparseable", "error": "..."}` |
