@@ -153,8 +153,28 @@ fn format_falkor_value(value: &FalkorValue) -> String {
             let elements: Vec<String> = arr.iter().map(format_falkor_value).collect();
             format!("[{}]", elements.join(", "))
         }
+        FalkorValue::None => "null".to_string(),
+        FalkorValue::Map(map) => {
+            let mut entries: Vec<String> =
+                map.iter().map(|(k, v)| format!("{}: {}", k, format_falkor_value(v))).collect();
+            entries.sort();
+            format!("{{{}}}", entries.join(", "))
+        }
+        FalkorValue::Point(point) => format!(
+            "point({{latitude: {}, longitude: {}}})",
+            point.latitude, point.longitude
+        ),
+        FalkorValue::Vec32(vec) => {
+            let elements: Vec<String> = vec.values.iter().map(ToString::to_string).collect();
+            format!("[{}]", elements.join(", "))
+        }
+        FalkorValue::DateTime(v) => format!("datetime({v}s)"),
+        FalkorValue::Date(v) => format!("date({v}s)"),
+        FalkorValue::Time(v) => format!("time({v}s)"),
+        FalkorValue::Duration(v) => format!("duration({v}s)"),
+        FalkorValue::Unparseable(s) => format!("<unparseable: {s}>"),
         _ => {
-            // For all other types (strings, maps, etc.), use the debug representation
+            // For any other types, use the debug representation
             // but clean it up for better readability
             let debug_str = format!("{value:?}");
 
@@ -222,6 +242,16 @@ fn f64_to_json(f: f64) -> serde_json::Value {
     )
 }
 
+/// Converts a 32-bit float (used by vectors) to a JSON number.
+///
+/// Widening `f32` to `f64` directly exposes binary rounding noise (`0.1` becomes
+/// `0.10000000149011612`), so the value goes through its shortest decimal form first.
+fn f32_to_json(f: f32) -> serde_json::Value {
+    f.to_string()
+        .parse::<f64>()
+        .map_or_else(|_| f64_to_json(f64::from(f)), f64_to_json)
+}
+
 /// Converts a node into a JSON object tagged with `"type": "node"`.
 fn node_to_json(node: &falkordb::Node) -> serde_json::Value {
     serde_json::json!({
@@ -252,7 +282,8 @@ fn falkor_value_to_json(value: &FalkorValue) -> serde_json::Value {
         FalkorValue::Bool(b) => Value::Bool(*b),
         FalkorValue::I64(i) => Value::from(*i),
         FalkorValue::F64(f) => f64_to_json(*f),
-        FalkorValue::String(s) | FalkorValue::Unparseable(s) => Value::String(s.clone()),
+        FalkorValue::String(s) => Value::String(s.clone()),
+        FalkorValue::Unparseable(error) => serde_json::json!({ "type": "unparseable", "error": error }),
         FalkorValue::Node(node) => node_to_json(node),
         FalkorValue::Edge(edge) => edge_to_json(edge),
         FalkorValue::Path(path) => serde_json::json!({
@@ -262,7 +293,7 @@ fn falkor_value_to_json(value: &FalkorValue) -> serde_json::Value {
         }),
         FalkorValue::Array(arr) => Value::Array(arr.iter().map(falkor_value_to_json).collect()),
         FalkorValue::Map(map) => properties_to_json(map),
-        FalkorValue::Vec32(vec) => Value::Array(vec.values.iter().map(|f| f64_to_json(f64::from(*f))).collect()),
+        FalkorValue::Vec32(vec) => Value::Array(vec.values.iter().map(|f| f32_to_json(*f)).collect()),
         FalkorValue::Point(point) => serde_json::json!({
             "latitude": f64_to_json(point.latitude),
             "longitude": f64_to_json(point.longitude),
@@ -486,10 +517,71 @@ mod tests {
         assert_eq!(result, "[[\"NaN\",\"Infinity\",\"-Infinity\",null]]");
     }
 
-    /// Values the client could not parse are returned as their raw string.
+    /// Values the client could not parse are tagged so they are not mistaken for real strings.
     #[test]
-    fn test_json_unparseable_value_is_a_string() {
-        let result = format_as_json(&[vec![FalkorValue::Unparseable("raw".to_string())]]);
-        assert_eq!(result, "[[\"raw\"]]");
+    fn test_json_unparseable_value_is_tagged() {
+        let records = vec![vec![
+            FalkorValue::Unparseable("raw".to_string()),
+            FalkorValue::String("raw".to_string()),
+        ]];
+        let parsed: serde_json::Value = serde_json::from_str(&format_as_json(&records)).unwrap();
+        assert_eq!(
+            parsed,
+            serde_json::json!([[{"type": "unparseable", "error": "raw"}, "raw"]])
+        );
+    }
+
+    /// Vector values keep their short decimal form instead of `f32` to `f64` rounding noise.
+    #[test]
+    fn test_json_vector_has_no_rounding_noise() {
+        assert_eq!(f32_to_json(0.1), serde_json::json!(0.1));
+        assert_eq!(f32_to_json(0.2), serde_json::json!(0.2));
+        assert_eq!(f32_to_json(1.5), serde_json::json!(1.5));
+        assert_eq!(f32_to_json(f32::NAN), serde_json::json!("NaN"));
+    }
+
+    /// The LLM-friendly formatter shows `null` instead of Rust's `None`.
+    #[test]
+    fn test_null_formatting() {
+        assert_eq!(format_falkor_value(&FalkorValue::None), "null");
+        assert_eq!(
+            format_falkor_value(&FalkorValue::String("None".to_string())),
+            "\"None\""
+        );
+    }
+
+    /// The LLM-friendly formatter shows maps in Cypher map syntax, without Rust Debug output.
+    #[test]
+    fn test_map_formatting() {
+        let map = HashMap::from([
+            ("x".to_string(), FalkorValue::None),
+            ("y".to_string(), FalkorValue::String("None".to_string())),
+            ("z".to_string(), FalkorValue::I64(1)),
+        ]);
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Map(map)),
+            "{x: null, y: \"None\", z: 1}"
+        );
+    }
+
+    /// Points, temporal values and unparseable values are readable in the LLM-friendly format.
+    #[test]
+    fn test_other_value_formatting() {
+        let point = falkordb::Point {
+            latitude: 1.5,
+            longitude: 2.0,
+        };
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Point(point)),
+            "point({latitude: 1.5, longitude: 2})"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Date(falkordb::Date::new(86_400))),
+            "date(86400s)"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Unparseable("bad".to_string())),
+            "<unparseable: bad>"
+        );
     }
 }
