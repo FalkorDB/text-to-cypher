@@ -192,18 +192,37 @@ pub fn format_as_json_with_columns(
     .to_string()
 }
 
+/// Converts one result row into a JSON array of values.
 fn record_to_json(record: &[FalkorValue]) -> serde_json::Value {
     serde_json::Value::Array(record.iter().map(falkor_value_to_json).collect())
 }
 
+/// Converts a property or map collection into a JSON object.
 fn properties_to_json(properties: &std::collections::HashMap<String, FalkorValue>) -> serde_json::Value {
     serde_json::Value::Object(properties.iter().map(|(k, v)| (k.clone(), falkor_value_to_json(v))).collect())
 }
 
+/// Converts a float to a JSON number.
+///
+/// JSON has no representation for NaN or infinity, so those are emitted as the strings
+/// `"NaN"`, `"Infinity"` and `"-Infinity"` to keep them distinguishable from `null`.
 fn f64_to_json(f: f64) -> serde_json::Value {
-    serde_json::Number::from_f64(f).map_or(serde_json::Value::Null, serde_json::Value::Number)
+    serde_json::Number::from_f64(f).map_or_else(
+        || {
+            let text = if f.is_nan() {
+                "NaN"
+            } else if f.is_sign_positive() {
+                "Infinity"
+            } else {
+                "-Infinity"
+            };
+            serde_json::Value::String(text.to_string())
+        },
+        serde_json::Value::Number,
+    )
 }
 
+/// Converts a node into a JSON object tagged with `"type": "node"`.
 fn node_to_json(node: &falkordb::Node) -> serde_json::Value {
     serde_json::json!({
         "type": "node",
@@ -213,6 +232,7 @@ fn node_to_json(node: &falkordb::Node) -> serde_json::Value {
     })
 }
 
+/// Converts an edge into a JSON object tagged with `"type": "edge"`.
 fn edge_to_json(edge: &falkordb::Edge) -> serde_json::Value {
     serde_json::json!({
         "type": "edge",
@@ -247,21 +267,29 @@ fn falkor_value_to_json(value: &FalkorValue) -> serde_json::Value {
             "latitude": f64_to_json(point.latitude),
             "longitude": f64_to_json(point.longitude),
         }),
-        FalkorValue::DateTime(v) => temporal_to_json(&v.to_string()),
-        FalkorValue::Date(v) => temporal_to_json(&v.to_string()),
-        FalkorValue::Time(v) => temporal_to_json(&v.to_string()),
-        FalkorValue::Duration(v) => temporal_to_json(&v.to_string()),
+        FalkorValue::DateTime(v) => temporal_to_json("datetime", &v.to_string()),
+        FalkorValue::Date(v) => temporal_to_json("date", &v.to_string()),
+        FalkorValue::Time(v) => temporal_to_json("time", &v.to_string()),
+        FalkorValue::Duration(v) => temporal_to_json("duration", &v.to_string()),
         // `FalkorValue` is non-exhaustive: fall back to a string for any future variant
         other => Value::String(format!("{other:?}")),
     }
 }
 
-/// Temporal values are exposed by `falkordb` as a whole number of seconds.
-fn temporal_to_json(seconds: &str) -> serde_json::Value {
-    seconds.parse::<i64>().map_or_else(
+/// Converts a temporal value into a JSON object tagged with its type.
+///
+/// `falkordb` exposes temporal values as a whole number of seconds, so the output is
+/// `{"type": "<kind>", "seconds": <n>}`; the tag keeps a datetime, date, time or duration
+/// distinguishable from a plain integer and from each other.
+fn temporal_to_json(
+    kind: &str,
+    seconds: &str,
+) -> serde_json::Value {
+    let seconds = seconds.parse::<i64>().map_or_else(
         |_| serde_json::Value::String(seconds.to_string()),
         serde_json::Value::from,
-    )
+    );
+    serde_json::json!({ "type": kind, "seconds": seconds })
 }
 
 #[cfg(test)]
@@ -342,7 +370,7 @@ mod tests {
         assert_eq!(formatted, "[1, 2, 3]");
     }
 
-    // Customer report: `RETURN null AS x` and `RETURN "None" AS x` both came back as [["None"]]
+    /// Customer report: `RETURN null AS x` and `RETURN "None" AS x` both came back as `[["None"]]`.
     #[test]
     fn test_json_null_is_distinct_from_none_string() {
         let null_result = format_as_json(&[vec![FalkorValue::None]]);
@@ -352,8 +380,8 @@ mod tests {
         assert_ne!(null_result, none_string_result);
     }
 
-    // Customer report: `RETURN {x: null, y: "None", z: 1} AS row` came back as
-    // "Map({\"x\": None, \"y\": String(\"None\"), \"z\": I64(1)})"
+    /// Customer report: `RETURN {x: null, y: "None", z: 1} AS row` came back as
+    /// `"Map({\"x\": None, \"y\": String(\"None\"), \"z\": I64(1)})"`.
     #[test]
     fn test_json_map_is_a_real_json_object() {
         let map = HashMap::from([
@@ -369,6 +397,7 @@ mod tests {
         assert!(!result.contains("String("));
     }
 
+    /// Nested lists and maps are serialized recursively as JSON, without Rust Debug output.
     #[test]
     fn test_json_nested_values_have_no_rust_debug_output() {
         let inner = HashMap::from([("n".to_string(), FalkorValue::None)]);
@@ -383,7 +412,7 @@ mod tests {
         assert_eq!(parsed, serde_json::json!([[[null, {"n": null}, 1.5, true]]]));
     }
 
-    // Customer report: no column information, only positional arrays
+    /// Customer report: no column information, only positional arrays.
     #[test]
     fn test_json_with_columns_includes_column_names() {
         let columns = vec!["name".to_string(), "age".to_string()];
@@ -401,6 +430,7 @@ mod tests {
         );
     }
 
+    /// An empty result still reports its column names.
     #[test]
     fn test_json_with_columns_empty_result_keeps_columns() {
         let columns = vec!["x".to_string()];
@@ -408,6 +438,7 @@ mod tests {
         assert_eq!(parsed, serde_json::json!({"columns": ["x"], "data": []}));
     }
 
+    /// Points are serialized as `{"latitude": .., "longitude": ..}`.
     #[test]
     fn test_json_point_is_an_object() {
         let point = falkordb::Point {
@@ -419,29 +450,43 @@ mod tests {
         assert_eq!(parsed, serde_json::json!([[{"latitude": 32.07, "longitude": 34.78}]]));
     }
 
+    /// Temporal values are tagged with their type so they are not confused with plain integers.
     #[test]
-    fn test_json_temporal_values_are_seconds() {
+    fn test_json_temporal_values_are_tagged() {
         let records = vec![vec![
             FalkorValue::DateTime(falkordb::DateTime::new(1_700_000_000)),
             FalkorValue::Date(falkordb::Date::new(1_699_920_000)),
             FalkorValue::Time(falkordb::Time::new(3_600)),
             FalkorValue::Duration(falkordb::Duration::new(-60)),
+            FalkorValue::I64(3_600),
         ]];
         let parsed: serde_json::Value = serde_json::from_str(&format_as_json(&records)).unwrap();
-        assert_eq!(parsed, serde_json::json!([[1_700_000_000, 1_699_920_000, 3_600, -60]]));
+        assert_eq!(
+            parsed,
+            serde_json::json!([[
+                {"type": "datetime", "seconds": 1_700_000_000},
+                {"type": "date", "seconds": 1_699_920_000},
+                {"type": "time", "seconds": 3_600},
+                {"type": "duration", "seconds": -60},
+                3_600
+            ]])
+        );
     }
 
+    /// NaN and infinity are emitted as strings so they stay distinguishable from `null`.
     #[test]
-    fn test_json_non_finite_floats_become_null() {
+    fn test_json_non_finite_floats_are_distinguishable_from_null() {
         let records = vec![vec![
             FalkorValue::F64(f64::NAN),
             FalkorValue::F64(f64::INFINITY),
             FalkorValue::F64(f64::NEG_INFINITY),
+            FalkorValue::None,
         ]];
         let result = format_as_json(&records);
-        assert_eq!(result, "[[null,null,null]]");
+        assert_eq!(result, "[[\"NaN\",\"Infinity\",\"-Infinity\",null]]");
     }
 
+    /// Values the client could not parse are returned as their raw string.
     #[test]
     fn test_json_unparseable_value_is_a_string() {
         let result = format_as_json(&[vec![FalkorValue::Unparseable("raw".to_string())]]);

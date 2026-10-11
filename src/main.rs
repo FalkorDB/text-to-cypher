@@ -1507,6 +1507,7 @@ async fn generate_final_answer(
     execute_chat_stream(client, model, genai_chat_request, tx, token_usage).await;
 }
 
+/// Runs a Cypher query and returns the result as `{"columns": [...], "data": [[...], ...]}` JSON.
 #[allow(dead_code)]
 async fn graph_query(
     query: &str,
@@ -1763,6 +1764,7 @@ async fn delete_graph(graph_name: &str) -> Result<String, Box<dyn std::error::Er
     .map_err(|e| format!("Failed to execute blocking task: {e}"))?
 }
 
+/// Runs a query on a blocking thread and returns only the result rows.
 fn execute_query_blocking(
     client: &falkordb::FalkorAsyncClient,
     graph_name: &str,
@@ -1780,6 +1782,7 @@ fn execute_query_with_columns_blocking(
     query: &str,
     read_only: bool,
 ) -> Result<(Vec<String>, Vec<Vec<falkordb::FalkorValue>>), Box<dyn std::error::Error + Send + Sync>> {
+    // Create a new Tokio runtime for this blocking operation
     let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
 
     rt.block_on(async {
