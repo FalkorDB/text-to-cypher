@@ -243,40 +243,6 @@ The local development setup requires:
 
 The API includes comprehensive Swagger UI documentation available at `/swagger-ui/` when running the server.
 
-### Graph Query Endpoint (`POST /graph_query`)
-
-Runs a Cypher query and returns the result. The request and response use the Snowflake external function format (`{"data": [[row_index, value]]}`).
-
-Request:
-
-```json
-{"data": [[0, {"graph_name": "my_graph", "query": "MATCH (p:Person) RETURN p.name AS name, p.age AS age LIMIT 2"}]]}
-```
-
-The response includes the column names and the rows:
-
-```json
-{"data": [[0, {"columns": ["name", "age"], "data": [["Alice", 30], ["Bob", null]]}]]}
-```
-
-Values are returned as JSON:
-
-| Cypher value | JSON |
-|---|---|
-| `null` | `null` |
-| string, integer, float, boolean | string, number, boolean |
-| list | array |
-| map | object, for example `{"x": null, "y": "None", "z": 1}` |
-| node | `{"type": "node", "id": ..., "labels": [...], "properties": {...}}` |
-| relationship | `{"type": "edge", "id": ..., "relationship_type": "...", "src_node_id": ..., "dst_node_id": ..., "properties": {...}}` |
-| point | `{"latitude": ..., "longitude": ...}` |
-| vector | array of numbers |
-| date, time, datetime, duration | `{"type": "date", "seconds": ...}` (and `time`, `datetime`, `duration`) |
-| NaN, Infinity | `"NaN"`, `"Infinity"`, `"-Infinity"` |
-| value the client could not parse | `{"type": "unparseable", "error": "..."}` |
-
-The CSV load endpoints (`/load_csv`, `/graph_query_upload/{graph_name}`) keep returning only the rows, without column names.
-
 ## Configuration
 
 The application supports flexible configuration via environment variables or `.env` file:
