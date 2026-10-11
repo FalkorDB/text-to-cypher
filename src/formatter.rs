@@ -96,6 +96,19 @@ pub fn format_query_records(records: &[Vec<FalkorValue>]) -> String {
     }
 }
 
+/// Formats a map key the way Cypher writes it: bare when it is a valid identifier,
+/// otherwise wrapped in backticks (with any backtick inside doubled).
+fn format_map_key(key: &str) -> String {
+    let mut chars = key.chars();
+    let is_identifier =
+        chars.next().is_some_and(|c| c.is_alphabetic() || c == '_') && chars.all(|c| c.is_alphanumeric() || c == '_');
+    if is_identifier {
+        key.to_string()
+    } else {
+        format!("`{}`", key.replace('`', "``"))
+    }
+}
+
 /// Formats a single `FalkorDB` value in a readable, compact format
 fn format_falkor_value(value: &FalkorValue) -> String {
     match value {
@@ -155,8 +168,10 @@ fn format_falkor_value(value: &FalkorValue) -> String {
         }
         FalkorValue::None => "null".to_string(),
         FalkorValue::Map(map) => {
-            let mut entries: Vec<String> =
-                map.iter().map(|(k, v)| format!("{}: {}", k, format_falkor_value(v))).collect();
+            let mut entries: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{}: {}", format_map_key(k), format_falkor_value(v)))
+                .collect();
             entries.sort();
             format!("{{{}}}", entries.join(", "))
         }
@@ -246,6 +261,7 @@ fn f64_to_json(f: f64) -> serde_json::Value {
 ///
 /// Widening `f32` to `f64` directly exposes binary rounding noise (`0.1` becomes
 /// `0.10000000149011612`), so the value goes through its shortest decimal form first.
+#[must_use]
 fn f32_to_json(f: f32) -> serde_json::Value {
     f.to_string()
         .parse::<f64>()
@@ -582,6 +598,20 @@ mod tests {
         assert_eq!(
             format_falkor_value(&FalkorValue::Unparseable("bad".to_string())),
             "<unparseable: bad>"
+        );
+    }
+
+    /// Map keys that are not valid identifiers are wrapped in backticks, as in Cypher.
+    #[test]
+    fn test_map_key_escaping() {
+        let map = HashMap::from([
+            ("first name".to_string(), FalkorValue::String("Ann".to_string())),
+            ("age".to_string(), FalkorValue::I64(30)),
+            ("a`b".to_string(), FalkorValue::None),
+        ]);
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Map(map)),
+            "{`a``b`: null, `first name`: \"Ann\", age: 30}"
         );
     }
 }
