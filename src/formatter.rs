@@ -407,4 +407,44 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&format_as_json_with_columns(&columns, &[])).unwrap();
         assert_eq!(parsed, serde_json::json!({"columns": ["x"], "data": []}));
     }
+
+    #[test]
+    fn test_json_point_is_an_object() {
+        let point = falkordb::Point {
+            latitude: 32.07,
+            longitude: 34.78,
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&format_as_json(&[vec![FalkorValue::Point(point)]])).unwrap();
+        assert_eq!(parsed, serde_json::json!([[{"latitude": 32.07, "longitude": 34.78}]]));
+    }
+
+    #[test]
+    fn test_json_temporal_values_are_seconds() {
+        let records = vec![vec![
+            FalkorValue::DateTime(falkordb::DateTime::new(1_700_000_000)),
+            FalkorValue::Date(falkordb::Date::new(1_699_920_000)),
+            FalkorValue::Time(falkordb::Time::new(3_600)),
+            FalkorValue::Duration(falkordb::Duration::new(-60)),
+        ]];
+        let parsed: serde_json::Value = serde_json::from_str(&format_as_json(&records)).unwrap();
+        assert_eq!(parsed, serde_json::json!([[1_700_000_000, 1_699_920_000, 3_600, -60]]));
+    }
+
+    #[test]
+    fn test_json_non_finite_floats_become_null() {
+        let records = vec![vec![
+            FalkorValue::F64(f64::NAN),
+            FalkorValue::F64(f64::INFINITY),
+            FalkorValue::F64(f64::NEG_INFINITY),
+        ]];
+        let result = format_as_json(&records);
+        assert_eq!(result, "[[null,null,null]]");
+    }
+
+    #[test]
+    fn test_json_unparseable_value_is_a_string() {
+        let result = format_as_json(&[vec![FalkorValue::Unparseable("raw".to_string())]]);
+        assert_eq!(result, "[[\"raw\"]]");
+    }
 }

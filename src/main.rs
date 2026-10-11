@@ -1769,27 +1769,7 @@ fn execute_query_blocking(
     query: &str,
     read_only: bool,
 ) -> Result<Vec<Vec<falkordb::FalkorValue>>, Box<dyn std::error::Error + Send + Sync>> {
-    // Create a new Tokio runtime for this blocking operation
-    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("Failed to create runtime: {e}"))?;
-
-    rt.block_on(async {
-        let mut graph = client.select_graph(graph_name);
-        let query_result = if read_only {
-            graph
-                .ro_query(query)
-                .execute()
-                .await
-                .map_err(|e| format!("Query execution failed: {e}"))?
-        } else {
-            graph
-                .query(query)
-                .execute()
-                .await
-                .map_err(|e| format!("Query execution failed: {e}"))?
-        };
-
-        Ok(rows_lossy(query_result.data))
-    })
+    execute_query_with_columns_blocking(client, graph_name, query, read_only).map(|(_columns, records)| records)
 }
 
 /// Same as [`execute_query_blocking`], but also returns the column names of the result.
