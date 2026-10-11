@@ -461,7 +461,7 @@ async fn configured_model_endpoint() -> Result<impl Responder, actix_web::Error>
     path = "/graph_query",
     request_body = GraphQueryRequest,
     responses(
-        (status = 200, description = "Query executed successfully", body = String, content_type = "application/json"),
+        (status = 200, description = "Query executed successfully. Snowflake external function format: `{\"data\": [[0, {\"columns\": [...], \"data\": [[...], ...]}]]}`, with values as JSON (null as `null`, maps as objects)", body = String, content_type = "application/json"),
         (status = 400, description = "Query execution failed", body = ErrorResponse)
     )
 )]

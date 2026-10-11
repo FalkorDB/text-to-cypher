@@ -96,6 +96,80 @@ pub fn format_query_records(records: &[Vec<FalkorValue>]) -> String {
     }
 }
 
+/// Formats a map key the way Cypher writes it: bare when it is a valid identifier,
+/// otherwise wrapped in backticks (with any backtick inside doubled).
+fn format_map_key(key: &str) -> String {
+    let mut chars = key.chars();
+    let is_identifier =
+        chars.next().is_some_and(|c| c.is_alphabetic() || c == '_') && chars.all(|c| c.is_alphanumeric() || c == '_');
+    if is_identifier {
+        key.to_string()
+    } else {
+        format!("`{}`", key.replace('`', "``"))
+    }
+}
+
+/// Converts days since 1970-01-01 to a (year, month, day) civil date.
+const fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+    (year, month, day)
+}
+
+/// Formats seconds since the Unix epoch as an ISO-8601 date (`2024-01-02`) or local
+/// datetime (`2024-01-02T10:00:00`). Written without quotes or a constructor call so the
+/// model reads it as a value, not as Cypher to copy back into a query.
+fn format_epoch_seconds(
+    seconds: i64,
+    with_time: bool,
+) -> String {
+    let (year, month, day) = civil_from_days(seconds.div_euclid(86_400));
+    if with_time {
+        format!("{year:04}-{month:02}-{day:02}T{}", format_time_of_day(seconds))
+    } else {
+        format!("{year:04}-{month:02}-{day:02}")
+    }
+}
+
+/// Formats the time-of-day part of a seconds value as `HH:MM:SS`.
+fn format_time_of_day(seconds: i64) -> String {
+    let secs = seconds.rem_euclid(86_400);
+    format!("{:02}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60)
+}
+
+/// Formats a duration in seconds as ISO-8601 (`PT1H30M`, `P2DT5S`, `-PT60S`).
+fn format_duration(seconds: i64) -> String {
+    let sign = if seconds < 0 { "-" } else { "" };
+    let mut rest = seconds.unsigned_abs();
+    let days = rest / 86_400;
+    rest %= 86_400;
+    let (hours, minutes, secs) = (rest / 3600, rest % 3600 / 60, rest % 60);
+    let mut out = format!("{sign}P");
+    if days > 0 {
+        write!(out, "{days}D").unwrap();
+    }
+    if hours > 0 || minutes > 0 || secs > 0 || days == 0 {
+        out.push('T');
+        if hours > 0 {
+            write!(out, "{hours}H").unwrap();
+        }
+        if minutes > 0 {
+            write!(out, "{minutes}M").unwrap();
+        }
+        if secs > 0 || (hours == 0 && minutes == 0) {
+            write!(out, "{secs}S").unwrap();
+        }
+    }
+    out
+}
+
 /// Formats a single `FalkorDB` value in a readable, compact format
 fn format_falkor_value(value: &FalkorValue) -> String {
     match value {
@@ -116,7 +190,7 @@ fn format_falkor_value(value: &FalkorValue) -> String {
                 let prop_strings: Vec<String> = node
                     .properties
                     .iter()
-                    .map(|(k, v)| format!("{}: {}", k, format_falkor_value(v)))
+                    .map(|(k, v)| format!("{}: {}", format_map_key(k), format_falkor_value(v)))
                     .collect();
                 format!(" {{{}}}", prop_strings.join(", "))
             };
@@ -130,7 +204,7 @@ fn format_falkor_value(value: &FalkorValue) -> String {
                 let prop_strings: Vec<String> = edge
                     .properties
                     .iter()
-                    .map(|(k, v)| format!("{}: {}", k, format_falkor_value(v)))
+                    .map(|(k, v)| format!("{}: {}", format_map_key(k), format_falkor_value(v)))
                     .collect();
                 format!(" {{{}}}", prop_strings.join(", "))
             };
@@ -153,8 +227,30 @@ fn format_falkor_value(value: &FalkorValue) -> String {
             let elements: Vec<String> = arr.iter().map(format_falkor_value).collect();
             format!("[{}]", elements.join(", "))
         }
+        FalkorValue::None => "null".to_string(),
+        FalkorValue::Map(map) => {
+            let mut entries: Vec<String> = map
+                .iter()
+                .map(|(k, v)| format!("{}: {}", format_map_key(k), format_falkor_value(v)))
+                .collect();
+            entries.sort();
+            format!("{{{}}}", entries.join(", "))
+        }
+        FalkorValue::Point(point) => format!(
+            "point({{latitude: {}, longitude: {}}})",
+            point.latitude, point.longitude
+        ),
+        FalkorValue::Vec32(vec) => {
+            let elements: Vec<String> = vec.values.iter().map(ToString::to_string).collect();
+            format!("[{}]", elements.join(", "))
+        }
+        FalkorValue::DateTime(v) => format_epoch_seconds(v.seconds().get(), true),
+        FalkorValue::Date(v) => format_epoch_seconds(v.seconds().get(), false),
+        FalkorValue::Time(v) => format_time_of_day(v.seconds().get()),
+        FalkorValue::Duration(v) => format_duration(v.seconds().get()),
+        FalkorValue::Unparseable(s) => format!("<unparseable: {s}>"),
         _ => {
-            // For all other types (strings, maps, etc.), use the debug representation
+            // For any other types, use the debug representation
             // but clean it up for better readability
             let debug_str = format!("{value:?}");
 
@@ -222,6 +318,17 @@ fn f64_to_json(f: f64) -> serde_json::Value {
     )
 }
 
+/// Converts a 32-bit float (used by vectors) to a JSON number.
+///
+/// Widening `f32` to `f64` directly exposes binary rounding noise (`0.1` becomes
+/// `0.10000000149011612`), so the value goes through its shortest decimal form first.
+#[must_use]
+fn f32_to_json(f: f32) -> serde_json::Value {
+    f.to_string()
+        .parse::<f64>()
+        .map_or_else(|_| f64_to_json(f64::from(f)), f64_to_json)
+}
+
 /// Converts a node into a JSON object tagged with `"type": "node"`.
 fn node_to_json(node: &falkordb::Node) -> serde_json::Value {
     serde_json::json!({
@@ -252,7 +359,8 @@ fn falkor_value_to_json(value: &FalkorValue) -> serde_json::Value {
         FalkorValue::Bool(b) => Value::Bool(*b),
         FalkorValue::I64(i) => Value::from(*i),
         FalkorValue::F64(f) => f64_to_json(*f),
-        FalkorValue::String(s) | FalkorValue::Unparseable(s) => Value::String(s.clone()),
+        FalkorValue::String(s) => Value::String(s.clone()),
+        FalkorValue::Unparseable(error) => serde_json::json!({ "type": "unparseable", "error": error }),
         FalkorValue::Node(node) => node_to_json(node),
         FalkorValue::Edge(edge) => edge_to_json(edge),
         FalkorValue::Path(path) => serde_json::json!({
@@ -262,7 +370,7 @@ fn falkor_value_to_json(value: &FalkorValue) -> serde_json::Value {
         }),
         FalkorValue::Array(arr) => Value::Array(arr.iter().map(falkor_value_to_json).collect()),
         FalkorValue::Map(map) => properties_to_json(map),
-        FalkorValue::Vec32(vec) => Value::Array(vec.values.iter().map(|f| f64_to_json(f64::from(*f))).collect()),
+        FalkorValue::Vec32(vec) => Value::Array(vec.values.iter().map(|f| f32_to_json(*f)).collect()),
         FalkorValue::Point(point) => serde_json::json!({
             "latitude": f64_to_json(point.latitude),
             "longitude": f64_to_json(point.longitude),
@@ -486,10 +594,148 @@ mod tests {
         assert_eq!(result, "[[\"NaN\",\"Infinity\",\"-Infinity\",null]]");
     }
 
-    /// Values the client could not parse are returned as their raw string.
+    /// Values the client could not parse are tagged so they are not mistaken for real strings.
     #[test]
-    fn test_json_unparseable_value_is_a_string() {
-        let result = format_as_json(&[vec![FalkorValue::Unparseable("raw".to_string())]]);
-        assert_eq!(result, "[[\"raw\"]]");
+    fn test_json_unparseable_value_is_tagged() {
+        let records = vec![vec![
+            FalkorValue::Unparseable("raw".to_string()),
+            FalkorValue::String("raw".to_string()),
+        ]];
+        let parsed: serde_json::Value = serde_json::from_str(&format_as_json(&records)).unwrap();
+        assert_eq!(
+            parsed,
+            serde_json::json!([[{"type": "unparseable", "error": "raw"}, "raw"]])
+        );
+    }
+
+    /// Vector values keep their short decimal form instead of `f32` to `f64` rounding noise.
+    #[test]
+    fn test_json_vector_has_no_rounding_noise() {
+        assert_eq!(f32_to_json(0.1), serde_json::json!(0.1));
+        assert_eq!(f32_to_json(0.2), serde_json::json!(0.2));
+        assert_eq!(f32_to_json(1.5), serde_json::json!(1.5));
+        assert_eq!(f32_to_json(f32::NAN), serde_json::json!("NaN"));
+    }
+
+    /// The LLM-friendly formatter shows `null` instead of Rust's `None`.
+    #[test]
+    fn test_null_formatting() {
+        assert_eq!(format_falkor_value(&FalkorValue::None), "null");
+        assert_eq!(
+            format_falkor_value(&FalkorValue::String("None".to_string())),
+            "\"None\""
+        );
+    }
+
+    /// The LLM-friendly formatter shows maps in Cypher map syntax, without Rust Debug output.
+    #[test]
+    fn test_map_formatting() {
+        let map = HashMap::from([
+            ("x".to_string(), FalkorValue::None),
+            ("y".to_string(), FalkorValue::String("None".to_string())),
+            ("z".to_string(), FalkorValue::I64(1)),
+        ]);
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Map(map)),
+            "{x: null, y: \"None\", z: 1}"
+        );
+    }
+
+    /// Points, temporal values and unparseable values are readable in the LLM-friendly format.
+    #[test]
+    fn test_other_value_formatting() {
+        let point = falkordb::Point {
+            latitude: 1.5,
+            longitude: 2.0,
+        };
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Point(point)),
+            "point({latitude: 1.5, longitude: 2})"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Date(falkordb::Date::new(86_400))),
+            "1970-01-02"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Unparseable("bad".to_string())),
+            "<unparseable: bad>"
+        );
+    }
+
+    /// Map keys that are not valid identifiers are wrapped in backticks, as in Cypher.
+    #[test]
+    fn test_map_key_escaping() {
+        let map = HashMap::from([
+            ("first name".to_string(), FalkorValue::String("Ann".to_string())),
+            ("age".to_string(), FalkorValue::I64(30)),
+            ("a`b".to_string(), FalkorValue::None),
+        ]);
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Map(map)),
+            "{`a``b`: null, `first name`: \"Ann\", age: 30}"
+        );
+    }
+
+    /// Node and edge property keys are escaped the same way as map keys.
+    #[test]
+    fn test_node_and_edge_property_key_escaping() {
+        let node = Node {
+            entity_id: 1,
+            labels: vec!["Person".to_string()],
+            properties: HashMap::from([("first name".to_string(), FalkorValue::String("Ann".to_string()))]),
+        };
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Node(node)),
+            "(:Person {`first name`: \"Ann\"})"
+        );
+        let edge = Edge {
+            entity_id: 1,
+            relationship_type: "KNOWS".to_string(),
+            src_node_id: 1,
+            dst_node_id: 2,
+            properties: HashMap::from([("since year".to_string(), FalkorValue::I64(2020))]),
+        };
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Edge(edge)),
+            "-[:KNOWS {`since year`: 2020}]-"
+        );
+    }
+
+    /// Temporal values are shown as ISO-8601 values, not as constructor calls.
+    #[test]
+    fn test_temporal_formatting_is_iso() {
+        assert_eq!(
+            format_falkor_value(&FalkorValue::DateTime(falkordb::DateTime::new(1_700_000_000))),
+            "2023-11-14T22:13:20"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Date(falkordb::Date::new(1_704_153_600))),
+            "2024-01-02"
+        );
+        // FalkorDB stores a time of day on 1900-01-01: localtime('10:00:00') is -2208952800
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Time(falkordb::Time::new(-2_208_952_800))),
+            "10:00:00"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Duration(falkordb::Duration::new(3600))),
+            "PT1H"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Duration(falkordb::Duration::new(90_061))),
+            "P1DT1H1M1S"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Duration(falkordb::Duration::new(0))),
+            "PT0S"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Duration(falkordb::Duration::new(-60))),
+            "-PT1M"
+        );
+        assert_eq!(
+            format_falkor_value(&FalkorValue::Date(falkordb::Date::new(-86_400))),
+            "1969-12-31"
+        );
     }
 }
