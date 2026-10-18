@@ -530,7 +530,7 @@ ab -n 100 -c 10 http://localhost:8080/text_to_cypher
 
 ### Community
 - [GitHub Issues](https://github.com/FalkorDB/text-to-cypher/issues)
-- [FalkorDB Discord](https://discord.gg/falkordb)
+- [FalkorDB Discord](https://discord.gg/6M4QwDXn2w)
 
 ## Contributing
 
