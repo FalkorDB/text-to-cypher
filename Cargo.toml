@@ -48,7 +48,7 @@ serde_json = "1.0.150"
 serde_yaml_ng = "0.10"
 tracing = { version = "0.1", features = ["default"] }
 tokio = { version = "1.52.3", features = ["full"] }
-genai = "0.6.5"
+genai = "0.7.0"
 falkordb = { version = "0.10.3", features = ["tokio"] }
 # `falkordb` returns `redis::Value` from `udf_list`; depend on the same redis (cargo unifies to one
 # copy) so we can parse the `GRAPH.UDF LIST` reply in `src/udf.rs`.

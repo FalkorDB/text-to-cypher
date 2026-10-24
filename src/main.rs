@@ -2506,7 +2506,8 @@ async fn process_chat_stream(
             }
         };
         match stream_event {
-            genai::chat::ChatStreamEvent::Start => {}
+            // A heartbeat only tells that the stream is still alive.
+            genai::chat::ChatStreamEvent::Start | genai::chat::ChatStreamEvent::Heartbeat => {}
             genai::chat::ChatStreamEvent::Chunk(chunk) => {
                 full.push_str(&chunk.content);
                 // Stream everything except the last HOLD_BYTES so the marker,
