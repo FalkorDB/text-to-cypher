@@ -529,12 +529,22 @@ pub async fn generate_final_answer_with_confidence(
 }
 
 /// Creates a `GenAI` client with optional custom API key
+///
+/// # Panics
+///
+/// Panics if the HTTP client cannot be built, for example when the TLS backend fails to
+/// initialize, as `genai` itself did before 0.7.
 #[must_use]
 pub fn create_genai_client(api_key: Option<&str>) -> GenAiClient {
     create_genai_client_with_endpoint(api_key, None)
 }
 
 /// Creates a `GenAI` client with optional custom API key and provider endpoint.
+///
+/// # Panics
+///
+/// Panics if the HTTP client cannot be built, for example when the TLS backend fails to
+/// initialize, as `genai` itself did before 0.7.
 #[must_use]
 pub fn create_genai_client_with_endpoint(
     api_key: Option<&str>,
@@ -544,7 +554,7 @@ pub fn create_genai_client_with_endpoint(
     let has_endpoint = llm_endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty());
 
     if !has_api_key && !has_endpoint {
-        return GenAiClient::default();
+        return GenAiClient::new().expect(GENAI_CLIENT_BUILD_FAILED);
     }
 
     let mut builder = GenAiClient::builder();
@@ -574,8 +584,11 @@ pub fn create_genai_client_with_endpoint(
         builder = builder.with_service_target_resolver(service_target_resolver);
     }
 
-    builder.build()
+    builder.build().expect(GENAI_CLIENT_BUILD_FAILED)
 }
+
+/// Why building a `GenAI` client can panic: `genai` reports a failure to build its HTTP client.
+const GENAI_CLIENT_BUILD_FAILED: &str = "failed to build the GenAI HTTP client";
 
 fn normalize_llm_endpoint(endpoint: &str) -> Option<String> {
     let endpoint = endpoint.trim();
