@@ -61,9 +61,10 @@ impl Schema {
         label: &str,
         sample_size: usize,
     ) -> Result<Vec<Attribute>, FalkorDBError> {
+        let escaped_label = Self::escape_property_name(label);
         let query = format!(
             r"
-            MATCH (a:{label})
+            MATCH (a:{escaped_label})
             CALL {{
                 WITH a
                 RETURN [k IN keys(a) | [k, typeof(a[k])]] AS types
@@ -89,9 +90,10 @@ impl Schema {
         label: &str,
         sample_size: usize,
     ) -> Result<Vec<Attribute>, FalkorDBError> {
+        let escaped_label = Self::escape_property_name(label);
         let query = format!(
             r"
-            MATCH ()-[a:{label}]->()
+            MATCH ()-[a:{escaped_label}]->()
             CALL {{
                 WITH a
                 RETURN [k IN keys(a) | [k, typeof(a[k])]] AS types
@@ -157,13 +159,6 @@ impl Schema {
         sample_size: usize,
         is_relationship: bool,
     ) -> Result<(), FalkorDBError> {
-        // Validate label to prevent injection attacks
-        // Labels should start with letter/underscore and contain alphanumeric/underscore
-        if !Self::is_valid_identifier(label) {
-            tracing::warn!("Skipping example collection for invalid label: {}", label);
-            return Ok(());
-        }
-
         // Limit the number of examples to collect
         let max_examples = 3.min(sample_size);
 
@@ -184,8 +179,8 @@ impl Schema {
                 continue;
             }
 
-            // Use backtick escaping for property names and labels to prevent injection
-            // Even with validation, this provides defense-in-depth
+            // Labels may contain any character (spaces, dashes, ...), so they are always
+            // backtick-escaped; property names are additionally validated above
             let escaped_name = Self::escape_property_name(&attribute.name);
             let escaped_label = Self::escape_property_name(label);
             let match_clause = if is_relationship {
@@ -226,27 +221,6 @@ impl Schema {
         }
 
         Ok(())
-    }
-
-    /// Validates that an identifier (label, relationship type) is safe to use in queries
-    /// Cypher identifiers must start with letter or underscore, followed by alphanumeric or underscore
-    fn is_valid_identifier(name: &str) -> bool {
-        if name.is_empty() {
-            return false;
-        }
-
-        let mut chars = name.chars();
-
-        // First character must be letter or underscore
-        if let Some(first) = chars.next()
-            && !first.is_alphabetic()
-            && first != '_'
-        {
-            return false;
-        }
-
-        // Remaining characters must be alphanumeric or underscore
-        chars.all(|c| c.is_alphanumeric() || c == '_')
     }
 
     /// Validates that a property name is safe to use in queries
@@ -315,10 +289,17 @@ impl Schema {
             relationship_labels.to_vec(),
             sample_size,
             |mut graph, relationship_label, sample_size| async move {
-                Self::collect_relationship_attributes(&mut graph, &relationship_label, sample_size)
-                    .await
-                    .map(|attributes| (relationship_label, attributes))
-                    .ok()
+                match Self::collect_relationship_attributes(&mut graph, &relationship_label, sample_size).await {
+                    Ok(attributes) => Some((relationship_label, attributes)),
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to collect attributes for relationship type '{}', omitting it from the schema: {}",
+                            relationship_label,
+                            e
+                        );
+                        None
+                    }
+                }
             },
         )
         .await;
@@ -369,10 +350,17 @@ impl Schema {
             entity_labels,
             sample_size,
             |mut graph, label, sample_size| async move {
-                Self::collect_entity_attributes(&mut graph, &label, sample_size)
-                    .await
-                    .map(|attributes| Entity::new(label, attributes, None))
-                    .ok()
+                match Self::collect_entity_attributes(&mut graph, &label, sample_size).await {
+                    Ok(attributes) => Some(Entity::new(label, attributes, None)),
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to collect attributes for label '{}', omitting it from the schema: {}",
+                            label,
+                            e
+                        );
+                        None
+                    }
+                }
             },
         )
         .await;
@@ -424,7 +412,12 @@ async fn process_relationships(
         .map(|(label, source_label, target_label, attributes)| {
             let mut graph = graph.clone();
             async move {
-                let query = format!("MATCH (s:{source_label})-[a:{label}]->(t:{target_label}) return a limit 1");
+                let query = format!(
+                    "MATCH (s:{})-[a:{}]->(t:{}) return a limit 1",
+                    Schema::escape_property_name(&source_label),
+                    Schema::escape_property_name(&label),
+                    Schema::escape_property_name(&target_label)
+                );
                 match graph.ro_query(&query).execute().await {
                     Ok(query_result) if !query_result.data.is_empty() => {
                         Some(Relation::new(label, source_label, target_label, attributes))
@@ -453,25 +446,6 @@ async fn process_relationships(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_valid_identifier() {
-        // Valid identifiers
-        assert!(Schema::is_valid_identifier("Person"));
-        assert!(Schema::is_valid_identifier("_Person"));
-        assert!(Schema::is_valid_identifier("Person123"));
-        assert!(Schema::is_valid_identifier("_person_123"));
-        assert!(Schema::is_valid_identifier("PERSON"));
-
-        // Invalid identifiers
-        assert!(!Schema::is_valid_identifier(""));
-        assert!(!Schema::is_valid_identifier("123Person"));
-        assert!(!Schema::is_valid_identifier("Person-Name"));
-        assert!(!Schema::is_valid_identifier("Person Name"));
-        assert!(!Schema::is_valid_identifier("Person;DROP"));
-        assert!(!Schema::is_valid_identifier("Person'"));
-        assert!(!Schema::is_valid_identifier("Person\""));
-    }
 
     #[test]
     fn test_valid_property_name() {
