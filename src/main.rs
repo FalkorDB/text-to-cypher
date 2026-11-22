@@ -1479,9 +1479,10 @@ async fn execute_cypher_query(
             Ok(result)
         }
         Err(e) => {
+            // `execute_query` already prefixes the message with "Query execution failed: "
             let error_msg = e.to_string();
-            tracing::error!("Query execution failed: {}", error_msg);
-            send_result!(tx, Progress::Error(format!("Query execution failed: {error_msg}")));
+            tracing::error!("{}", error_msg);
+            send_result!(tx, Progress::Error(error_msg));
             Err(())
         }
     }
@@ -1788,17 +1789,9 @@ fn execute_query_with_columns_blocking(
     rt.block_on(async {
         let mut graph = client.select_graph(graph_name);
         let query_result = if read_only {
-            graph
-                .ro_query(query)
-                .execute()
-                .await
-                .map_err(|e| format!("Query execution failed: {e}"))?
+            graph.ro_query(query).execute().await.map_err(|e| e.to_string())?
         } else {
-            graph
-                .query(query)
-                .execute()
-                .await
-                .map_err(|e| format!("Query execution failed: {e}"))?
+            graph.query(query).execute().await.map_err(|e| e.to_string())?
         };
 
         let columns = query_result.header.to_vec();
@@ -1856,11 +1849,7 @@ fn execute_query_with_csv_import_blocking(
 
         // Execute the query (no need to modify the query as the file is now in the correct location)
         let mut graph = client.select_graph(graph_name);
-        let query_result = graph
-            .query(query)
-            .execute()
-            .await
-            .map_err(|e| format!("Query execution failed: {e}"))?;
+        let query_result = graph.query(query).execute().await.map_err(|e| e.to_string())?;
 
         tracing::info!("Query {query} executed, processing results...");
 
@@ -1921,11 +1910,7 @@ fn execute_query_with_existing_csv_blocking(
 
         // Execute the query (the file is already in the correct location)
         let mut graph = client.select_graph(graph_name);
-        let query_result = graph
-            .query(query)
-            .execute()
-            .await
-            .map_err(|e| format!("Query execution failed: {e}"))?;
+        let query_result = graph.query(query).execute().await.map_err(|e| e.to_string())?;
 
         tracing::info!("Query {query} executed, processing results...");
 
