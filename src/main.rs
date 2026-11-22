@@ -1165,60 +1165,63 @@ async fn process_text_to_cypher_request(
     }
 
     // Step 4: Execute the query and get results, with self-healing on failure
-    let query_result = if let Ok(result) =
-        execute_cypher_query(&executed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
-    {
-        result
-    } else {
-        // Try self-healing: regenerate query with error feedback
-        tracing::info!("First query execution failed, attempting self-healing...");
-        send!(
-            tx,
-            Progress::Status(String::from("Query failed, attempting self-healing..."))
-        );
+    let first_attempt =
+        execute_cypher_query(&executed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await;
+    let query_result = match first_attempt {
+        Err(()) => return,
+        Ok(Ok(result)) => result,
+        Ok(Err(error_msg)) => {
+            // Try self-healing: regenerate query with error feedback
+            tracing::info!("First query execution failed, attempting self-healing...");
+            send!(
+                tx,
+                Progress::Status(String::from("Query failed, attempting self-healing..."))
+            );
 
-        // Use a generic error message since we don't capture specific errors
-        let error_msg = "Query execution failed - see logs for details";
-
-        // Attempt to get a fixed query with error context
-        if let Some(fixed_query) = attempt_query_self_healing(
-            &request,
-            &schema,
-            &executed_query,
-            error_msg,
-            &client,
-            model,
-            &udfs,
-            &tx,
-            &mut token_usage,
-        )
-        .await
-        {
-            // Try executing the fixed query
-            if let Ok(result) =
-                execute_cypher_query(&fixed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
+            // Attempt to get a fixed query with the actual database error as context
+            if let Some(fixed_query) = attempt_query_self_healing(
+                &request,
+                &schema,
+                &executed_query,
+                &error_msg,
+                &client,
+                model,
+                &udfs,
+                &tx,
+                &mut token_usage,
+            )
+            .await
             {
-                tracing::info!("Self-healed query executed successfully");
-                send!(tx, Progress::Status(String::from("Self-healing successful")));
-                executed_query = fixed_query;
-                result
+                // Try executing the fixed query
+                let healed_attempt =
+                    execute_cypher_query(&fixed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await;
+                match healed_attempt {
+                    Err(()) => return,
+                    Ok(Ok(result)) => {
+                        tracing::info!("Self-healed query executed successfully");
+                        send!(tx, Progress::Status(String::from("Self-healing successful")));
+                        executed_query = fixed_query;
+                        result
+                    }
+                    Ok(Err(_)) => {
+                        tracing::error!("Self-healing failed");
+                        send!(tx, Progress::Usage(token_usage));
+                        send!(
+                            tx,
+                            Progress::Error("Query execution failed even after self-healing attempt".to_string())
+                        );
+                        return;
+                    }
+                }
             } else {
-                tracing::error!("Self-healing failed");
+                tracing::error!("Self-healing failed: no valid query was generated");
                 send!(tx, Progress::Usage(token_usage));
                 send!(
                     tx,
-                    Progress::Error("Query execution failed even after self-healing attempt".to_string())
+                    Progress::Error("Self-healing failed: no valid query was generated".to_string())
                 );
                 return;
             }
-        } else {
-            tracing::error!("Self-healing failed: no valid query was generated");
-            send!(tx, Progress::Usage(token_usage));
-            send!(
-                tx,
-                Progress::Error("Self-healing failed: no valid query was generated".to_string())
-            );
-            return;
         }
     };
 
@@ -1263,6 +1266,13 @@ async fn validate_and_log_query(
     Some(query.to_string())
 }
 
+/// The follow-up message that asks the model to fix a query the database rejected.
+fn self_healing_feedback(error_message: &str) -> String {
+    format!(
+        "The previous query failed with error: {error_message}. Please generate a corrected Cypher query that fixes this error and follows the schema more closely."
+    )
+}
+
 /// Attempts to self-heal a failed query by regenerating with error context
 #[allow(clippy::cognitive_complexity)]
 #[allow(clippy::too_many_arguments)]
@@ -1287,9 +1297,7 @@ async fn attempt_query_self_healing(
     });
     retry_request.messages.push(ChatMessage {
         role: ChatRole::User,
-        content: format!(
-            "The previous query failed with error: {error_message}. Please generate a corrected Cypher query that fixes this error and follows the schema more closely."
-        ),
+        content: self_healing_feedback(error_message),
     });
 
     // Generate new query using the same skill-loading path as the initial request.
@@ -1462,13 +1470,17 @@ async fn generate_cypher_query(
     Some(clean_query)
 }
 
+/// Runs the generated query and streams its progress.
+///
+/// Returns `Err(())` when the client disconnected (stop processing), `Ok(Err(message))` when the
+/// database rejected the query, and `Ok(Ok(result))` on success.
 #[allow(clippy::cognitive_complexity)]
 async fn execute_cypher_query(
     query: &str,
     graph_name: &str,
     falkordb_connection: &str,
     tx: &mpsc::Sender<sse::Event>,
-) -> Result<String, ()> {
+) -> Result<Result<String, String>, ()> {
     send_result!(tx, Progress::Status(String::from("Executing Cypher query...")));
     tracing::info!("Executing Cypher Query: {}", query);
 
@@ -1476,14 +1488,14 @@ async fn execute_cypher_query(
         Ok(result) => {
             tracing::info!("Query executed successfully, result: {}", result);
             send_result!(tx, Progress::CypherResult(result.clone()));
-            Ok(result)
+            Ok(Ok(result))
         }
         Err(e) => {
             // `execute_query` already prefixes the message with "Query execution failed: "
             let error_msg = e.to_string();
             tracing::error!("{}", error_msg);
-            send_result!(tx, Progress::Error(error_msg));
-            Err(())
+            send_result!(tx, Progress::Error(error_msg.clone()));
+            Ok(Err(error_msg))
         }
     }
 }
@@ -2543,4 +2555,16 @@ fn floor_char_boundary(
         i -= 1;
     }
     i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn self_healing_feedback_includes_database_error() {
+        let feedback = self_healing_feedback("Query execution failed: Division by zero");
+        assert!(feedback.contains("Division by zero"), "{feedback}");
+        assert!(!feedback.contains("see logs"), "{feedback}");
+    }
 }
