@@ -135,7 +135,7 @@ impl Schema {
                     tracing::info!("Found attribute: key={}, type={}, count={}", key_name, type_name, count);
 
                     // Parse the type_name to AttributeType
-                    let attr_type = type_name.parse::<AttributeType>().unwrap_or_else(|_| {
+                    let attr_type = AttributeType::from_falkordb_type(type_name).unwrap_or_else(|| {
                         tracing::warn!("Unknown attribute type '{}', defaulting to String", type_name);
                         AttributeType::String
                     });
@@ -168,6 +168,11 @@ impl Schema {
         let max_examples = 3.min(sample_size);
 
         for attribute in attributes {
+            // Vector values are not useful as examples and the client cannot decode them
+            if matches!(attribute.r#type, AttributeType::Vector) {
+                continue;
+            }
+
             // Validate attribute name to prevent injection
             // Be permissive but safe - allow common valid patterns
             // Note: More complex property paths are rarely used in actual schemas
