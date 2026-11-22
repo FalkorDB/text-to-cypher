@@ -1869,11 +1869,16 @@ fn execute_query_with_csv_import_blocking(
 
         // Execute the query (no need to modify the query as the file is now in the correct location)
         let mut graph = client.select_graph(graph_name);
-        let query_result = graph
-            .query(query)
-            .execute()
-            .await
-            .map_err(|e| format!("Query execution failed: {e}"))?;
+        let query_result = graph.query(query).execute().await;
+
+        // Remove the temporary file whether or not the query succeeded, so failed
+        // uploads do not accumulate in the IMPORT_FOLDER
+        tracing::info!("Cleaning up CSV file: {:?}", file_path);
+        if let Err(e) = fs::remove_file(&file_path) {
+            tracing::warn!("Failed to remove CSV file from import folder: {}", e);
+        }
+
+        let query_result = query_result.map_err(|e| format!("Query execution failed: {e}"))?;
 
         tracing::info!("Query {query} executed, processing results...");
 
@@ -1883,11 +1888,6 @@ fn execute_query_with_csv_import_blocking(
             "Query executed successfully with CSV import, records count: {}",
             records.len()
         );
-        tracing::info!("Cleaning up CSV file: {:?}", file_path);
-        // Clean up - delete the file from the IMPORT_FOLDER
-        if let Err(e) = fs::remove_file(&file_path) {
-            tracing::warn!("Failed to remove CSV file from import folder: {}", e);
-        }
 
         Ok(records)
     })
