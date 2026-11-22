@@ -12,8 +12,21 @@ use rust_mcp_sdk::{McpServer, mcp_server::ServerHandler};
 use std::fmt::Write;
 use std::sync::Arc;
 
-// Custom Handler to handle MCP Messages
-pub struct MyServerHandler;
+/// Handles MCP messages by forwarding them to this process's REST API.
+pub struct MyServerHandler {
+    /// Base URL of the REST API, e.g. `http://127.0.0.1:8080`
+    rest_base_url: String,
+}
+
+impl MyServerHandler {
+    /// Creates a handler that forwards to the REST API on `127.0.0.1:{rest_port}`.
+    #[must_use]
+    pub fn new(rest_port: u16) -> Self {
+        Self {
+            rest_base_url: format!("http://127.0.0.1:{rest_port}"),
+        }
+    }
+}
 
 #[async_trait]
 impl ServerHandler for MyServerHandler {
@@ -37,7 +50,7 @@ impl ServerHandler for MyServerHandler {
     ) -> std::result::Result<ListResourcesResult, RpcError> {
         tracing::info!("Handling List Resources Request");
 
-        match get_falkordb_graphs().await {
+        match get_falkordb_graphs(&self.rest_base_url).await {
             Ok(graphs) => {
                 let resources: Vec<Resource> = graphs
                     .into_iter()
@@ -75,7 +88,7 @@ impl ServerHandler for MyServerHandler {
 
         // Parse the URI to extract graph name
         if let Some(graph_name) = request.params.uri.strip_prefix("falkordb://graph/") {
-            match get_graph_schema_via_api(graph_name).await {
+            match get_graph_schema_via_api(&self.rest_base_url, graph_name).await {
                 Ok(schema_info) => {
                     let text_content = TextResourceContents {
                         uri: request.params.uri,
@@ -117,7 +130,7 @@ impl ServerHandler for MyServerHandler {
                     tracing::info!("  question: {}", tool_args.question);
 
                     // Forward the request to the HTTP endpoint
-                    match forward_to_http_endpoint(tool_args).await {
+                    match forward_to_http_endpoint(&self.rest_base_url, tool_args).await {
                         Ok(result) => Ok(CallToolResult::text_content(vec![TextContent::from(result)])),
                         Err(e) => {
                             tracing::error!("Failed to forward request to HTTP endpoint: {}", e);
@@ -146,10 +159,11 @@ impl ServerHandler for MyServerHandler {
 
 // Helper function to forward MCP tool request to HTTP endpoint
 async fn forward_to_http_endpoint(
-    tool_args: TextToCypherTool
+    rest_base_url: &str,
+    tool_args: TextToCypherTool,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let http_request = create_http_request_payload(tool_args);
-    let response = send_http_request(&http_request).await?;
+    let response = send_http_request(rest_base_url, &http_request).await?;
     process_sse_response(response).await
 }
 
@@ -172,11 +186,12 @@ fn create_http_request_payload(tool_args: TextToCypherTool) -> serde_json::Value
 
 // Send HTTP request to the text-to-cypher endpoint
 async fn send_http_request(
-    http_request: &serde_json::Value
+    rest_base_url: &str,
+    http_request: &serde_json::Value,
 ) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let response = client
-        .post("http://127.0.0.1:8080/text_to_cypher")
+        .post(format!("{rest_base_url}/text_to_cypher"))
         .header("Content-Type", "application/json")
         .json(http_request)
         .send()
@@ -419,11 +434,11 @@ fn build_complete_response(
 }
 
 // Helper function to get list of graphs from FalkorDB via REST API
-async fn get_falkordb_graphs() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+async fn get_falkordb_graphs(rest_base_url: &str) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     // Call the local REST API endpoint
     let client = reqwest::Client::new();
     let response = client
-        .get("http://localhost:8080/list_graphs")
+        .get(format!("{rest_base_url}/list_graphs"))
         .send()
         .await
         .map_err(|e| format!("Failed to call list_graphs API: {e}"))?;
@@ -437,11 +452,14 @@ async fn get_falkordb_graphs() -> Result<Vec<String>, Box<dyn std::error::Error 
 }
 
 // Helper function to get schema information for a specific graph via REST API
-async fn get_graph_schema_via_api(graph_name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+async fn get_graph_schema_via_api(
+    rest_base_url: &str,
+    graph_name: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     // Call the local REST API endpoint
     let client = reqwest::Client::new();
     let response = client
-        .get(format!("http://localhost:8080/get_schema/{graph_name}"))
+        .get(format!("{rest_base_url}/get_schema/{graph_name}"))
         .send()
         .await
         .map_err(|e| format!("Failed to call get_schema API: {e}"))?;
@@ -475,6 +493,12 @@ mod tests {
             .unwrap();
         }
         build_complete_response(&result_buffer, &final_result, token_usage.as_ref(), confidence)
+    }
+
+    #[test]
+    fn handler_targets_the_configured_rest_port() {
+        assert_eq!(MyServerHandler::new(8081).rest_base_url, "http://127.0.0.1:8081");
+        assert_eq!(MyServerHandler::new(8080).rest_base_url, "http://127.0.0.1:8080");
     }
 
     #[test]
