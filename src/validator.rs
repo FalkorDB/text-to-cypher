@@ -21,9 +21,10 @@ impl ValidationPatterns {
     fn get() -> &'static Self {
         PATTERNS.get_or_init(|| Self {
             basic_cypher: Regex::new(r"(?i)(MATCH|CREATE|MERGE|DELETE|SET|REMOVE|RETURN|WITH|UNWIND|CALL)").unwrap(),
-            // Simplified pattern to catch dangerous operations more reliably
-            // Matches any DROP or DELETE (with or without DETACH, with any following content)
-            dangerous_ops: Regex::new(r"(?i)(DROP\s|DELETE\s)").unwrap(),
+            // Matches the DROP or DELETE keyword (DETACH DELETE included) as a whole word.
+            // Applied to the query with string literals, quoted identifiers and comments
+            // masked out, so data such as 'Drop off package' is not mistaken for a clause.
+            dangerous_ops: Regex::new(r"(?i)\b(DROP|DELETE)\b").unwrap(),
             match_clause: Regex::new(r"(?i)MATCH\s+").unwrap(),
             return_clause: Regex::new(r"(?i)RETURN\s+").unwrap(),
         })
@@ -71,7 +72,7 @@ impl CypherValidator {
         }
 
         // Check for dangerous operations
-        if patterns.dangerous_ops.is_match(query) {
+        if patterns.dangerous_ops.is_match(&Self::mask_literals_and_comments(query)) {
             errors.push("Query contains potentially dangerous operations (DROP, DELETE ALL)".to_string());
         }
 
@@ -110,6 +111,52 @@ impl CypherValidator {
     }
 
     /// Checks if parentheses are balanced in the query
+    /// Returns `query` with the contents of string literals, backtick-quoted identifiers and
+    /// comments replaced by spaces, so keyword checks only see executable Cypher.
+    fn mask_literals_and_comments(query: &str) -> String {
+        let mut out = String::with_capacity(query.len());
+        let mut chars = query.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\'' | '"' | '`' => {
+                    out.push(c);
+                    while let Some(inner) = chars.next() {
+                        if inner == '\\' && c != '`' {
+                            chars.next();
+                            out.push_str("  ");
+                        } else if inner == c {
+                            out.push(c);
+                            break;
+                        } else {
+                            out.push(' ');
+                        }
+                    }
+                }
+                '/' if chars.peek() == Some(&'/') => {
+                    for inner in chars.by_ref() {
+                        if inner == '\n' {
+                            out.push('\n');
+                            break;
+                        }
+                    }
+                }
+                '/' if chars.peek() == Some(&'*') => {
+                    chars.next();
+                    let mut prev = ' ';
+                    for inner in chars.by_ref() {
+                        if prev == '*' && inner == '/' {
+                            break;
+                        }
+                        prev = inner;
+                    }
+                    out.push(' ');
+                }
+                _ => out.push(c),
+            }
+        }
+        out
+    }
+
     fn check_balanced_parentheses(query: &str) -> bool {
         let mut count = 0;
         for c in query.chars() {
@@ -249,6 +296,38 @@ mod tests {
         let query = "MATCH (n) DROP n";
         let result = CypherValidator::validate(query);
         assert!(!result.is_valid, "Query with DROP should be invalid");
+    }
+
+    #[test]
+    fn test_dangerous_keywords_inside_literals_are_ignored() {
+        let queries = [
+            "MATCH (t:Task) WHERE t.name = 'Drop off package' RETURN t",
+            r#"MATCH (t:Task) WHERE t.note = "delete me later" RETURN t"#,
+            "MATCH (t:Task) WHERE t.name = 'it\\'s a drop zone' RETURN t",
+            "MATCH (n:`Drop Zone`) RETURN n",
+            "MATCH (n) // drop this later\nRETURN n",
+            "MATCH (n) /* delete */ RETURN n",
+            "MATCH (b:Backdrop) RETURN b.deleted_at",
+        ];
+        for query in queries {
+            let result = CypherValidator::validate(query);
+            assert!(result.is_valid, "{query} should be valid: {:?}", result.errors);
+        }
+    }
+
+    #[test]
+    fn test_dangerous_keywords_are_still_detected() {
+        let queries = [
+            "MATCH (n) DELETE n",
+            "MATCH (n) DETACH DELETE n",
+            "MATCH (n {name: 'x'}) DELETE n",
+            "DROP INDEX ON :Person(name)",
+            "MATCH (n) WHERE n.name = 'a' DELETE n",
+        ];
+        for query in queries {
+            let result = CypherValidator::validate(query);
+            assert!(!result.is_valid, "{query} should be flagged");
+        }
     }
 
     #[test]
