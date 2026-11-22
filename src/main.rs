@@ -170,7 +170,8 @@ struct AppConfig {
     falkordb_connection: String,
     default_model: Option<String>,
     default_key: Option<String>,
-    schema_cache: Cache<String, String>,
+    /// Discovered schemas keyed by (`FalkorDB` connection, graph name)
+    schema_cache: Cache<(String, String), String>,
     rest_port: u16,
     mcp_port: u16,
     skill_catalog: Option<SkillCatalog>,
@@ -387,10 +388,31 @@ fn create_snowflake_error_response(error_message: &str) -> HttpResponse {
     HttpResponse::BadRequest().json(error_response)
 }
 
+fn schema_cache_key(
+    falkordb_connection: &str,
+    graph_name: &str,
+) -> (String, String) {
+    (falkordb_connection.to_string(), graph_name.to_string())
+}
+
+/// Removes the cached schema of `graph_name` for every `FalkorDB` connection.
+fn invalidate_schema_cache_for_graph(
+    cache: &Cache<(String, String), String>,
+    graph_name: &str,
+) {
+    let keys: Vec<(String, String)> = cache
+        .iter()
+        .filter(|(key, _)| key.1 == graph_name)
+        .map(|(key, _)| (*key).clone())
+        .collect();
+    for key in keys {
+        cache.invalidate(&key);
+    }
+}
+
 fn process_clear_schema_cache(graph_name: &str) {
     tracing::info!("Clearing schema cache for graph: {graph_name}");
-    let cache = AppConfig::get().schema_cache.clone();
-    cache.invalidate(graph_name);
+    invalidate_schema_cache_for_graph(&AppConfig::get().schema_cache, graph_name);
 }
 
 fn process_clear_udf_cache() {
@@ -697,6 +719,10 @@ async fn graph_delete_endpoint(
     match delete_graph(&graph_name).await {
         Ok(result) => {
             tracing::info!("Successfully deleted graph: {}", graph_name);
+            let config = AppConfig::get();
+            config
+                .schema_cache
+                .invalidate(&schema_cache_key(&config.falkordb_connection, &graph_name));
             tracing::debug!("Delete result: {}", result);
 
             // Convert the result to Snowflake format: { "data": [ [0, result] ] }
@@ -1367,7 +1393,8 @@ async fn get_or_discover_schema(
     tx: &mpsc::Sender<sse::Event>,
 ) -> Option<String> {
     let cache = AppConfig::get().schema_cache.clone();
-    let schema = match cache.get(graph_name) {
+    let cache_key = schema_cache_key(falkordb_connection, graph_name);
+    let schema = match cache.get(&cache_key) {
         Some(schema) => schema,
         None => match discover_and_send_schema(falkordb_connection, graph_name, tx).await {
             Ok(schema) => schema,
@@ -1375,7 +1402,7 @@ async fn get_or_discover_schema(
         },
     };
     send_option!(tx, Progress::Schema(schema.clone()));
-    cache.insert(graph_name.to_string(), schema.clone());
+    cache.insert(cache_key, schema.clone());
     Some(schema.clone())
 }
 
@@ -1685,8 +1712,10 @@ async fn get_graph_schema_string(
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let cache = AppConfig::get().schema_cache.clone();
 
+    let cache_key = schema_cache_key(falkordb_connection, graph_name);
+
     // Check cache first
-    if let Some(cached_schema) = cache.get(graph_name) {
+    if let Some(cached_schema) = cache.get(&cache_key) {
         return Ok(cached_schema);
     }
 
@@ -1695,7 +1724,7 @@ async fn get_graph_schema_string(
     let schema_json = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))?;
 
     // Cache the result
-    cache.insert(graph_name.to_string(), schema_json.clone());
+    cache.insert(cache_key, schema_json.clone());
 
     Ok(schema_json)
 }
@@ -2558,4 +2587,39 @@ fn floor_char_boundary(
         i -= 1;
     }
     i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_cache_is_isolated_per_connection() {
+        let cache: Cache<(String, String), String> = Cache::new(10);
+        cache.insert(schema_cache_key("falkor://a:6379", "g"), "schema-a".to_string());
+        cache.insert(schema_cache_key("falkor://b:6379", "g"), "schema-b".to_string());
+
+        assert_eq!(
+            cache.get(&schema_cache_key("falkor://a:6379", "g")).as_deref(),
+            Some("schema-a")
+        );
+        assert_eq!(
+            cache.get(&schema_cache_key("falkor://b:6379", "g")).as_deref(),
+            Some("schema-b")
+        );
+    }
+
+    #[test]
+    fn invalidate_for_graph_clears_every_connection_only_for_that_graph() {
+        let cache: Cache<(String, String), String> = Cache::new(10);
+        cache.insert(schema_cache_key("falkor://a:6379", "g"), "a".to_string());
+        cache.insert(schema_cache_key("falkor://b:6379", "g"), "b".to_string());
+        cache.insert(schema_cache_key("falkor://a:6379", "other"), "o".to_string());
+
+        invalidate_schema_cache_for_graph(&cache, "g");
+
+        assert!(cache.get(&schema_cache_key("falkor://a:6379", "g")).is_none());
+        assert!(cache.get(&schema_cache_key("falkor://b:6379", "g")).is_none());
+        assert!(cache.get(&schema_cache_key("falkor://a:6379", "other")).is_some());
+    }
 }
