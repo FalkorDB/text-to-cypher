@@ -197,21 +197,28 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
     let mut token_usage: Option<TokenUsage> = None;
     let mut confidence: Option<u8> = None;
 
+    let mut lines = SseDataLines::default();
+
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
-        let chunk_str = String::from_utf8_lossy(&chunk);
-
-        for line in chunk_str.lines() {
-            if let Some(data) = line.strip_prefix("data: ") {
-                process_sse_event(
-                    data,
-                    &mut result_buffer,
-                    &mut final_result,
-                    &mut token_usage,
-                    &mut confidence,
-                )?;
-            }
+        for data in lines.push(&chunk) {
+            process_sse_event(
+                &data,
+                &mut result_buffer,
+                &mut final_result,
+                &mut token_usage,
+                &mut confidence,
+            )?;
         }
+    }
+    if let Some(data) = lines.finish() {
+        process_sse_event(
+            &data,
+            &mut result_buffer,
+            &mut final_result,
+            &mut token_usage,
+            &mut confidence,
+        )?;
     }
 
     Ok(build_complete_response(
@@ -220,6 +227,47 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
         token_usage.as_ref(),
         confidence,
     ))
+}
+
+/// Splits an SSE byte stream into `data:` payloads.
+///
+/// Network chunks do not respect line boundaries, so an event (or a multi-byte UTF-8
+/// character) can be split across chunks. Bytes after the last newline are kept until the
+/// rest of the line arrives.
+#[derive(Default)]
+struct SseDataLines {
+    pending: Vec<u8>,
+}
+
+impl SseDataLines {
+    /// Adds a chunk and returns the payloads of every `data:` line it completed.
+    fn push(
+        &mut self,
+        chunk: &[u8],
+    ) -> Vec<String> {
+        self.pending.extend_from_slice(chunk);
+        let mut payloads = Vec::new();
+        while let Some(newline) = self.pending.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=newline).collect();
+            if let Some(payload) = Self::data_payload(&line) {
+                payloads.push(payload);
+            }
+        }
+        payloads
+    }
+
+    /// Returns the payload of a final `data:` line that was not newline-terminated.
+    fn finish(&mut self) -> Option<String> {
+        let line = std::mem::take(&mut self.pending);
+        Self::data_payload(&line)
+    }
+
+    fn data_payload(line: &[u8]) -> Option<String> {
+        let line = String::from_utf8_lossy(line);
+        let line = line.trim_end_matches(['\n', '\r']);
+        line.strip_prefix("data:")
+            .map(|data| data.strip_prefix(' ').unwrap_or(data).to_string())
+    }
 }
 
 // Process individual SSE event
@@ -427,6 +475,40 @@ mod tests {
             .unwrap();
         }
         build_complete_response(&result_buffer, &final_result, token_usage.as_ref(), confidence)
+    }
+
+    #[test]
+    fn sse_event_split_across_chunks_is_reassembled() {
+        let event = format!("data: {{\"Result\":\"{}\"}}\n\n", "x".repeat(20_000));
+        let (first, second) = event.as_bytes().split_at(event.len() / 2);
+
+        let mut lines = SseDataLines::default();
+        assert!(lines.push(first).is_empty(), "no complete line yet");
+        let payloads = lines.push(second);
+
+        assert_eq!(payloads.len(), 1);
+        let response = assemble(&[payloads[0].as_str()]);
+        assert!(response.contains(&"x".repeat(20_000)));
+    }
+
+    #[test]
+    fn multibyte_character_split_across_chunks_is_preserved() {
+        let event = "data: {\"Result\":\"café ✓\"}\n".as_bytes();
+        // Split inside the 3-byte encoding of the check mark
+        let split = event.iter().position(|&b| b == 0xE2).unwrap() + 1;
+
+        let mut lines = SseDataLines::default();
+        assert!(lines.push(&event[..split]).is_empty());
+        assert_eq!(lines.push(&event[split..]), vec![r#"{"Result":"café ✓"}"#.to_string()]);
+    }
+
+    #[test]
+    fn several_events_in_one_chunk_and_trailing_line_without_newline() {
+        let mut lines = SseDataLines::default();
+        let payloads =
+            lines.push(b"data: {\"Status\":\"a\"}\n\ndata: {\"Status\":\"b\"}\r\n\ndata: {\"Result\":\"c\"}");
+        assert_eq!(payloads, vec![r#"{"Status":"a"}"#, r#"{"Status":"b"}"#]);
+        assert_eq!(lines.finish().as_deref(), Some(r#"{"Result":"c"}"#));
     }
 
     #[test]
