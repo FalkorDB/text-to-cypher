@@ -101,25 +101,6 @@ macro_rules! try_send {
     };
 }
 
-// Macro for functions returning Result<String, Box<dyn Error>>
-macro_rules! try_send_boxed {
-    ($tx:expr, $progress:expr) => {
-        match serde_json::to_string(&$progress) {
-            Ok(json) => {
-                let event = sse::Event::Data(sse::Data::new(json));
-                if $tx.send(event).await.is_err() {
-                    tracing::warn!("Client disconnected, stopping stream");
-                    return Err("Client disconnected".into());
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to serialize progress update: {}", e);
-                return Err(format!("Serialization failed: {}", e).into());
-            }
-        }
-    };
-}
-
 // Macro for functions returning String (returns empty string on error)
 macro_rules! send_or_empty {
     ($tx:expr, $progress:expr) => {
@@ -1173,10 +1154,7 @@ async fn process_text_to_cypher_request(
         Ok(Err(error_msg)) => {
             // Try self-healing: regenerate query with error feedback
             tracing::info!("First query execution failed, attempting self-healing...");
-            send!(
-                tx,
-                Progress::Status(String::from("Query failed, attempting self-healing..."))
-            );
+            send!(tx, Progress::Status(format!("{error_msg}. Attempting self-healing...")));
 
             // Attempt to get a fixed query with the actual database error as context
             if let Some(fixed_query) = attempt_query_self_healing(
@@ -1203,12 +1181,14 @@ async fn process_text_to_cypher_request(
                         executed_query = fixed_query;
                         result
                     }
-                    Ok(Err(_)) => {
-                        tracing::error!("Self-healing failed");
+                    Ok(Err(healed_error)) => {
+                        tracing::error!("Self-healing failed: {}", healed_error);
                         send!(tx, Progress::Usage(token_usage));
                         send!(
                             tx,
-                            Progress::Error("Query execution failed even after self-healing attempt".to_string())
+                            Progress::Error(format!(
+                                "{healed_error} (after self-healing; the original query failed with: {error_msg})"
+                            ))
                         );
                         return;
                     }
@@ -1218,7 +1198,9 @@ async fn process_text_to_cypher_request(
                 send!(tx, Progress::Usage(token_usage));
                 send!(
                     tx,
-                    Progress::Error("Self-healing failed: no valid query was generated".to_string())
+                    Progress::Error(format!(
+                        "{error_msg} (self-healing failed: no valid query was generated)"
+                    ))
                 );
                 return;
             }
@@ -1484,17 +1466,18 @@ async fn execute_cypher_query(
     send_result!(tx, Progress::Status(String::from("Executing Cypher query...")));
     tracing::info!("Executing Cypher Query: {}", query);
 
-    match execute_query(query, graph_name, falkordb_connection, true, tx).await {
+    match execute_query(query, graph_name, falkordb_connection, true).await {
         Ok(result) => {
             tracing::info!("Query executed successfully, result: {}", result);
             send_result!(tx, Progress::CypherResult(result.clone()));
             Ok(Ok(result))
         }
         Err(e) => {
-            // `execute_query` already prefixes the message with "Query execution failed: "
+            // `execute_query` already prefixes the message with "Query execution failed: ".
+            // No Error event here: the caller may still recover through self-healing, and
+            // clients treat an Error event as the final outcome of the request.
             let error_msg = e.to_string();
-            tracing::error!("{}", error_msg);
-            send_result!(tx, Progress::Error(error_msg.clone()));
+            tracing::warn!("{}", error_msg);
             Ok(Err(error_msg))
         }
     }
@@ -1662,7 +1645,6 @@ async fn execute_query(
     graph_name: &str,
     falkordb_connection: &str,
     read_only: bool,
-    tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let connection_info: FalkorConnectionInfo = falkordb_connection
         .try_into()
@@ -1683,9 +1665,7 @@ async fn execute_query(
     let formatted_result = match result {
         Ok(records) => format_query_records(&records),
         Err(e) => {
-            let error_msg = format!("Query execution failed: {e}");
-            try_send_boxed!(tx, Progress::Error(error_msg.clone()));
-            return Err(error_msg.into());
+            return Err(format!("Query execution failed: {e}").into());
         }
     };
 
