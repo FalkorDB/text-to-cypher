@@ -1572,8 +1572,7 @@ async fn graph_query_with_csv(
     // replace filename in the query with a random uuid.
     let uuid = Uuid::new_v4().to_string();
     let filename = format!("{uuid}.csv");
-    let re = Regex::new(r"file://.*\.csv").unwrap();
-    let query = re.replace(&query, format!("file://{uuid}.csv")).to_string();
+    let query = rewrite_csv_uris(&query, &filename);
 
     tracing::info!("Extracted CSV filename from query: {filename}");
     tracing::info!("query is: {query}");
@@ -1593,6 +1592,21 @@ async fn graph_query_with_csv(
         }
     };
     Ok(json_result)
+}
+
+/// Points every `file://….csv` URI in `query` at `filename`.
+///
+/// A URI ends at the first `.csv` before a quote or whitespace, so text later in the query
+/// (another `.csv` mention, closing brackets, ...) is left alone. `filename` is inserted
+/// literally: `$` in it is not treated as a capture-group reference.
+fn rewrite_csv_uris(
+    query: &str,
+    filename: &str,
+) -> String {
+    static CSV_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = CSV_URI.get_or_init(|| Regex::new(r#"file://[^'"`\s]*?\.csv"#).expect("valid CSV URI regex"));
+    re.replace_all(query, regex::NoExpand(&format!("file://{filename}")))
+        .into_owned()
 }
 
 async fn graph_query_with_existing_csv(
@@ -1621,8 +1635,7 @@ async fn graph_query_with_existing_csv(
     let csv_filename = csv_filename.to_string();
 
     // Replace filename patterns in the query with the actual CSV filename
-    let re = Regex::new(r"file://.*\.csv").unwrap();
-    let updated_query = re.replace_all(query, format!("file://{csv_filename}")).to_string();
+    let updated_query = rewrite_csv_uris(query, &csv_filename);
 
     tracing::info!("Original query: {}", query);
     tracing::info!("Updated query with actual filename: {}", updated_query);
@@ -2558,4 +2571,42 @@ fn floor_char_boundary(
         i -= 1;
     }
     i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_csv_uris_only_replaces_the_uri() {
+        let query = "LOAD CSV FROM 'file://people.csv' AS row MERGE (p:Person {src: 'people.csv'}) RETURN p";
+        assert_eq!(
+            rewrite_csv_uris(query, "abc.csv"),
+            "LOAD CSV FROM 'file://abc.csv' AS row MERGE (p:Person {src: 'people.csv'}) RETURN p"
+        );
+    }
+
+    #[test]
+    fn rewrite_csv_uris_handles_each_uri_separately() {
+        let query = "LOAD CSV FROM 'file://a.csv' AS a LOAD CSV FROM \"file://dir/b.csv\" AS b RETURN a, b";
+        assert_eq!(
+            rewrite_csv_uris(query, "real.csv"),
+            "LOAD CSV FROM 'file://real.csv' AS a LOAD CSV FROM \"file://real.csv\" AS b RETURN a, b"
+        );
+    }
+
+    #[test]
+    fn rewrite_csv_uris_inserts_dollar_signs_literally() {
+        let query = "LOAD CSV WITH HEADERS FROM 'file://x.csv' AS row RETURN row";
+        assert_eq!(
+            rewrite_csv_uris(query, "data_$1_2024.csv"),
+            "LOAD CSV WITH HEADERS FROM 'file://data_$1_2024.csv' AS row RETURN row"
+        );
+    }
+
+    #[test]
+    fn rewrite_csv_uris_leaves_queries_without_uri_untouched() {
+        let query = "MATCH (n) RETURN n.file";
+        assert_eq!(rewrite_csv_uris(query, "x.csv"), query);
+    }
 }
