@@ -377,6 +377,98 @@ struct EchoRequest {
     data: serde_json::Value,
 }
 
+/// Runs `handle_row` for every row of a Snowflake external-function batch and returns the
+/// response body, plus whether any row failed.
+///
+/// Snowflake sends `{"data": [[row_index, argument], ...]}` and expects exactly one
+/// `[row_index, result]` per input row. Rows run in order; a failed or malformed row is
+/// answered with `{"error": message}`.
+async fn run_snowflake_batch<F, Fut>(
+    rows: &[serde_json::Value],
+    mut handle_row: F,
+) -> (serde_json::Value, bool)
+where
+    F: FnMut(serde_json::Value) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+{
+    let mut results = Vec::with_capacity(rows.len());
+    let mut any_failed = false;
+
+    for (position, row) in rows.iter().enumerate() {
+        let index = snowflake_row_index(position, row);
+        let outcome = match row.as_array() {
+            Some(cells) if cells.len() >= 2 => handle_row(cells[1].clone()).await,
+            Some(_) => Err("Data array must have at least 2 elements [index, data]".to_string()),
+            None => Err("Each data entry must be an array [index, data]".to_string()),
+        };
+
+        let value = outcome.unwrap_or_else(|message| {
+            tracing::error!("Snowflake row {} failed: {}", index, message);
+            any_failed = true;
+            serde_json::json!({ "error": message })
+        });
+        results.push(serde_json::json!([index, value]));
+    }
+
+    (serde_json::json!({ "data": results }), any_failed)
+}
+
+/// The row index Snowflake sent as the first cell of `row`, or the row's position when the
+/// row is malformed.
+fn snowflake_row_index(
+    position: usize,
+    row: &serde_json::Value,
+) -> serde_json::Value {
+    row.as_array()
+        .and_then(|cells| cells.first())
+        .cloned()
+        .unwrap_or_else(|| position.into())
+}
+
+/// HTTP wrapper around [`run_snowflake_batch`]: 200 when every row succeeded, 400 otherwise
+/// (as before for single-row requests), always with one result row per input row.
+async fn respond_to_snowflake_batch<F, Fut>(
+    rows: &[serde_json::Value],
+    handle_row: F,
+) -> HttpResponse
+where
+    F: FnMut(serde_json::Value) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
+{
+    if rows.is_empty() {
+        tracing::error!("Empty data array in Snowflake request");
+        return create_snowflake_error_response("Data array cannot be empty");
+    }
+
+    let (body, any_failed) = run_snowflake_batch(rows, handle_row).await;
+    if any_failed {
+        HttpResponse::BadRequest().json(body)
+    } else {
+        HttpResponse::Ok().json(body)
+    }
+}
+
+/// Reads a required, non-empty string field from a Snowflake row argument.
+fn required_str_field(
+    data: &serde_json::Value,
+    field: &str,
+    empty_message: &str,
+) -> Result<String, String> {
+    let value = data
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("Missing or invalid '{field}' field"))?;
+    if value.is_empty() {
+        return Err(empty_message.to_string());
+    }
+    Ok(value.to_string())
+}
+
+/// Returns `text` parsed as JSON, or as a JSON string when it is not valid JSON.
+fn parse_json_or_string(text: String) -> serde_json::Value {
+    serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text))
+}
+
 // Helper function to create Snowflake format error responses
 fn create_snowflake_error_response(error_message: &str) -> HttpResponse {
     let error_response = serde_json::json!({
@@ -470,117 +562,21 @@ async fn graph_query_endpoint(
     req: actix_web::web::Json<GraphQueryRequest>
 ) -> Result<impl Responder, actix_web::Error> {
     let raw_request = req.into_inner();
-
-    // Log the incoming Snowflake format request
-    tracing::info!("Received graph_query request with Snowflake format");
     tracing::info!(
-        "Raw JSON payload: {}",
-        serde_json::to_string_pretty(&raw_request).unwrap_or_else(|_| "Failed to serialize".to_string())
+        "Received graph_query request with {} Snowflake row(s)",
+        raw_request.data.len()
     );
+    Ok(respond_to_snowflake_batch(&raw_request.data, graph_query_row).await)
+}
 
-    // Validate the Snowflake format: data should be an array with at least one entry
-    if raw_request.data.is_empty() {
-        tracing::error!("Empty data array in Snowflake request");
-        return Ok(create_snowflake_error_response("Data array cannot be empty"));
-    }
+/// Runs one `/graph_query` row: `{"graph_name": ..., "query": ...}`.
+async fn graph_query_row(data: serde_json::Value) -> Result<serde_json::Value, String> {
+    let graph_name = required_str_field(&data, "graph_name", "Graph name cannot be empty")?;
+    let query = required_str_field(&data, "query", "Query cannot be empty")?;
+    tracing::info!("Executing graph_query on graph {}: {}", graph_name, query);
 
-    // Get the first entry from the data array
-    let first_entry = &raw_request.data[0];
-
-    // Snowflake format: data[0] should be an array where [0] is index and [1] is the actual data
-    let data_array = first_entry.as_array().ok_or_else(|| {
-        tracing::error!("First data entry is not an array");
-        actix_web::error::ErrorBadRequest("First data entry must be an array")
-    })?;
-
-    if data_array.len() < 2 {
-        tracing::error!("Data array must have at least 2 elements [index, data]");
-        return Ok(create_snowflake_error_response(
-            "Data array must have at least 2 elements [index, data]",
-        ));
-    }
-
-    // Extract the actual data object (second element in the array)
-    let data_object = &data_array[1];
-
-    tracing::info!(
-        "Extracted data object: {}",
-        serde_json::to_string_pretty(data_object).unwrap_or_else(|_| "Failed to serialize".to_string())
-    );
-
-    // Extract the required fields from the data object
-    let graph_name = data_object
-        .get("graph_name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'graph_name' field in data object");
-            actix_web::error::ErrorBadRequest("Missing or invalid 'graph_name' field")
-        })?
-        .to_string();
-
-    let query = data_object
-        .get("query")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'query' field in data object");
-            actix_web::error::ErrorBadRequest("Missing or invalid 'query' field")
-        })?
-        .to_string();
-
-    tracing::info!("Successfully extracted: graph_name={}, query={}", graph_name, query);
-
-    // Validate the extracted data
-    if graph_name.is_empty() {
-        tracing::warn!("Empty graph name provided");
-        return Ok(create_snowflake_error_response("Graph name cannot be empty"));
-    }
-
-    if query.is_empty() {
-        tracing::warn!("Empty query provided");
-        return Ok(create_snowflake_error_response("Query cannot be empty"));
-    }
-
-    // Execute the query
-    match graph_query(&query, &graph_name, false).await {
-        Ok(json_result) => {
-            tracing::info!("Successfully executed graph_query for graph: {}", graph_name);
-            tracing::debug!("Raw query result: {}", json_result);
-
-            // Parse the JSON result to convert it to Snowflake format
-            match serde_json::from_str::<serde_json::Value>(&json_result) {
-                Ok(parsed_result) => {
-                    // Convert the result to Snowflake format: { "data": [ [0, result] ] }
-                    let snowflake_response = serde_json::json!({
-                        "data": [
-                            [0, parsed_result]
-                        ]
-                    });
-
-                    tracing::info!(
-                        "Converted to Snowflake format: {}",
-                        serde_json::to_string_pretty(&snowflake_response)
-                            .unwrap_or_else(|_| "Failed to serialize".to_string())
-                    );
-
-                    Ok(HttpResponse::Ok().json(snowflake_response))
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse query result as JSON: {}", e);
-                    // If parsing fails, return the raw result wrapped in Snowflake format
-                    let snowflake_response = serde_json::json!({
-                        "data": [
-                            [0, json_result]
-                        ]
-                    });
-                    Ok(HttpResponse::Ok().json(snowflake_response))
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to execute graph_query for graph {}: {}", graph_name, e);
-            Ok(create_snowflake_error_response(&e.to_string()))
-        }
-    }
+    let json_result = graph_query(&query, &graph_name, false).await.map_err(|e| e.to_string())?;
+    Ok(parse_json_or_string(json_result))
 }
 
 #[utoipa::path(
@@ -593,33 +589,41 @@ async fn graph_query_endpoint(
     )
 )]
 #[post("/graph_list")]
-#[allow(clippy::cognitive_complexity)]
-async fn graph_list_endpoint(_req: actix_web::web::Json<GraphListRequest>) -> Result<impl Responder, actix_web::Error> {
-    // Get the list of graphs
-    match get_graphs_list().await {
-        Ok(graphs) => {
-            tracing::info!("Successfully retrieved {} graphs", graphs.len());
-            tracing::debug!("Graph list: {:?}", graphs);
-
-            // Convert the graph list to Snowflake format: { "data": [ [0, graph_names_array] ] }
-            let snowflake_response = serde_json::json!({
-                "data": [
-                    [0, graphs]
-                ]
-            });
-
-            tracing::info!(
-                "Converted to Snowflake format: {}",
-                serde_json::to_string_pretty(&snowflake_response).unwrap_or_else(|_| "Failed to serialize".to_string())
-            );
-
-            Ok(HttpResponse::Ok().json(snowflake_response))
-        }
-        Err(e) => {
-            tracing::error!("Failed to list graphs: {}", e);
-            Ok(create_snowflake_error_response(&format!("Failed to list graphs: {e}")))
-        }
+async fn graph_list_endpoint(req: actix_web::web::Json<GraphListRequest>) -> Result<impl Responder, actix_web::Error> {
+    let raw_request = req.into_inner();
+    let graphs = get_graphs_list()
+        .await
+        .map(|graphs| serde_json::json!(graphs))
+        .map_err(|e| format!("Failed to list graphs: {e}"));
+    match &graphs {
+        Ok(_) => tracing::info!("Listed graphs for {} Snowflake row(s)", raw_request.data.len().max(1)),
+        Err(e) => tracing::error!("{}", e),
     }
+
+    // graph_list takes no arguments, so Snowflake sends rows holding only an index
+    // ([[0], [1], ...]); answer every row with the same list
+    let indexes: Vec<serde_json::Value> = if raw_request.data.is_empty() {
+        vec![0.into()]
+    } else {
+        raw_request
+            .data
+            .iter()
+            .enumerate()
+            .map(|(position, row)| snowflake_row_index(position, row))
+            .collect()
+    };
+    let value = graphs.as_ref().map_or_else(
+        |message| serde_json::json!({ "error": message }),
+        std::clone::Clone::clone,
+    );
+    let body = serde_json::json!({
+        "data": indexes.into_iter().map(|index| serde_json::json!([index, value])).collect::<Vec<_>>()
+    });
+    Ok(if graphs.is_ok() {
+        HttpResponse::Ok().json(body)
+    } else {
+        HttpResponse::BadRequest().json(body)
+    })
 }
 
 #[utoipa::path(
@@ -632,93 +636,31 @@ async fn graph_list_endpoint(_req: actix_web::web::Json<GraphListRequest>) -> Re
     )
 )]
 #[post("/graph_delete")]
-#[allow(clippy::cognitive_complexity)]
 async fn graph_delete_endpoint(
     req: actix_web::web::Json<GraphDeleteRequest>
 ) -> Result<impl Responder, actix_web::Error> {
     let raw_request = req.into_inner();
-
-    // Log the incoming Snowflake format request
-    tracing::info!("Received graph_delete request with Snowflake format");
     tracing::info!(
-        "Raw JSON payload: {}",
-        serde_json::to_string_pretty(&raw_request).unwrap_or_else(|_| "Failed to serialize".to_string())
+        "Received graph_delete request with {} Snowflake row(s)",
+        raw_request.data.len()
     );
+    Ok(respond_to_snowflake_batch(&raw_request.data, graph_delete_row).await)
+}
 
-    // Validate the Snowflake format: data should be an array with at least one entry
-    if raw_request.data.is_empty() {
-        tracing::error!("Empty data array in Snowflake request");
-        return Ok(create_snowflake_error_response("Data array cannot be empty"));
-    }
+/// Runs one `/graph_delete` row: `{"graph_name": ...}`.
+async fn graph_delete_row(data: serde_json::Value) -> Result<serde_json::Value, String> {
+    let graph_name = required_str_field(&data, "graph_name", "Graph name cannot be empty")?;
 
-    // Get the first entry from the data array
-    let first_entry = &raw_request.data[0];
-
-    // Snowflake format: data[0] should be an array where [0] is index and [1] is the actual data
-    let data_array = first_entry.as_array().ok_or_else(|| {
-        tracing::error!("First data entry is not an array");
-        actix_web::error::ErrorBadRequest("First data entry must be an array")
-    })?;
-
-    if data_array.len() < 2 {
-        tracing::error!("Data array must have at least 2 elements [index, data]");
-        return Ok(create_snowflake_error_response(
-            "Data array must have at least 2 elements [index, data]",
-        ));
-    }
-
-    // Extract the actual data object (second element in the array)
-    let data_object = &data_array[1];
-
-    tracing::info!(
-        "Extracted data object: {}",
-        serde_json::to_string_pretty(data_object).unwrap_or_else(|_| "Failed to serialize".to_string())
-    );
-
-    // Extract the required graph_name field from the data object
-    let graph_name = data_object
-        .get("graph_name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'graph_name' field in data object");
-            actix_web::error::ErrorBadRequest("Missing or invalid 'graph_name' field")
-        })?
-        .to_string();
-
-    tracing::info!("Successfully extracted graph_name: {}", graph_name);
-
-    // Validate the extracted data
-    if graph_name.is_empty() {
-        tracing::warn!("Empty graph name provided");
-        return Ok(create_snowflake_error_response("Graph name cannot be empty"));
-    }
-
-    // Delete the graph
     match delete_graph(&graph_name).await {
         Ok(result) => {
             tracing::info!("Successfully deleted graph: {}", graph_name);
             tracing::debug!("Delete result: {}", result);
-
-            // Convert the result to Snowflake format: { "data": [ [0, result] ] }
-            let snowflake_response = serde_json::json!({
-                "data": [
-                    [0, {"message": format!("Graph '{}' deleted successfully", graph_name), "success": true}]
-                ]
-            });
-
-            tracing::info!(
-                "Converted to Snowflake format: {}",
-                serde_json::to_string_pretty(&snowflake_response).unwrap_or_else(|_| "Failed to serialize".to_string())
-            );
-
-            Ok(HttpResponse::Ok().json(snowflake_response))
+            Ok(serde_json::json!({
+                "message": format!("Graph '{graph_name}' deleted successfully"),
+                "success": true
+            }))
         }
-        Err(e) => {
-            tracing::error!("Failed to delete graph {}: {}", graph_name, e);
-            Ok(create_snowflake_error_response(&format!(
-                "Failed to delete graph '{graph_name}': {e}"
-            )))
-        }
+        Err(e) => Err(format!("Failed to delete graph '{graph_name}': {e}")),
     }
 }
 
@@ -851,173 +793,49 @@ async fn clear_udf_cache() -> impl Responder {
         (status = 400, description = "Invalid request format, CSV file not found, or query execution failed", body = ErrorResponse)
     )
 )]
-#[allow(clippy::too_many_lines)]
-#[allow(clippy::cognitive_complexity)]
 #[post("/load_csv")]
 async fn load_csv_endpoint(req: actix_web::web::Json<LoadCsvRequest>) -> Result<impl Responder, actix_web::Error> {
     let raw_request = req.into_inner();
-
-    // Log the incoming Snowflake format request
-    tracing::info!("Received load_csv request with Snowflake format");
     tracing::info!(
-        "Raw JSON payload: {}",
-        serde_json::to_string_pretty(&raw_request).unwrap_or_else(|_| "Failed to serialize".to_string())
+        "Received load_csv request with {} Snowflake row(s)",
+        raw_request.data.len()
     );
+    log_import_folder_files().await;
+    Ok(respond_to_snowflake_batch(&raw_request.data, load_csv_row).await)
+}
 
-    // List all files in IMPORT_FOLDER at the start
-    if let Ok(connection_info) = AppConfig::get().falkordb_connection.as_str().try_into() {
-        if let Ok(client) = build_falkordb_async_client(connection_info).await {
-            match list_import_folder_files(&client).await {
-                Ok(files) => {
-                    tracing::info!("Files currently in IMPORT_FOLDER: {:?}", files);
-                    if files.is_empty() {
-                        tracing::info!("IMPORT_FOLDER is empty");
-                    } else {
-                        tracing::info!("Total files in IMPORT_FOLDER: {}", files.len());
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to list IMPORT_FOLDER files: {}", e);
-                }
-            }
-        } else {
-            tracing::warn!("Failed to create FalkorDB client for listing IMPORT_FOLDER files");
-        }
-    } else {
+/// Logs the files currently in `FalkorDB`'s `IMPORT_FOLDER` (diagnostics only).
+async fn log_import_folder_files() {
+    let Ok(connection_info) = AppConfig::get().falkordb_connection.as_str().try_into() else {
         tracing::warn!("Invalid FalkorDB connection string for listing IMPORT_FOLDER files");
+        return;
+    };
+    let Ok(client) = build_falkordb_async_client(connection_info).await else {
+        tracing::warn!("Failed to create FalkorDB client for listing IMPORT_FOLDER files");
+        return;
+    };
+    match list_import_folder_files(&client).await {
+        Ok(files) => tracing::info!("Files currently in IMPORT_FOLDER ({}): {:?}", files.len(), files),
+        Err(e) => tracing::warn!("Failed to list IMPORT_FOLDER files: {}", e),
     }
+}
 
-    // Validate the Snowflake format: data should be an array with at least one entry
-    if raw_request.data.is_empty() {
-        tracing::error!("Empty data array in Snowflake request");
-        return Ok(create_snowflake_error_response("Data array cannot be empty"));
-    }
-
-    // Get the first entry from the data array
-    let first_entry = &raw_request.data[0];
-
-    // Snowflake format: data[0] should be an array where [0] is index and [1] is the actual data
-    let data_array = first_entry.as_array().ok_or_else(|| {
-        tracing::error!("First data entry is not an array");
-        actix_web::error::ErrorBadRequest("First data entry must be an array")
-    })?;
-
-    if data_array.len() < 2 {
-        tracing::error!("Data array must have at least 2 elements [index, data]");
-        return Ok(create_snowflake_error_response(
-            "Data array must have at least 2 elements [index, data]",
-        ));
-    }
-
-    // Extract the actual data object (second element in the array)
-    let data_object = &data_array[1];
-
+/// Runs one `/load_csv` row: `{"graph_name": ..., "csv_file": ..., "cypher_query": ...}`.
+async fn load_csv_row(data: serde_json::Value) -> Result<serde_json::Value, String> {
+    let csv_file = required_str_field(&data, "csv_file", "CSV file name cannot be empty")?;
+    let cypher_query = required_str_field(&data, "cypher_query", "Cypher query cannot be empty")?;
+    let graph_name = required_str_field(&data, "graph_name", "Graph name cannot be empty")?;
     tracing::info!(
-        "Extracted data object: {}",
-        serde_json::to_string_pretty(data_object).unwrap_or_else(|_| "Failed to serialize".to_string())
-    );
-
-    // Extract the required fields from the data object
-    let csv_file = data_object
-        .get("csv_file")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'csv_file' field in data object");
-            actix_web::error::ErrorBadRequest("Missing or invalid 'csv_file' field")
-        })?
-        .to_string();
-
-    let cypher_query = data_object
-        .get("cypher_query")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'cypher_query' field in data object");
-            actix_web::error::ErrorBadRequest("Missing or invalid 'cypher_query' field")
-        })?
-        .to_string();
-
-    let graph_name = data_object
-        .get("graph_name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            tracing::error!("Missing or invalid 'graph_name' field in data object");
-            actix_web::error::ErrorBadRequest("Missing or invalid 'graph_name' field")
-        })?
-        .to_string();
-
-    tracing::info!(
-        "Successfully extracted: graph_name={}, csv_file={}, cypher_query={}",
+        "Executing load_csv on graph {} with CSV file {}: {}",
         graph_name,
         csv_file,
         cypher_query
     );
-    tracing::debug!("CSV file: {}", csv_file);
 
-    tracing::info!(
-        "Successfully extracted: graph_name={}, csv_file={}, cypher_query={}",
-        graph_name,
-        csv_file,
-        cypher_query
-    );
-    tracing::debug!("CSV file: {}", csv_file);
-
-    // Validate the extracted data
-    if csv_file.is_empty() {
-        tracing::warn!("Empty CSV file name provided");
-        return Ok(create_snowflake_error_response("CSV file name cannot be empty"));
-    }
-
-    if cypher_query.is_empty() {
-        tracing::warn!("Empty Cypher query provided");
-        return Ok(create_snowflake_error_response("Cypher query cannot be empty"));
-    }
-
-    if graph_name.is_empty() {
-        tracing::warn!("Empty graph name provided");
-        return Ok(create_snowflake_error_response("Graph name cannot be empty"));
-    }
-
-    // Execute the query with the existing CSV file using the new logic
-    match graph_query_with_existing_csv(&cypher_query, &graph_name, &csv_file).await {
-        Ok(json_result) => {
-            tracing::info!("Successfully executed load_csv for graph: {}", graph_name);
-            tracing::debug!("Raw query result: {}", json_result);
-
-            // Parse the JSON result to convert it to Snowflake format
-            match serde_json::from_str::<serde_json::Value>(&json_result) {
-                Ok(parsed_result) => {
-                    // Convert the result to Snowflake format: { "data": [ [0, result] ] }
-                    let snowflake_response = serde_json::json!({
-                        "data": [
-                            [0, parsed_result]
-                        ]
-                    });
-
-                    tracing::info!(
-                        "Converted to Snowflake format: {}",
-                        serde_json::to_string_pretty(&snowflake_response)
-                            .unwrap_or_else(|_| "Failed to serialize".to_string())
-                    );
-
-                    Ok(HttpResponse::Ok().json(snowflake_response))
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse query result as JSON: {}", e);
-                    // If parsing fails, return the raw result wrapped in Snowflake format
-                    let snowflake_response = serde_json::json!({
-                        "data": [
-                            [0, json_result]
-                        ]
-                    });
-                    Ok(HttpResponse::Ok().json(snowflake_response))
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to execute load_csv for graph {}: {}", graph_name, e);
-            Ok(create_snowflake_error_response(&e.to_string()))
-        }
-    }
+    let json_result = graph_query_with_existing_csv(&cypher_query, &graph_name, &csv_file)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(parse_json_or_string(json_result))
 }
 
 #[utoipa::path(
@@ -2576,6 +2394,87 @@ fn floor_char_boundary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run_batch(rows: &serde_json::Value) -> (serde_json::Value, bool) {
+        let rows = rows.as_array().unwrap().clone();
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(run_snowflake_batch(&rows, |data| async move {
+                match data.get("graph_name").and_then(serde_json::Value::as_str) {
+                    Some("bad") => Err("boom".to_string()),
+                    Some(name) => Ok(serde_json::json!({ "done": name })),
+                    None => Err("Missing or invalid 'graph_name' field".to_string()),
+                }
+            }))
+    }
+
+    #[test]
+    fn snowflake_batch_answers_every_row_with_its_index() {
+        let (body, any_failed) = run_batch(&serde_json::json!([
+            [0, {"graph_name": "a"}],
+            [1, {"graph_name": "b"}],
+            [7, {"graph_name": "c"}]
+        ]));
+        assert!(!any_failed);
+        assert_eq!(
+            body,
+            serde_json::json!({"data": [
+                [0, {"done": "a"}],
+                [1, {"done": "b"}],
+                [7, {"done": "c"}]
+            ]})
+        );
+    }
+
+    #[test]
+    fn snowflake_batch_reports_failed_rows_without_dropping_others() {
+        let (body, any_failed) = run_batch(&serde_json::json!([
+            [0, {"graph_name": "a"}],
+            [1, {"graph_name": "bad"}],
+            [2, {}],
+            [3],
+            "not-a-row",
+            [5, {"graph_name": "f"}]
+        ]));
+        assert!(any_failed);
+        assert_eq!(
+            body,
+            serde_json::json!({"data": [
+                [0, {"done": "a"}],
+                [1, {"error": "boom"}],
+                [2, {"error": "Missing or invalid 'graph_name' field"}],
+                [3, {"error": "Data array must have at least 2 elements [index, data]"}],
+                [4, {"error": "Each data entry must be an array [index, data]"}],
+                [5, {"done": "f"}]
+            ]})
+        );
+    }
+
+    #[test]
+    fn snowflake_row_index_uses_first_cell_or_position() {
+        assert_eq!(snowflake_row_index(5, &serde_json::json!([3])), serde_json::json!(3));
+        assert_eq!(
+            snowflake_row_index(5, &serde_json::json!([1, {}])),
+            serde_json::json!(1)
+        );
+        assert_eq!(snowflake_row_index(5, &serde_json::json!("x")), serde_json::json!(5));
+        assert_eq!(snowflake_row_index(5, &serde_json::json!([])), serde_json::json!(5));
+    }
+
+    #[test]
+    fn required_str_field_rejects_missing_and_empty_values() {
+        let data = serde_json::json!({"graph_name": "g", "empty": "", "number": 1});
+        assert_eq!(required_str_field(&data, "graph_name", "empty!"), Ok("g".to_string()));
+        assert_eq!(required_str_field(&data, "empty", "empty!"), Err("empty!".to_string()));
+        assert_eq!(
+            required_str_field(&data, "number", "empty!"),
+            Err("Missing or invalid 'number' field".to_string())
+        );
+        assert_eq!(
+            required_str_field(&data, "missing", "empty!"),
+            Err("Missing or invalid 'missing' field".to_string())
+        );
+    }
 
     #[test]
     fn rewrite_csv_uris_only_replaces_the_uri() {
