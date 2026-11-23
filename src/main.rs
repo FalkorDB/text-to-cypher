@@ -379,7 +379,7 @@ struct EchoRequest {
 }
 
 /// Runs `handle_row` for every row of a Snowflake external-function batch and returns the
-/// response body, plus whether any row failed.
+/// response body, plus the number of rows that failed.
 ///
 /// Snowflake sends `{"data": [[row_index, argument], ...]}` and expects exactly one
 /// `[row_index, result]` per input row. Rows run in order; a failed or malformed row is
@@ -387,13 +387,13 @@ struct EchoRequest {
 async fn run_snowflake_batch<F, Fut>(
     rows: &[serde_json::Value],
     mut handle_row: F,
-) -> (serde_json::Value, bool)
+) -> (serde_json::Value, usize)
 where
     F: FnMut(serde_json::Value) -> Fut,
     Fut: std::future::Future<Output = Result<serde_json::Value, String>>,
 {
     let mut results = Vec::with_capacity(rows.len());
-    let mut any_failed = false;
+    let mut failed_rows = 0;
 
     for (position, row) in rows.iter().enumerate() {
         let index = snowflake_row_index(position, row);
@@ -405,13 +405,13 @@ where
 
         let value = outcome.unwrap_or_else(|message| {
             tracing::error!("Snowflake row {} failed: {}", index, message);
-            any_failed = true;
+            failed_rows += 1;
             serde_json::json!({ "error": message })
         });
         results.push(serde_json::json!([index, value]));
     }
 
-    (serde_json::json!({ "data": results }), any_failed)
+    (serde_json::json!({ "data": results }), failed_rows)
 }
 
 /// The row index Snowflake sent as the first cell of `row`, or the row's position when the
@@ -426,8 +426,27 @@ fn snowflake_row_index(
         .unwrap_or_else(|| position.into())
 }
 
-/// HTTP wrapper around [`run_snowflake_batch`]: 200 when every row succeeded, 400 otherwise
-/// (as before for single-row requests), always with one result row per input row.
+/// The HTTP status for a processed batch of `total_rows` rows, `failed_rows` of which failed.
+///
+/// Snowflake treats any status other than 200 or 202 as a failure of the whole batch and
+/// discards the body. Rows that succeeded may already have written to the graph, so a batch
+/// with at least one successful row returns 200, with failed rows carrying `{"error": ...}`;
+/// otherwise their results would be lost and a retry would repeat the writes. Only a batch in
+/// which every row failed (nothing was committed, so a retry is safe) returns 400, which keeps
+/// the previous status for a failed single-row request.
+const fn snowflake_batch_status(
+    total_rows: usize,
+    failed_rows: usize,
+) -> StatusCode {
+    if failed_rows == total_rows {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::OK
+    }
+}
+
+/// HTTP wrapper around [`run_snowflake_batch`], always with one result row per input row; see
+/// [`snowflake_batch_status`] for the status.
 async fn respond_to_snowflake_batch<F, Fut>(
     rows: &[serde_json::Value],
     handle_row: F,
@@ -441,12 +460,8 @@ where
         return create_snowflake_error_response("Data array cannot be empty");
     }
 
-    let (body, any_failed) = run_snowflake_batch(rows, handle_row).await;
-    if any_failed {
-        HttpResponse::BadRequest().json(body)
-    } else {
-        HttpResponse::Ok().json(body)
-    }
+    let (body, failed_rows) = run_snowflake_batch(rows, handle_row).await;
+    HttpResponse::build(snowflake_batch_status(rows.len(), failed_rows)).json(body)
 }
 
 /// Reads a required, non-empty string field from a Snowflake row argument.
@@ -2522,7 +2537,7 @@ fn floor_char_boundary(
 mod tests {
     use super::*;
 
-    fn run_batch(rows: &serde_json::Value) -> (serde_json::Value, bool) {
+    fn run_batch(rows: &serde_json::Value) -> (serde_json::Value, usize) {
         let rows = rows.as_array().unwrap().clone();
         tokio::runtime::Runtime::new()
             .unwrap()
@@ -2537,12 +2552,12 @@ mod tests {
 
     #[test]
     fn snowflake_batch_answers_every_row_with_its_index() {
-        let (body, any_failed) = run_batch(&serde_json::json!([
+        let (body, failed_rows) = run_batch(&serde_json::json!([
             [0, {"graph_name": "a"}],
             [1, {"graph_name": "b"}],
             [7, {"graph_name": "c"}]
         ]));
-        assert!(!any_failed);
+        assert_eq!(failed_rows, 0);
         assert_eq!(
             body,
             serde_json::json!({"data": [
@@ -2555,7 +2570,7 @@ mod tests {
 
     #[test]
     fn snowflake_batch_reports_failed_rows_without_dropping_others() {
-        let (body, any_failed) = run_batch(&serde_json::json!([
+        let (body, failed_rows) = run_batch(&serde_json::json!([
             [0, {"graph_name": "a"}],
             [1, {"graph_name": "bad"}],
             [2, {}],
@@ -2563,7 +2578,7 @@ mod tests {
             "not-a-row",
             [5, {"graph_name": "f"}]
         ]));
-        assert!(any_failed);
+        assert_eq!(failed_rows, 4);
         assert_eq!(
             body,
             serde_json::json!({"data": [
@@ -2575,6 +2590,16 @@ mod tests {
                 [5, {"done": "f"}]
             ]})
         );
+    }
+
+    #[test]
+    fn snowflake_batch_returns_200_unless_every_row_failed() {
+        assert_eq!(snowflake_batch_status(3, 0), StatusCode::OK);
+        // Mixed batch: the successful rows may have written, so Snowflake must get their results.
+        assert_eq!(snowflake_batch_status(3, 2), StatusCode::OK);
+        assert_eq!(snowflake_batch_status(3, 3), StatusCode::BAD_REQUEST);
+        // A failed single-row request keeps its previous 400.
+        assert_eq!(snowflake_batch_status(1, 1), StatusCode::BAD_REQUEST);
     }
 
     #[test]
