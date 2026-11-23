@@ -113,17 +113,70 @@ impl CypherValidator {
     /// Returns whether `masked` contains DROP or DELETE used as a clause keyword.
     ///
     /// The same words are legal symbolic names, so a match is skipped when it is a property
-    /// name (`n.delete`, `{.drop}`), a label or relationship type (`:Drop`), a parameter
-    /// (`$delete`) or a map key (`{drop: 1}`).
+    /// name (`n.delete`, `{.drop}`), a label or relationship type (`:Drop`), a relationship-type
+    /// alternative (`[:KEEP|DELETE]`), a parameter (`$delete`) or a map key (`{drop: 1}`).
     fn contains_dangerous_clause(
         dangerous_ops: &Regex,
         masked: &str,
     ) -> bool {
         dangerous_ops.find_iter(masked).any(|m| {
-            let before = masked[..m.start()].trim_end().chars().next_back();
+            let preceding = &masked[..m.start()];
             let after = masked[m.end()..].trim_start().chars().next();
-            !matches!(before, Some('.' | ':' | '$')) && after != Some(':')
+            !(after == Some(':') || Self::is_symbolic_name_prefix(preceding))
         })
+    }
+
+    /// Returns whether the text before a DROP/DELETE match makes the match a symbolic name
+    /// rather than a clause keyword.
+    fn is_symbolic_name_prefix(preceding: &str) -> bool {
+        // A parameter: `$` directly before the name, and not itself the end of an identifier
+        // such as `n.flag$`, which would make the keyword a separate clause.
+        if let Some(before_dollar) = preceding.strip_suffix('$') {
+            return !before_dollar.ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$');
+        }
+        let trimmed = preceding.trim_end();
+        match trimmed.chars().next_back() {
+            Some('.' | ':') => true,
+            Some('|') => Self::is_relationship_type_list(&trimmed[..trimmed.len() - 1]),
+            _ => false,
+        }
+    }
+
+    /// Returns whether `text` ends with the start of a relationship-type list, such as
+    /// `[:KEEP` or `[r:A|:B`, so that a following `|` separates relationship-type alternatives.
+    /// A `|` elsewhere, as in `FOREACH (n IN ns | DELETE n)`, is not an exemption.
+    fn is_relationship_type_list(mut text: &str) -> bool {
+        loop {
+            // A type name: an identifier, or a masked backtick-quoted name
+            text = text.trim_end();
+            text = if let Some(quoted) = text.strip_suffix('`') {
+                match quoted.rfind('`') {
+                    Some(open) => &quoted[..open],
+                    None => return false,
+                }
+            } else {
+                let name_start = text.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_').len();
+                if name_start == text.len() {
+                    return false;
+                }
+                &text[..name_start]
+            };
+            text = text.trim_end();
+            let had_colon = text.ends_with(':');
+            if had_colon {
+                text = text[..text.len() - 1].trim_end();
+            }
+            if let Some(rest) = text.strip_suffix('|') {
+                text = rest;
+                continue;
+            }
+            if !had_colon {
+                return false;
+            }
+            // The first type follows `[` or `[variable`
+            let without_variable = text.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_');
+            return without_variable.trim_end().ends_with('[');
+        }
     }
 
     /// Returns `query` with the contents of string literals, backtick-quoted identifiers and
@@ -330,6 +383,9 @@ mod tests {
             "MATCH (n:Drop)-[:DELETE]->(m) RETURN n, m",
             "MATCH (n) WHERE n.name = $drop RETURN n",
             "MATCH (n) RETURN {drop: n.name, delete : 1}",
+            "MATCH (n)-[:LIKES|DELETE]->(m) RETURN n, m",
+            "MATCH (n)-[:KEEP|:DROP]->(m) RETURN n, m",
+            "MATCH (n)-[r:A | `B c` | DELETE*1..2]->(m) RETURN r",
         ];
         for query in queries {
             let result = CypherValidator::validate(query);
@@ -347,6 +403,10 @@ mod tests {
             "MATCH (n) WHERE n.name = 'a' DELETE n",
             "MATCH (n) WITH n.delete AS d, n DELETE n",
             "MATCH (n:Drop) DELETE n",
+            "MATCH (n) WHERE n.flag$ DELETE n",
+            "MATCH p = (n)-[:A]->() FOREACH (x IN nodes(p) | DELETE x)",
+            "MATCH (n) WITH collect(n) AS ns FOREACH (x IN ns | DELETE x)",
+            "MATCH (n)-[:A]->(m) WITH [x IN [n, m] WHERE x:Foo | x] AS xs FOREACH (x IN xs | DELETE x)",
         ];
         for query in queries {
             let result = CypherValidator::validate(query);
