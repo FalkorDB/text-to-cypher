@@ -248,7 +248,8 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
 ///
 /// Network chunks do not respect line boundaries, so an event (or a multi-byte UTF-8
 /// character) can be split across chunks. Bytes after the last newline are kept until the
-/// rest of the line arrives.
+/// rest of the line arrives. Each byte is scanned for a newline once, so a large event that
+/// arrives in many chunks is processed in linear time.
 #[derive(Default)]
 struct SseDataLines {
     pending: Vec<u8>,
@@ -260,14 +261,21 @@ impl SseDataLines {
         &mut self,
         chunk: &[u8],
     ) -> Vec<String> {
-        self.pending.extend_from_slice(chunk);
         let mut payloads = Vec::new();
-        while let Some(newline) = self.pending.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = self.pending.drain(..=newline).collect();
-            if let Some(payload) = Self::data_payload(&line) {
-                payloads.push(payload);
+        let mut rest = chunk;
+        // Only the new chunk is searched: `pending` never contains a newline.
+        while let Some(newline) = rest.iter().position(|&b| b == b'\n') {
+            let (line, tail) = rest.split_at(newline + 1);
+            if self.pending.is_empty() {
+                payloads.extend(Self::data_payload(line));
+            } else {
+                self.pending.extend_from_slice(line);
+                payloads.extend(Self::data_payload(&self.pending));
+                self.pending.clear();
             }
+            rest = tail;
         }
+        self.pending.extend_from_slice(rest);
         payloads
     }
 
@@ -513,6 +521,26 @@ mod tests {
         assert_eq!(payloads.len(), 1);
         let response = assemble(&[payloads[0].as_str()]);
         assert!(response.contains(&"x".repeat(20_000)));
+    }
+
+    #[test]
+    fn large_event_in_many_small_chunks_is_reassembled() {
+        let event = format!(
+            "data: {{\"Status\":\"a\"}}\n\ndata: {{\"Result\":\"{}\"}}\n\ndata: {{\"Status\":\"b\"}}\n",
+            "y".repeat(100_000)
+        );
+
+        let mut lines = SseDataLines::default();
+        let mut payloads = Vec::new();
+        for chunk in event.as_bytes().chunks(7) {
+            payloads.extend(lines.push(chunk));
+        }
+
+        assert_eq!(payloads.len(), 3);
+        assert_eq!(payloads[0], r#"{"Status":"a"}"#);
+        assert_eq!(payloads[1], format!(r#"{{"Result":"{}"}}"#, "y".repeat(100_000)));
+        assert_eq!(payloads[2], r#"{"Status":"b"}"#);
+        assert!(lines.finish().is_none());
     }
 
     #[test]
