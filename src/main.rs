@@ -151,7 +151,8 @@ struct AppConfig {
     falkordb_connection: String,
     default_model: Option<String>,
     default_key: Option<String>,
-    schema_cache: Cache<String, String>,
+    /// Discovered schemas keyed by (`FalkorDB` connection, graph name)
+    schema_cache: SchemaCache,
     rest_port: u16,
     mcp_port: u16,
     skill_catalog: Option<SkillCatalog>,
@@ -175,7 +176,7 @@ impl AppConfig {
             std::env::var("FALKORDB_CONNECTION").unwrap_or_else(|_| "falkor://127.0.0.1:6379".to_string());
         let default_model = std::env::var("DEFAULT_MODEL").ok();
         let default_key = std::env::var("DEFAULT_KEY").ok();
-        let schema_cache = Cache::new(100);
+        let schema_cache = SchemaCache::new(100);
 
         let rest_port = std::env::var("REST_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
 
@@ -368,10 +369,97 @@ fn create_snowflake_error_response(error_message: &str) -> HttpResponse {
     HttpResponse::BadRequest().json(error_response)
 }
 
+/// Discovered schemas keyed by (`FalkorDB` connection, graph name).
+///
+/// Every graph has a generation that each invalidation bumps. A load records the generation
+/// before it starts discovery and publishes its result only if the generation is unchanged.
+/// The check and the insert run under the same lock as the invalidation, so a load that was
+/// in flight when a graph was deleted or cleared cannot restore the old schema.
+/// Clones share the same entries and generations.
+#[derive(Debug, Clone)]
+struct SchemaCache {
+    entries: Cache<(String, String), String>,
+    generations: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+}
+
+impl SchemaCache {
+    fn new(max_capacity: u64) -> Self {
+        Self {
+            entries: Cache::new(max_capacity),
+            generations: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    fn lock_generations(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, u64>> {
+        self.generations.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn get(
+        &self,
+        falkordb_connection: &str,
+        graph_name: &str,
+    ) -> Option<String> {
+        self.entries.get(&schema_cache_key(falkordb_connection, graph_name))
+    }
+
+    /// Returns the current generation of `graph_name`. Call it before starting discovery.
+    fn generation(
+        &self,
+        graph_name: &str,
+    ) -> u64 {
+        self.lock_generations().get(graph_name).copied().unwrap_or(0)
+    }
+
+    /// Caches `schema` unless `graph_name` was invalidated after `generation` was read.
+    /// Returns whether the schema was cached.
+    fn insert_if_current(
+        &self,
+        falkordb_connection: &str,
+        graph_name: &str,
+        generation: u64,
+        schema: String,
+    ) -> bool {
+        let generations = self.lock_generations();
+        if generations.get(graph_name).copied().unwrap_or(0) != generation {
+            return false;
+        }
+        self.entries.insert(schema_cache_key(falkordb_connection, graph_name), schema);
+        drop(generations);
+        true
+    }
+
+    /// Removes the cached schema of `graph_name` for every `FalkorDB` connection, including
+    /// different spellings of the same connection, and discards loads already in flight.
+    fn invalidate_graph(
+        &self,
+        graph_name: &str,
+    ) {
+        let mut generations = self.lock_generations();
+        let generation = generations.entry(graph_name.to_string()).or_insert(0);
+        *generation = generation.wrapping_add(1);
+        let keys: Vec<(String, String)> = self
+            .entries
+            .iter()
+            .filter(|(key, _)| key.1 == graph_name)
+            .map(|(key, _)| (*key).clone())
+            .collect();
+        for key in keys {
+            self.entries.invalidate(&key);
+        }
+        drop(generations);
+    }
+}
+
+fn schema_cache_key(
+    falkordb_connection: &str,
+    graph_name: &str,
+) -> (String, String) {
+    (falkordb_connection.to_string(), graph_name.to_string())
+}
+
 fn process_clear_schema_cache(graph_name: &str) {
     tracing::info!("Clearing schema cache for graph: {graph_name}");
-    let cache = AppConfig::get().schema_cache.clone();
-    cache.invalidate(graph_name);
+    AppConfig::get().schema_cache.invalidate_graph(graph_name);
 }
 
 fn process_clear_udf_cache() {
@@ -678,6 +766,9 @@ async fn graph_delete_endpoint(
     match delete_graph(&graph_name).await {
         Ok(result) => {
             tracing::info!("Successfully deleted graph: {}", graph_name);
+            // Invalidate for every connection: the same database can be cached under several
+            // connection strings (e.g. `falkor://` and `redis://`, `localhost` and `127.0.0.1`).
+            AppConfig::get().schema_cache.invalidate_graph(&graph_name);
             tracing::debug!("Delete result: {}", result);
 
             // Convert the result to Snowflake format: { "data": [ [0, result] ] }
@@ -1356,17 +1447,19 @@ async fn get_or_discover_schema(
     graph_name: &str,
     tx: &mpsc::Sender<sse::Event>,
 ) -> Option<String> {
-    let cache = AppConfig::get().schema_cache.clone();
-    let schema = match cache.get(graph_name) {
-        Some(schema) => schema,
-        None => match discover_and_send_schema(falkordb_connection, graph_name, tx).await {
-            Ok(schema) => schema,
-            Err(()) => return None,
-        },
+    let cache = &AppConfig::get().schema_cache;
+    let schema = if let Some(schema) = cache.get(falkordb_connection, graph_name) {
+        schema
+    } else {
+        let generation = cache.generation(graph_name);
+        let Ok(schema) = discover_and_send_schema(falkordb_connection, graph_name, tx).await else {
+            return None;
+        };
+        cache.insert_if_current(falkordb_connection, graph_name, generation, schema.clone());
+        schema
     };
     send_option!(tx, Progress::Schema(schema.clone()));
-    cache.insert(graph_name.to_string(), schema.clone());
-    Some(schema.clone())
+    Some(schema)
 }
 
 #[allow(clippy::cognitive_complexity)]
@@ -1676,19 +1769,20 @@ async fn get_graph_schema_string(
     falkordb_connection: &str,
     graph_name: &str,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let cache = AppConfig::get().schema_cache.clone();
+    let cache = &AppConfig::get().schema_cache;
 
     // Check cache first
-    if let Some(cached_schema) = cache.get(graph_name) {
+    if let Some(cached_schema) = cache.get(falkordb_connection, graph_name) {
         return Ok(cached_schema);
     }
 
     // If not in cache, discover it
+    let generation = cache.generation(graph_name);
     let schema = discover_graph_schema(falkordb_connection, graph_name).await?;
     let schema_json = serde_json::to_string(&schema).map_err(|e| format!("Failed to serialize schema: {e}"))?;
 
-    // Cache the result
-    cache.insert(graph_name.to_string(), schema_json.clone());
+    // Cache the result, unless the graph was invalidated while discovery ran
+    cache.insert_if_current(falkordb_connection, graph_name, generation, schema_json.clone());
 
     Ok(schema_json)
 }
@@ -2546,5 +2640,65 @@ mod tests {
         let feedback = self_healing_feedback("Query execution failed: Division by zero");
         assert!(feedback.contains("Division by zero"), "{feedback}");
         assert!(!feedback.contains("see logs"), "{feedback}");
+    }
+
+    fn insert(
+        cache: &SchemaCache,
+        connection: &str,
+        graph: &str,
+        schema: &str,
+    ) {
+        let generation = cache.generation(graph);
+        assert!(cache.insert_if_current(connection, graph, generation, schema.to_string()));
+    }
+
+    #[test]
+    fn schema_cache_is_isolated_per_connection() {
+        let cache = SchemaCache::new(10);
+        insert(&cache, "falkor://a:6379", "g", "schema-a");
+        insert(&cache, "falkor://b:6379", "g", "schema-b");
+
+        assert_eq!(cache.get("falkor://a:6379", "g").as_deref(), Some("schema-a"));
+        assert_eq!(cache.get("falkor://b:6379", "g").as_deref(), Some("schema-b"));
+    }
+
+    #[test]
+    fn invalidate_graph_clears_every_connection_only_for_that_graph() {
+        let cache = SchemaCache::new(10);
+        insert(&cache, "falkor://127.0.0.1:6379", "g", "a");
+        insert(&cache, "redis://localhost:6379", "g", "b");
+        insert(&cache, "falkor://127.0.0.1:6379", "other", "o");
+
+        cache.invalidate_graph("g");
+
+        assert!(cache.get("falkor://127.0.0.1:6379", "g").is_none());
+        assert!(cache.get("redis://localhost:6379", "g").is_none());
+        assert!(cache.get("falkor://127.0.0.1:6379", "other").is_some());
+    }
+
+    #[test]
+    fn load_started_before_invalidation_is_not_cached() {
+        let cache = SchemaCache::new(10);
+        let generation = cache.generation("g");
+
+        // The graph is deleted while discovery is in flight.
+        cache.invalidate_graph("g");
+
+        assert!(!cache.insert_if_current("falkor://a:6379", "g", generation, "stale".to_string()));
+        assert!(cache.get("falkor://a:6379", "g").is_none());
+
+        // A load that starts after the invalidation is cached.
+        insert(&cache, "falkor://a:6379", "g", "fresh");
+        assert_eq!(cache.get("falkor://a:6379", "g").as_deref(), Some("fresh"));
+    }
+
+    #[test]
+    fn invalidating_one_graph_does_not_discard_loads_of_another() {
+        let cache = SchemaCache::new(10);
+        let generation = cache.generation("other");
+
+        cache.invalidate_graph("g");
+
+        assert!(cache.insert_if_current("falkor://a:6379", "other", generation, "o".to_string()));
     }
 }
