@@ -12,10 +12,15 @@ use rust_mcp_sdk::error::SdkResult;
 
 /// Run the MCP server.
 ///
+/// Tool and resource requests are forwarded to the REST API listening on `rest_port`.
+///
 /// # Errors
 ///
 /// Returns an error if the server fails to start or encounters a runtime error.
-pub async fn run_mcp_server(port: u16) -> SdkResult<()> {
+pub async fn run_mcp_server(
+    port: u16,
+    rest_port: u16,
+) -> SdkResult<()> {
     // Note: Tracing is already initialized in main, no need to initialize it again
 
     // STEP 1: Define server details and capabilities
@@ -62,10 +67,14 @@ Example: First check resources, then ask 'Who are all the people?' for a social 
     };
 
     // STEP 2: instantiate our custom handler for handling MCP messages
-    let handler = MyServerHandler {};
+    let handler = MyServerHandler::new(rest_port);
 
     // STEP 3: instantiate HyperServer, providing `server_details` , `handler` and HyperServerOptions
-    tracing::info!("Starting MCP server on 0.0.0.0:{}", port);
+    tracing::info!(
+        "Starting MCP server on 0.0.0.0:{} (forwarding to REST API on port {})",
+        port,
+        rest_port
+    );
 
     let server = hyper_server::create_server(
         server_details,

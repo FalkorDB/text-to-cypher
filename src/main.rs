@@ -101,25 +101,6 @@ macro_rules! try_send {
     };
 }
 
-// Macro for functions returning Result<String, Box<dyn Error>>
-macro_rules! try_send_boxed {
-    ($tx:expr, $progress:expr) => {
-        match serde_json::to_string(&$progress) {
-            Ok(json) => {
-                let event = sse::Event::Data(sse::Data::new(json));
-                if $tx.send(event).await.is_err() {
-                    tracing::warn!("Client disconnected, stopping stream");
-                    return Err("Client disconnected".into());
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to serialize progress update: {}", e);
-                return Err(format!("Serialization failed: {}", e).into());
-            }
-        }
-    };
-}
-
 // Macro for functions returning String (returns empty string on error)
 macro_rules! send_or_empty {
     ($tx:expr, $progress:expr) => {
@@ -134,6 +115,25 @@ macro_rules! send_or_empty {
             Err(e) => {
                 tracing::error!("Failed to serialize progress update: {}", e);
                 return String::new();
+            }
+        }
+    };
+}
+
+// Macro for functions returning Result<T, String> (returns the failure reason on error)
+macro_rules! send_or_err {
+    ($tx:expr, $progress:expr) => {
+        match serde_json::to_string(&$progress) {
+            Ok(json) => {
+                let event = sse::Event::Data(sse::Data::new(json));
+                if $tx.send(event).await.is_err() {
+                    tracing::warn!("Client disconnected, stopping stream");
+                    return Err(String::from("client disconnected"));
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to serialize progress update: {}", e);
+                return Err(format!("failed to serialize progress update: {e}"));
             }
         }
     };
@@ -1089,60 +1089,66 @@ async fn process_text_to_cypher_request(
     }
 
     // Step 4: Execute the query and get results, with self-healing on failure
-    let query_result = if let Ok(result) =
-        execute_cypher_query(&executed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
-    {
-        result
-    } else {
-        // Try self-healing: regenerate query with error feedback
-        tracing::info!("First query execution failed, attempting self-healing...");
-        send!(
-            tx,
-            Progress::Status(String::from("Query failed, attempting self-healing..."))
-        );
+    let first_attempt =
+        execute_cypher_query(&executed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await;
+    let query_result = match first_attempt {
+        Err(()) => return,
+        Ok(Ok(result)) => result,
+        Ok(Err(error_msg)) => {
+            // Try self-healing: regenerate query with error feedback
+            tracing::info!("First query execution failed, attempting self-healing...");
+            send!(tx, Progress::Status(format!("{error_msg}. Attempting self-healing...")));
 
-        // Use a generic error message since we don't capture specific errors
-        let error_msg = "Query execution failed - see logs for details";
-
-        // Attempt to get a fixed query with error context
-        if let Some(fixed_query) = attempt_query_self_healing(
-            &request,
-            &schema,
-            &executed_query,
-            error_msg,
-            &client,
-            model,
-            &udfs,
-            &tx,
-            &mut token_usage,
-        )
-        .await
-        {
-            // Try executing the fixed query
-            if let Ok(result) =
-                execute_cypher_query(&fixed_query, &request.graph_name, falkordb_connection.as_str(), &tx).await
-            {
-                tracing::info!("Self-healed query executed successfully");
-                send!(tx, Progress::Status(String::from("Self-healing successful")));
-                executed_query = fixed_query;
-                result
-            } else {
-                tracing::error!("Self-healing failed");
-                send!(tx, Progress::Usage(token_usage));
-                send!(
-                    tx,
-                    Progress::Error("Query execution failed even after self-healing attempt".to_string())
-                );
-                return;
+            // Attempt to get a fixed query with the actual database error as context
+            let healing = attempt_query_self_healing(
+                &request,
+                &schema,
+                &executed_query,
+                &error_msg,
+                &client,
+                model,
+                &udfs,
+                &tx,
+                &mut token_usage,
+            )
+            .await;
+            match healing {
+                Ok(fixed_query) => {
+                    // Try executing the fixed query
+                    let healed_attempt =
+                        execute_cypher_query(&fixed_query, &request.graph_name, falkordb_connection.as_str(), &tx)
+                            .await;
+                    match healed_attempt {
+                        Err(()) => return,
+                        Ok(Ok(result)) => {
+                            tracing::info!("Self-healed query executed successfully");
+                            send!(tx, Progress::Status(String::from("Self-healing successful")));
+                            executed_query = fixed_query;
+                            result
+                        }
+                        Ok(Err(healed_error)) => {
+                            tracing::error!("Self-healing failed: {}", healed_error);
+                            send!(tx, Progress::Usage(token_usage));
+                            send!(
+                                tx,
+                                Progress::Error(format!(
+                                    "{healed_error} (after self-healing; the original query failed with: {error_msg})"
+                                ))
+                            );
+                            return;
+                        }
+                    }
+                }
+                Err(reason) => {
+                    tracing::error!("Self-healing failed: {}", reason);
+                    send!(tx, Progress::Usage(token_usage));
+                    send!(
+                        tx,
+                        Progress::Error(format!("{error_msg} (self-healing failed: {reason})"))
+                    );
+                    return;
+                }
             }
-        } else {
-            tracing::error!("Self-healing failed: no valid query was generated");
-            send!(tx, Progress::Usage(token_usage));
-            send!(
-                tx,
-                Progress::Error("Self-healing failed: no valid query was generated".to_string())
-            );
-            return;
         }
     };
 
@@ -1159,24 +1165,16 @@ async fn process_text_to_cypher_request(
     .await;
 }
 
-/// Validates a query and returns it if valid, None otherwise
-#[allow(clippy::cognitive_complexity)]
-async fn validate_and_log_query(
-    query: &str,
-    tx: &mpsc::Sender<sse::Event>,
-) -> Option<String> {
+/// Validates a query and returns it if valid, or the joined validation errors otherwise.
+///
+/// It does not send an `Error` event: a failed validation is followed by a retry, and whether
+/// the failure ends the request is the caller's decision.
+fn validate_and_log_query(query: &str) -> Result<String, String> {
     let validation_result = CypherValidator::validate(query);
 
     if !validation_result.is_valid {
         tracing::warn!("Query failed validation: {:?}", validation_result.errors);
-        send_option!(
-            tx,
-            Progress::Error(format!(
-                "Query validation errors: {}",
-                validation_result.errors.join("; ")
-            ))
-        );
-        return None;
+        return Err(validation_result.errors.join("; "));
     }
 
     // Log any warnings even if query is valid
@@ -1184,10 +1182,21 @@ async fn validate_and_log_query(
         tracing::info!("Query validation warnings: {:?}", validation_result.warnings);
     }
 
-    Some(query.to_string())
+    Ok(query.to_string())
 }
 
-/// Attempts to self-heal a failed query by regenerating with error context
+/// The follow-up message that asks the model to fix a query the database rejected.
+fn self_healing_feedback(error_message: &str) -> String {
+    format!(
+        "The previous query failed with error: {error_message}. Please generate a corrected Cypher query that fixes this error and follows the schema more closely."
+    )
+}
+
+/// Attempts to self-heal a failed query by regenerating with error context.
+///
+/// Returns the validated replacement query, or `Err` with the reason self-healing failed.
+/// It sends no `Error` event, so the caller can report the original and the retry failure
+/// together in one terminal event.
 #[allow(clippy::cognitive_complexity)]
 #[allow(clippy::too_many_arguments)]
 async fn attempt_query_self_healing(
@@ -1200,7 +1209,7 @@ async fn attempt_query_self_healing(
     udfs: &str,
     tx: &mpsc::Sender<sse::Event>,
     token_usage: &mut TokenUsage,
-) -> Option<String> {
+) -> Result<String, String> {
     tracing::info!("Attempting to self-heal failed query: {}", failed_query);
 
     // Create a feedback message with specific error context
@@ -1211,9 +1220,7 @@ async fn attempt_query_self_healing(
     });
     retry_request.messages.push(ChatMessage {
         role: ChatRole::User,
-        content: format!(
-            "The previous query failed with error: {error_message}. Please generate a corrected Cypher query that fixes this error and follows the schema more closely."
-        ),
+        content: self_healing_feedback(error_message),
     });
 
     // Generate new query using the same skill-loading path as the initial request.
@@ -1228,22 +1235,20 @@ async fn attempt_query_self_healing(
         tx,
         token_usage,
     )
-    .await;
+    .await?;
 
     if retry_query.trim().is_empty() || retry_query.trim() == "NO ANSWER" {
         tracing::warn!("Self-healing failed: no valid query generated");
-        return None;
+        return Err(String::from("no valid query was generated"));
     }
 
     let clean_query = clean_generated_cypher_response(&retry_query);
 
     // Validate the regenerated query using shared validation logic
-    if let Some(validated) = validate_and_log_query(&clean_query, tx).await {
-        send_option!(tx, Progress::CypherQuery(format!("Fixed: {validated}")));
-        Some(validated)
-    } else {
-        None
-    }
+    let validated = validate_and_log_query(&clean_query)
+        .map_err(|errors| format!("the regenerated query failed validation: {errors}"))?;
+    send_or_err!(tx, Progress::CypherQuery(format!("Fixed: {validated}")));
+    Ok(validated)
 }
 
 /// Resolve the rendered UDF context block for the server, honoring `DISCOVER_UDFS` and the
@@ -1322,7 +1327,7 @@ async fn generate_cypher_query(
         Progress::Status(String::from("Generating Cypher query using schema ..."))
     );
 
-    let query = execute_chat_with_skills(
+    let query = match execute_chat_with_skills(
         client,
         model,
         &request.chat_request,
@@ -1332,7 +1337,16 @@ async fn generate_cypher_query(
         tx,
         token_usage,
     )
-    .await;
+    .await
+    {
+        Ok(query) => query,
+        Err(error_msg) => {
+            tracing::error!("Query generation failed: {}", error_msg);
+            send_option!(tx, Progress::Usage(*token_usage));
+            send_option!(tx, Progress::Error(error_msg));
+            return None;
+        }
+    };
 
     if query.trim().is_empty() || query.trim() == "NO ANSWER" {
         tracing::warn!("No query generated from AI model");
@@ -1344,15 +1358,15 @@ async fn generate_cypher_query(
     let clean_query = clean_generated_cypher_response(&query);
 
     // Validate the generated query using shared validation logic
-    if validate_and_log_query(&clean_query, tx).await.is_none() {
+    if let Err(error_feedback) = validate_and_log_query(&clean_query) {
         send_option!(
             tx,
-            Progress::Status(String::from("Query validation failed, attempting to regenerate..."))
+            Progress::Status(format!(
+                "Query validation failed ({error_feedback}), attempting to regenerate..."
+            ))
         );
 
         // Try to regenerate with error feedback
-        let validation_result = CypherValidator::validate(&clean_query);
-        let error_feedback = validation_result.errors.join("; ");
         let retry_request = append_validation_feedback(&request.chat_request, &clean_query, &error_feedback);
         let retry_query = execute_chat_with_skills(
             client,
@@ -1364,13 +1378,18 @@ async fn generate_cypher_query(
             tx,
             token_usage,
         )
-        .await;
+        .await
+        .unwrap_or_else(|error_msg| {
+            // Not terminal: the original query is still used below.
+            tracing::warn!("Query regeneration failed: {}", error_msg);
+            String::new()
+        });
 
         if !retry_query.trim().is_empty() && retry_query.trim() != "NO ANSWER" {
             let retry_clean = clean_generated_cypher_response(&retry_query);
 
             // Use shared validation for retry as well
-            if let Some(validated) = validate_and_log_query(&retry_clean, tx).await {
+            if let Ok(validated) = validate_and_log_query(&retry_clean) {
                 tracing::info!("Retry query passed validation");
                 send_option!(tx, Progress::CypherQuery(validated.clone()));
                 return Some(validated);
@@ -1388,27 +1407,33 @@ async fn generate_cypher_query(
     Some(clean_query)
 }
 
+/// Runs the generated query and streams its progress.
+///
+/// Returns `Err(())` when the client disconnected (stop processing), `Ok(Err(message))` when the
+/// database rejected the query, and `Ok(Ok(result))` on success.
 #[allow(clippy::cognitive_complexity)]
 async fn execute_cypher_query(
     query: &str,
     graph_name: &str,
     falkordb_connection: &str,
     tx: &mpsc::Sender<sse::Event>,
-) -> Result<String, ()> {
+) -> Result<Result<String, String>, ()> {
     send_result!(tx, Progress::Status(String::from("Executing Cypher query...")));
     tracing::info!("Executing Cypher Query: {}", query);
 
-    match execute_query(query, graph_name, falkordb_connection, true, tx).await {
+    match execute_query(query, graph_name, falkordb_connection, true).await {
         Ok(result) => {
             tracing::info!("Query executed successfully, result: {}", result);
             send_result!(tx, Progress::CypherResult(result.clone()));
-            Ok(result)
+            Ok(Ok(result))
         }
         Err(e) => {
+            // `execute_query` already prefixes the message with "Query execution failed: ".
+            // No Error event here: the caller may still recover through self-healing, and
+            // clients treat an Error event as the final outcome of the request.
             let error_msg = e.to_string();
-            tracing::error!("Query execution failed: {}", error_msg);
-            send_result!(tx, Progress::Error(format!("Query execution failed: {error_msg}")));
-            Err(())
+            tracing::warn!("{}", error_msg);
+            Ok(Err(error_msg))
         }
     }
 }
@@ -1622,7 +1647,6 @@ async fn execute_query(
     graph_name: &str,
     falkordb_connection: &str,
     read_only: bool,
-    tx: &mpsc::Sender<sse::Event>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let connection_info: FalkorConnectionInfo = falkordb_connection
         .try_into()
@@ -1643,9 +1667,7 @@ async fn execute_query(
     let formatted_result = match result {
         Ok(records) => format_query_records(&records),
         Err(e) => {
-            let error_msg = format!("Query execution failed: {e}");
-            try_send_boxed!(tx, Progress::Error(error_msg.clone()));
-            return Err(error_msg.into());
+            return Err(format!("Query execution failed: {e}").into());
         }
     };
 
@@ -1762,17 +1784,9 @@ fn execute_query_with_columns_blocking(
     rt.block_on(async {
         let mut graph = client.select_graph(graph_name);
         let query_result = if read_only {
-            graph
-                .ro_query(query)
-                .execute()
-                .await
-                .map_err(|e| format!("Query execution failed: {e}"))?
+            graph.ro_query(query).execute().await.map_err(|e| e.to_string())?
         } else {
-            graph
-                .query(query)
-                .execute()
-                .await
-                .map_err(|e| format!("Query execution failed: {e}"))?
+            graph.query(query).execute().await.map_err(|e| e.to_string())?
         };
 
         let columns = query_result.header.to_vec();
@@ -1839,7 +1853,7 @@ fn execute_query_with_csv_import_blocking(
             tracing::warn!("Failed to remove CSV file from import folder: {}", e);
         }
 
-        let query_result = query_result.map_err(|e| format!("Query execution failed: {e}"))?;
+        let query_result = query_result.map_err(|e| e.to_string())?;
 
         tracing::info!("Query {query} executed, processing results...");
 
@@ -1895,11 +1909,7 @@ fn execute_query_with_existing_csv_blocking(
 
         // Execute the query (the file is already in the correct location)
         let mut graph = client.select_graph(graph_name);
-        let query_result = graph
-            .query(query)
-            .execute()
-            .await
-            .map_err(|e| format!("Query execution failed: {e}"))?;
+        let query_result = graph.query(query).execute().await.map_err(|e| e.to_string())?;
 
         tracing::info!("Query {query} executed, processing results...");
 
@@ -2172,7 +2182,7 @@ async fn main() -> std::io::Result<()> {
     // Conditionally start MCP server based on configuration
     let mcp_handle = if config.should_start_mcp_server() {
         Some(tokio::spawn(async move {
-            if let Err(e) = run_mcp_server(mcp_port).await {
+            if let Err(e) = run_mcp_server(mcp_port, rest_port).await {
                 tracing::error!("MCP server error: {}", e);
             }
         }))
@@ -2314,6 +2324,9 @@ async fn send_processing_status(
 ///
 /// If skills are present and the model supports tool calling, registers a `read_skill`
 /// tool and handles the tool-call loop. Otherwise falls back to standard chat.
+///
+/// Returns `Err` with the reason when the chat request fails. It does not send an `Error`
+/// event: whether the failure ends the request is the caller's decision.
 #[allow(clippy::too_many_arguments)]
 async fn execute_chat_with_skills(
     client: &genai::Client,
@@ -2324,7 +2337,7 @@ async fn execute_chat_with_skills(
     udfs: &str,
     tx: &mpsc::Sender<sse::Event>,
     token_usage: &mut TokenUsage,
-) -> String {
+) -> Result<String, String> {
     let use_tools = skill_catalog.is_some_and(|c| !c.is_empty()) && skills::supports_tool_calling(model);
 
     let mut genai_request = generate_create_cypher_query_chat_request_with_skills(
@@ -2348,7 +2361,7 @@ async fn execute_chat_with_skills(
             Ok(response) => response,
             Err(e) if use_tools => {
                 tracing::warn!("Tool-enabled chat request failed; retrying without tools: {}", e);
-                send_or_empty!(
+                send_or_err!(
                     tx,
                     Progress::Status("Tool calling failed; retrying query generation without tools...".to_string())
                 );
@@ -2363,23 +2376,14 @@ async fn execute_chat_with_skills(
                 match client.exec_chat(model, fallback_request, None).await {
                     Ok(response) => {
                         token_usage.add_genai_usage(&response.usage);
-                        return response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER"));
+                        return Ok(response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER")));
                     }
                     Err(fallback_err) => {
-                        let error_update =
-                            Progress::Error(format!("Chat request failed: {e}; fallback failed: {fallback_err}"));
-                        send_or_empty!(tx, Progress::Usage(*token_usage));
-                        send_or_empty!(tx, error_update);
-                        return String::from("NO ANSWER");
+                        return Err(format!("Chat request failed: {e}; fallback failed: {fallback_err}"));
                     }
                 }
             }
-            Err(e) => {
-                let error_update = Progress::Error(format!("Chat request failed: {e}"));
-                send_or_empty!(tx, Progress::Usage(*token_usage));
-                send_or_empty!(tx, error_update);
-                return String::from("NO ANSWER");
-            }
+            Err(e) => return Err(format!("Chat request failed: {e}")),
         };
 
         token_usage.add_genai_usage(&chat_response.usage);
@@ -2387,7 +2391,7 @@ async fn execute_chat_with_skills(
         let tool_calls = chat_response.tool_calls().into_iter().cloned().collect::<Vec<_>>();
 
         if tool_calls.is_empty() {
-            return chat_response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER"));
+            return Ok(chat_response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER")));
         }
 
         let tool_call_count = tool_calls.len();
@@ -2399,7 +2403,7 @@ async fn execute_chat_with_skills(
             skills::MAX_TOOL_ROUNDS,
             tool_call_count
         );
-        send_or_empty!(
+        send_or_err!(
             tx,
             Progress::Status(format!("Loading {tool_call_count} skill(s) for query generation..."))
         );
@@ -2417,14 +2421,9 @@ async fn execute_chat_with_skills(
     match client.exec_chat(model, genai_request, None).await {
         Ok(response) => {
             token_usage.add_genai_usage(&response.usage);
-            response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER"))
+            Ok(response.into_first_text().unwrap_or_else(|| String::from("NO ANSWER")))
         }
-        Err(e) => {
-            let error_update = Progress::Error(format!("Chat request failed after tool rounds: {e}"));
-            send_or_empty!(tx, Progress::Usage(*token_usage));
-            send_or_empty!(tx, error_update);
-            String::from("NO ANSWER")
-        }
+        Err(e) => Err(format!("Chat request failed after tool rounds: {e}")),
     }
 }
 
@@ -2748,6 +2747,23 @@ mod tests {
     fn rewrite_csv_uris_leaves_queries_without_uri_untouched() {
         let query = "MATCH (n) RETURN n.file";
         assert_eq!(rewrite_csv_uris(query, "x.csv"), query);
+    }
+
+    #[test]
+    fn self_healing_feedback_includes_database_error() {
+        let feedback = self_healing_feedback("Query execution failed: Division by zero");
+        assert!(feedback.contains("Division by zero"), "{feedback}");
+        assert!(!feedback.contains("see logs"), "{feedback}");
+    }
+
+    #[test]
+    fn validate_and_log_query_returns_errors_instead_of_sending_them() {
+        assert_eq!(
+            validate_and_log_query("MATCH (n) RETURN n").as_deref(),
+            Ok("MATCH (n) RETURN n")
+        );
+        let errors = validate_and_log_query("MATCH (n) DELETE n").unwrap_err();
+        assert!(errors.contains("dangerous"), "{errors}");
     }
 
     fn insert(
