@@ -12,8 +12,21 @@ use rust_mcp_sdk::{McpServer, mcp_server::ServerHandler};
 use std::fmt::Write;
 use std::sync::Arc;
 
-// Custom Handler to handle MCP Messages
-pub struct MyServerHandler;
+/// Handles MCP messages by forwarding them to this process's REST API.
+pub struct MyServerHandler {
+    /// Base URL of the REST API, e.g. `http://127.0.0.1:8080`
+    rest_base_url: String,
+}
+
+impl MyServerHandler {
+    /// Creates a handler that forwards to the REST API on `127.0.0.1:{rest_port}`.
+    #[must_use]
+    pub fn new(rest_port: u16) -> Self {
+        Self {
+            rest_base_url: format!("http://127.0.0.1:{rest_port}"),
+        }
+    }
+}
 
 #[async_trait]
 impl ServerHandler for MyServerHandler {
@@ -37,7 +50,7 @@ impl ServerHandler for MyServerHandler {
     ) -> std::result::Result<ListResourcesResult, RpcError> {
         tracing::info!("Handling List Resources Request");
 
-        match get_falkordb_graphs().await {
+        match get_falkordb_graphs(&self.rest_base_url).await {
             Ok(graphs) => {
                 let resources: Vec<Resource> = graphs
                     .into_iter()
@@ -75,7 +88,7 @@ impl ServerHandler for MyServerHandler {
 
         // Parse the URI to extract graph name
         if let Some(graph_name) = request.params.uri.strip_prefix("falkordb://graph/") {
-            match get_graph_schema_via_api(graph_name).await {
+            match get_graph_schema_via_api(&self.rest_base_url, graph_name).await {
                 Ok(schema_info) => {
                     let text_content = TextResourceContents {
                         uri: request.params.uri,
@@ -117,7 +130,7 @@ impl ServerHandler for MyServerHandler {
                     tracing::info!("  question: {}", tool_args.question);
 
                     // Forward the request to the HTTP endpoint
-                    match forward_to_http_endpoint(tool_args).await {
+                    match forward_to_http_endpoint(&self.rest_base_url, tool_args).await {
                         Ok(result) => Ok(CallToolResult::text_content(vec![TextContent::from(result)])),
                         Err(e) => {
                             tracing::error!("Failed to forward request to HTTP endpoint: {}", e);
@@ -146,10 +159,11 @@ impl ServerHandler for MyServerHandler {
 
 // Helper function to forward MCP tool request to HTTP endpoint
 async fn forward_to_http_endpoint(
-    tool_args: TextToCypherTool
+    rest_base_url: &str,
+    tool_args: TextToCypherTool,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let http_request = create_http_request_payload(tool_args);
-    let response = send_http_request(&http_request).await?;
+    let response = send_http_request(rest_base_url, &http_request).await?;
     process_sse_response(response).await
 }
 
@@ -172,11 +186,12 @@ fn create_http_request_payload(tool_args: TextToCypherTool) -> serde_json::Value
 
 // Send HTTP request to the text-to-cypher endpoint
 async fn send_http_request(
-    http_request: &serde_json::Value
+    rest_base_url: &str,
+    http_request: &serde_json::Value,
 ) -> Result<reqwest::Response, Box<dyn std::error::Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let response = client
-        .post("http://127.0.0.1:8080/text_to_cypher")
+        .post(format!("{rest_base_url}/text_to_cypher"))
         .header("Content-Type", "application/json")
         .json(http_request)
         .send()
@@ -197,21 +212,28 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
     let mut token_usage: Option<TokenUsage> = None;
     let mut confidence: Option<u8> = None;
 
+    let mut lines = SseDataLines::default();
+
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result?;
-        let chunk_str = String::from_utf8_lossy(&chunk);
-
-        for line in chunk_str.lines() {
-            if let Some(data) = line.strip_prefix("data: ") {
-                process_sse_event(
-                    data,
-                    &mut result_buffer,
-                    &mut final_result,
-                    &mut token_usage,
-                    &mut confidence,
-                )?;
-            }
+        for data in lines.push(&chunk) {
+            process_sse_event(
+                &data,
+                &mut result_buffer,
+                &mut final_result,
+                &mut token_usage,
+                &mut confidence,
+            )?;
         }
+    }
+    if let Some(data) = lines.finish() {
+        process_sse_event(
+            &data,
+            &mut result_buffer,
+            &mut final_result,
+            &mut token_usage,
+            &mut confidence,
+        )?;
     }
 
     Ok(build_complete_response(
@@ -220,6 +242,55 @@ async fn process_sse_response(response: reqwest::Response) -> Result<String, Box
         token_usage.as_ref(),
         confidence,
     ))
+}
+
+/// Splits an SSE byte stream into `data:` payloads.
+///
+/// Network chunks do not respect line boundaries, so an event (or a multi-byte UTF-8
+/// character) can be split across chunks. Bytes after the last newline are kept until the
+/// rest of the line arrives. Each byte is scanned for a newline once, so a large event that
+/// arrives in many chunks is processed in linear time.
+#[derive(Default)]
+struct SseDataLines {
+    pending: Vec<u8>,
+}
+
+impl SseDataLines {
+    /// Adds a chunk and returns the payloads of every `data:` line it completed.
+    fn push(
+        &mut self,
+        chunk: &[u8],
+    ) -> Vec<String> {
+        let mut payloads = Vec::new();
+        let mut rest = chunk;
+        // Only the new chunk is searched: `pending` never contains a newline.
+        while let Some(newline) = rest.iter().position(|&b| b == b'\n') {
+            let (line, tail) = rest.split_at(newline + 1);
+            if self.pending.is_empty() {
+                payloads.extend(Self::data_payload(line));
+            } else {
+                self.pending.extend_from_slice(line);
+                payloads.extend(Self::data_payload(&self.pending));
+                self.pending.clear();
+            }
+            rest = tail;
+        }
+        self.pending.extend_from_slice(rest);
+        payloads
+    }
+
+    /// Returns the payload of a final `data:` line that was not newline-terminated.
+    fn finish(&mut self) -> Option<String> {
+        let line = std::mem::take(&mut self.pending);
+        Self::data_payload(&line)
+    }
+
+    fn data_payload(line: &[u8]) -> Option<String> {
+        let line = String::from_utf8_lossy(line);
+        let line = line.trim_end_matches(['\n', '\r']);
+        line.strip_prefix("data:")
+            .map(|data| data.strip_prefix(' ').unwrap_or(data).to_string())
+    }
 }
 
 // Process individual SSE event
@@ -371,11 +442,11 @@ fn build_complete_response(
 }
 
 // Helper function to get list of graphs from FalkorDB via REST API
-async fn get_falkordb_graphs() -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+async fn get_falkordb_graphs(rest_base_url: &str) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     // Call the local REST API endpoint
     let client = reqwest::Client::new();
     let response = client
-        .get("http://localhost:8080/list_graphs")
+        .get(format!("{rest_base_url}/list_graphs"))
         .send()
         .await
         .map_err(|e| format!("Failed to call list_graphs API: {e}"))?;
@@ -389,11 +460,14 @@ async fn get_falkordb_graphs() -> Result<Vec<String>, Box<dyn std::error::Error 
 }
 
 // Helper function to get schema information for a specific graph via REST API
-async fn get_graph_schema_via_api(graph_name: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+async fn get_graph_schema_via_api(
+    rest_base_url: &str,
+    graph_name: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     // Call the local REST API endpoint
     let client = reqwest::Client::new();
     let response = client
-        .get(format!("http://localhost:8080/get_schema/{graph_name}"))
+        .get(format!("{rest_base_url}/get_schema/{graph_name}"))
         .send()
         .await
         .map_err(|e| format!("Failed to call get_schema API: {e}"))?;
@@ -427,6 +501,66 @@ mod tests {
             .unwrap();
         }
         build_complete_response(&result_buffer, &final_result, token_usage.as_ref(), confidence)
+    }
+
+    #[test]
+    fn handler_targets_the_configured_rest_port() {
+        assert_eq!(MyServerHandler::new(8081).rest_base_url, "http://127.0.0.1:8081");
+        assert_eq!(MyServerHandler::new(8080).rest_base_url, "http://127.0.0.1:8080");
+    }
+
+    #[test]
+    fn sse_event_split_across_chunks_is_reassembled() {
+        let event = format!("data: {{\"Result\":\"{}\"}}\n\n", "x".repeat(20_000));
+        let (first, second) = event.as_bytes().split_at(event.len() / 2);
+
+        let mut lines = SseDataLines::default();
+        assert!(lines.push(first).is_empty(), "no complete line yet");
+        let payloads = lines.push(second);
+
+        assert_eq!(payloads.len(), 1);
+        let response = assemble(&[payloads[0].as_str()]);
+        assert!(response.contains(&"x".repeat(20_000)));
+    }
+
+    #[test]
+    fn large_event_in_many_small_chunks_is_reassembled() {
+        let event = format!(
+            "data: {{\"Status\":\"a\"}}\n\ndata: {{\"Result\":\"{}\"}}\n\ndata: {{\"Status\":\"b\"}}\n",
+            "y".repeat(100_000)
+        );
+
+        let mut lines = SseDataLines::default();
+        let mut payloads = Vec::new();
+        for chunk in event.as_bytes().chunks(7) {
+            payloads.extend(lines.push(chunk));
+        }
+
+        assert_eq!(payloads.len(), 3);
+        assert_eq!(payloads[0], r#"{"Status":"a"}"#);
+        assert_eq!(payloads[1], format!(r#"{{"Result":"{}"}}"#, "y".repeat(100_000)));
+        assert_eq!(payloads[2], r#"{"Status":"b"}"#);
+        assert!(lines.finish().is_none());
+    }
+
+    #[test]
+    fn multibyte_character_split_across_chunks_is_preserved() {
+        let event = "data: {\"Result\":\"café ✓\"}\n".as_bytes();
+        // Split inside the 3-byte encoding of the check mark
+        let split = event.iter().position(|&b| b == 0xE2).unwrap() + 1;
+
+        let mut lines = SseDataLines::default();
+        assert!(lines.push(&event[..split]).is_empty());
+        assert_eq!(lines.push(&event[split..]), vec![r#"{"Result":"café ✓"}"#.to_string()]);
+    }
+
+    #[test]
+    fn several_events_in_one_chunk_and_trailing_line_without_newline() {
+        let mut lines = SseDataLines::default();
+        let payloads =
+            lines.push(b"data: {\"Status\":\"a\"}\n\ndata: {\"Status\":\"b\"}\r\n\ndata: {\"Result\":\"c\"}");
+        assert_eq!(payloads, vec![r#"{"Status":"a"}"#, r#"{"Status":"b"}"#]);
+        assert_eq!(lines.finish().as_deref(), Some(r#"{"Result":"c"}"#));
     }
 
     #[test]

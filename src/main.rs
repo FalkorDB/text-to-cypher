@@ -2298,7 +2298,7 @@ async fn main() -> std::io::Result<()> {
     // Conditionally start MCP server based on configuration
     let mcp_handle = if config.should_start_mcp_server() {
         Some(tokio::spawn(async move {
-            if let Err(e) = run_mcp_server(mcp_port).await {
+            if let Err(e) = run_mcp_server(mcp_port, rest_port).await {
                 tracing::error!("MCP server error: {}", e);
             }
         }))
