@@ -11,10 +11,40 @@ pub enum AttributeType {
     Float,
     Boolean,
     DateTime,
+    Date,
+    Time,
+    Duration,
     List,
     Map,
     Vector,
     Point,
+}
+
+impl AttributeType {
+    /// Maps a type name returned by `FalkorDB`'s `typeof()` to an [`AttributeType`].
+    ///
+    /// `FalkorDB` reports some types under names that differ from the variant names
+    /// (`Datetime`, `Vectorf32`, ...), so this accepts both spellings. Returns `None`
+    /// for names it does not recognise.
+    #[must_use]
+    pub fn from_falkordb_type(type_name: &str) -> Option<Self> {
+        match type_name {
+            "String" => Some(Self::String),
+            "Number" => Some(Self::Number),
+            "Integer" => Some(Self::Integer),
+            "Float" => Some(Self::Float),
+            "Boolean" => Some(Self::Boolean),
+            "Datetime" | "DateTime" => Some(Self::DateTime),
+            "Date" => Some(Self::Date),
+            "Time" => Some(Self::Time),
+            "Duration" => Some(Self::Duration),
+            "List" => Some(Self::List),
+            "Map" => Some(Self::Map),
+            "Vectorf32" | "Vector" => Some(Self::Vector),
+            "Point" => Some(Self::Point),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,5 +114,39 @@ impl std::fmt::Display for Attribute {
             "{}: {} (count: {}, unique: {}, required: {})",
             self.name, self.r#type, self.count, self.unique, self.required
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_falkordb_typeof_names() {
+        // Names as returned by `typeof()` on FalkorDB 4.22
+        let cases = [
+            ("String", "String"),
+            ("Integer", "Integer"),
+            ("Float", "Float"),
+            ("Boolean", "Boolean"),
+            ("Datetime", "DateTime"),
+            ("Date", "Date"),
+            ("Time", "Time"),
+            ("Duration", "Duration"),
+            ("Vectorf32", "Vector"),
+            ("Point", "Point"),
+            ("List", "List"),
+            ("Map", "Map"),
+        ];
+        for (falkordb_name, expected) in cases {
+            let parsed = AttributeType::from_falkordb_type(falkordb_name)
+                .unwrap_or_else(|| panic!("{falkordb_name} should be recognised"));
+            assert_eq!(parsed.to_string(), expected, "typeof name {falkordb_name}");
+        }
+    }
+
+    #[test]
+    fn unknown_type_is_none() {
+        assert!(AttributeType::from_falkordb_type("SomethingNew").is_none());
     }
 }
