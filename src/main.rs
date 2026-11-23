@@ -1507,17 +1507,26 @@ async fn graph_query_with_csv(
 
 /// Points every `file://….csv` URI in `query` at `filename`.
 ///
-/// A URI ends at the first `.csv` before a quote or whitespace, so text later in the query
-/// (another `.csv` mention, closing brackets, ...) is left alone. `filename` is inserted
-/// literally: `$` in it is not treated as a capture-group reference.
+/// A URI is a whole single- or double-quoted string literal that starts with `file://` and
+/// ends with `.csv` at its closing quote. The path may contain spaces, escaped quotes and
+/// earlier `.csv` segments (`people.csv.csv`, `exports.csv/people.csv`); text outside the
+/// literal (another `.csv` mention, closing brackets, ...) is left alone. `filename` is
+/// inserted literally: `$` in it is not treated as a capture-group reference, and `\\` and the
+/// enclosing quote are escaped so the name cannot end the string literal.
 fn rewrite_csv_uris(
     query: &str,
     filename: &str,
 ) -> String {
     static CSV_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = CSV_URI.get_or_init(|| Regex::new(r#"file://[^'"`\s]*?\.csv"#).expect("valid CSV URI regex"));
-    re.replace_all(query, regex::NoExpand(&format!("file://{filename}")))
-        .into_owned()
+    let re = CSV_URI.get_or_init(|| {
+        Regex::new(r#"'file://(?:[^'\\]|\\.)*\.csv'|"file://(?:[^"\\]|\\.)*\.csv""#).expect("valid CSV URI regex")
+    });
+    re.replace_all(query, |caps: &regex::Captures| {
+        let quote = &caps[0][..1];
+        let escaped = filename.replace('\\', "\\\\").replace(quote, &format!("\\{quote}"));
+        format!("{quote}file://{escaped}{quote}")
+    })
+    .into_owned()
 }
 
 async fn graph_query_with_existing_csv(
@@ -2594,6 +2603,51 @@ mod tests {
         assert_eq!(
             rewrite_csv_uris(query, "data_$1_2024.csv"),
             "LOAD CSV WITH HEADERS FROM 'file://data_$1_2024.csv' AS row RETURN row"
+        );
+    }
+
+    #[test]
+    fn rewrite_csv_uris_replaces_the_whole_quoted_path() {
+        let cases = [
+            (
+                "LOAD CSV FROM 'file://people.csv.csv' AS row RETURN row",
+                "'file://new.csv'",
+            ),
+            (
+                "LOAD CSV FROM 'file://exports.csv/people.csv' AS row RETURN row",
+                "'file://new.csv'",
+            ),
+            (
+                "LOAD CSV FROM 'file://sales data.csv' AS row RETURN row",
+                "'file://new.csv'",
+            ),
+            (
+                "LOAD CSV FROM \"file://my dir/q1.csv\" AS row RETURN row",
+                "\"file://new.csv\"",
+            ),
+            (
+                "LOAD CSV FROM 'file://it\\'s.csv' AS row RETURN row",
+                "'file://new.csv'",
+            ),
+        ];
+        for (query, uri) in cases {
+            assert_eq!(
+                rewrite_csv_uris(query, "new.csv"),
+                format!("LOAD CSV FROM {uri} AS row RETURN row"),
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn rewrite_csv_uris_escapes_quotes_in_the_filename() {
+        assert_eq!(
+            rewrite_csv_uris("LOAD CSV FROM 'file://a.csv' AS row RETURN row", "x' RETURN 1 //.csv"),
+            r"LOAD CSV FROM 'file://x\' RETURN 1 //.csv' AS row RETURN row"
+        );
+        assert_eq!(
+            rewrite_csv_uris(r#"LOAD CSV FROM "file://a.csv" AS row RETURN row"#, r#"a"b\c.csv"#),
+            r#"LOAD CSV FROM "file://a\"b\\c.csv" AS row RETURN row"#
         );
     }
 
