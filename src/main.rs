@@ -1541,7 +1541,8 @@ fn rewrite_csv_uris(
     static TOKEN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     let re = TOKEN.get_or_init(|| {
         Regex::new(concat!(
-            r#"(?P<str>'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")"#,
+            // `(?s:.)`: an escape may be followed by a line break, which plain `.` excludes
+            r#"(?P<str>'(?:[^'\\]|\\(?s:.))*'|"(?:[^"\\]|\\(?s:.))*")"#,
             r"|`(?:[^`]|``)*`",
             r"|//[^\r\n]*",
             r"|(?s:/\*.*?\*/)",
@@ -2713,6 +2714,9 @@ mod tests {
             "MATCH (n:`it's`) RETURN 'file://b.csv' + `x'file://c.csv'` AS v",
             "// it's 'file://b.csv'\nRETURN 1",
             "/* it's\n 'file://b.csv' */ RETURN 1",
+            // A backslash before a line break continues the outer literal
+            "RETURN \"note \\\n'file://b.csv'\" AS note",
+            "RETURN 'note \\\r\n\"file://b.csv\"' AS note",
         ];
         let expected = [
             r#"LOAD CSV FROM 'file://new.csv' AS row RETURN "'file://b.csv'" AS note"#,
@@ -2721,6 +2725,8 @@ mod tests {
             "MATCH (n:`it's`) RETURN 'file://new.csv' + `x'file://c.csv'` AS v",
             "// it's 'file://b.csv'\nRETURN 1",
             "/* it's\n 'file://b.csv' */ RETURN 1",
+            "RETURN \"note \\\n'file://b.csv'\" AS note",
+            "RETURN 'note \\\r\n\"file://b.csv\"' AS note",
         ];
         for (query, want) in queries.iter().zip(expected) {
             assert_eq!(rewrite_csv_uris(query, "new.csv"), want, "{query}");
