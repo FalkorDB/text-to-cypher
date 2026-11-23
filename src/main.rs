@@ -1508,21 +1508,45 @@ async fn graph_query_with_csv(
 /// Points every `file://….csv` URI in `query` at `filename`.
 ///
 /// A URI is a whole single- or double-quoted string literal that starts with `file://` and
-/// ends with `.csv` at its closing quote. The path may contain spaces, escaped quotes and
+/// ends with `.csv` (in any case) at its closing quote. The path may contain spaces, escaped quotes and
 /// earlier `.csv` segments (`people.csv.csv`, `exports.csv/people.csv`); text outside the
-/// literal (another `.csv` mention, closing brackets, ...) is left alone. `filename` is
-/// inserted literally: `$` in it is not treated as a capture-group reference, and `\\` and the
-/// enclosing quote are escaped so the name cannot end the string literal.
+/// literal (another `.csv` mention, closing brackets, ...) is left alone.
+///
+/// The query is scanned token by token, left to right: string literals, backtick-quoted
+/// identifiers and comments are each consumed whole, so a quote character inside one of them
+/// never starts a new literal. Only a complete string literal is a candidate, which keeps
+/// `RETURN "'file://b.csv'"` (a URI-like note inside a double-quoted string) unchanged.
+///
+/// `filename` is inserted literally: `$` in it is not treated as a capture-group reference, and
+/// `\\` and the literal's own quote are escaped so the name cannot end the string literal.
 fn rewrite_csv_uris(
     query: &str,
     filename: &str,
 ) -> String {
-    static CSV_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = CSV_URI.get_or_init(|| {
-        Regex::new(r#"'file://(?:[^'\\]|\\.)*\.csv'|"file://(?:[^"\\]|\\.)*\.csv""#).expect("valid CSV URI regex")
+    static TOKEN: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = TOKEN.get_or_init(|| {
+        Regex::new(concat!(
+            r#"(?P<str>'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")"#,
+            r"|`(?:[^`]|``)*`",
+            r"|//[^\r\n]*",
+            r"|(?s:/\*.*?\*/)",
+        ))
+        .expect("valid Cypher token regex")
     });
     re.replace_all(query, |caps: &regex::Captures| {
-        let quote = &caps[0][..1];
+        let token = &caps[0];
+        let Some(literal) = caps.name("str") else {
+            return token.to_string();
+        };
+        let literal = literal.as_str();
+        let (quote, body) = (&literal[..1], &literal[1..literal.len() - 1]);
+        let has_csv_extension = body
+            .len()
+            .checked_sub(4)
+            .is_some_and(|start| body.as_bytes()[start..].eq_ignore_ascii_case(b".csv"));
+        if !(body.starts_with("file://") && has_csv_extension) {
+            return token.to_string();
+        }
         let escaped = filename.replace('\\', "\\\\").replace(quote, &format!("\\{quote}"));
         format!("{quote}file://{escaped}{quote}")
     })
@@ -2629,6 +2653,10 @@ mod tests {
                 "LOAD CSV FROM 'file://it\\'s.csv' AS row RETURN row",
                 "'file://new.csv'",
             ),
+            (
+                "LOAD CSV FROM 'file://EXPORT.CSV' AS row RETURN row",
+                "'file://new.csv'",
+            ),
         ];
         for (query, uri) in cases {
             assert_eq!(
@@ -2648,6 +2676,40 @@ mod tests {
         assert_eq!(
             rewrite_csv_uris(r#"LOAD CSV FROM "file://a.csv" AS row RETURN row"#, r#"a"b\c.csv"#),
             r#"LOAD CSV FROM "file://a\"b\\c.csv" AS row RETURN row"#
+        );
+    }
+
+    #[test]
+    fn rewrite_csv_uris_ignores_uri_text_inside_another_literal() {
+        let queries = [
+            r#"LOAD CSV FROM 'file://a.csv' AS row RETURN "'file://b.csv'" AS note"#,
+            r#"LOAD CSV FROM "file://a.csv" AS row RETURN 'say "file://b.csv"' AS note"#,
+            r#"RETURN "it's 'file://b.csv'" AS note"#,
+            "MATCH (n:`it's`) RETURN 'file://b.csv' + `x'file://c.csv'` AS v",
+            "// it's 'file://b.csv'\nRETURN 1",
+            "/* it's\n 'file://b.csv' */ RETURN 1",
+        ];
+        let expected = [
+            r#"LOAD CSV FROM 'file://new.csv' AS row RETURN "'file://b.csv'" AS note"#,
+            r#"LOAD CSV FROM "file://new.csv" AS row RETURN 'say "file://b.csv"' AS note"#,
+            r#"RETURN "it's 'file://b.csv'" AS note"#,
+            "MATCH (n:`it's`) RETURN 'file://new.csv' + `x'file://c.csv'` AS v",
+            "// it's 'file://b.csv'\nRETURN 1",
+            "/* it's\n 'file://b.csv' */ RETURN 1",
+        ];
+        for (query, want) in queries.iter().zip(expected) {
+            assert_eq!(rewrite_csv_uris(query, "new.csv"), want, "{query}");
+        }
+    }
+
+    #[test]
+    fn rewrite_csv_uris_escapes_only_the_literals_own_quote() {
+        assert_eq!(
+            rewrite_csv_uris(
+                r#"RETURN "x" AS a LOAD CSV FROM 'file://a.csv' AS row RETURN row"#,
+                r#"q"'.csv"#
+            ),
+            r#"RETURN "x" AS a LOAD CSV FROM 'file://q"\'.csv' AS row RETURN row"#
         );
     }
 
