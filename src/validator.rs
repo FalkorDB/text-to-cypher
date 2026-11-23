@@ -72,7 +72,7 @@ impl CypherValidator {
         }
 
         // Check for dangerous operations
-        if patterns.dangerous_ops.is_match(&Self::mask_literals_and_comments(query)) {
+        if Self::contains_dangerous_clause(&patterns.dangerous_ops, &Self::mask_literals_and_comments(query)) {
             errors.push("Query contains potentially dangerous operations (DROP, DELETE ALL)".to_string());
         }
 
@@ -110,7 +110,22 @@ impl CypherValidator {
         }
     }
 
-    /// Checks if parentheses are balanced in the query
+    /// Returns whether `masked` contains DROP or DELETE used as a clause keyword.
+    ///
+    /// The same words are legal symbolic names, so a match is skipped when it is a property
+    /// name (`n.delete`, `{.drop}`), a label or relationship type (`:Drop`), a parameter
+    /// (`$delete`) or a map key (`{drop: 1}`).
+    fn contains_dangerous_clause(
+        dangerous_ops: &Regex,
+        masked: &str,
+    ) -> bool {
+        dangerous_ops.find_iter(masked).any(|m| {
+            let before = masked[..m.start()].trim_end().chars().next_back();
+            let after = masked[m.end()..].trim_start().chars().next();
+            !matches!(before, Some('.' | ':' | '$')) && after != Some(':')
+        })
+    }
+
     /// Returns `query` with the contents of string literals, backtick-quoted identifiers and
     /// comments replaced by spaces, so keyword checks only see executable Cypher.
     fn mask_literals_and_comments(query: &str) -> String {
@@ -157,6 +172,7 @@ impl CypherValidator {
         out
     }
 
+    /// Checks if parentheses are balanced in the query
     fn check_balanced_parentheses(query: &str) -> bool {
         let mut count = 0;
         for c in query.chars() {
@@ -308,6 +324,12 @@ mod tests {
             "MATCH (n) // drop this later\nRETURN n",
             "MATCH (n) /* delete */ RETURN n",
             "MATCH (b:Backdrop) RETURN b.deleted_at",
+            "MATCH (n) RETURN n.delete, n.drop",
+            "MATCH (n) RETURN n . DELETE",
+            "MATCH (n) RETURN n {.drop, .delete}",
+            "MATCH (n:Drop)-[:DELETE]->(m) RETURN n, m",
+            "MATCH (n) WHERE n.name = $drop RETURN n",
+            "MATCH (n) RETURN {drop: n.name, delete : 1}",
         ];
         for query in queries {
             let result = CypherValidator::validate(query);
@@ -323,6 +345,8 @@ mod tests {
             "MATCH (n {name: 'x'}) DELETE n",
             "DROP INDEX ON :Person(name)",
             "MATCH (n) WHERE n.name = 'a' DELETE n",
+            "MATCH (n) WITH n.delete AS d, n DELETE n",
+            "MATCH (n:Drop) DELETE n",
         ];
         for query in queries {
             let result = CypherValidator::validate(query);
